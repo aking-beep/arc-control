@@ -50,7 +50,11 @@ const HTTP_STATUS_BY_CODE: Record<ArcErrorCode, number> = {
   unknown_tool: 404,
   invalid_parameters: 400,
   policy_denied: 403,
-  approval_required: 202,
+  // A conflict, not an acceptance. This code is raised when a caller tries to
+  // release an action nobody has approved yet — the request was refused, not
+  // queued. The 202 that a *held* action returns is set by the submit route
+  // from a successful result, never from an error.
+  approval_required: 409,
   approval_expired: 409,
   approval_rejected: 403,
   execution_failed: 502,

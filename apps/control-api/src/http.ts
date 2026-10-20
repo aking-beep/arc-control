@@ -87,9 +87,6 @@ export class Router {
         }
       } catch (cause) {
         const error = toArcError(cause);
-        // `approval_required` is a 202 rather than an error status: the action
-        // has been accepted and is waiting on a human, which is a normal
-        // outcome of the control path rather than a failure.
         send(response, error.httpStatus, error.toJSON());
       }
       return;
