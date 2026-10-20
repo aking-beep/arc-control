@@ -1,0 +1,32 @@
+{
+  "name": "arc-control",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The trust and control layer between enterprise AI agents and the systems they act upon.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "packages/*",
+    "connectors/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json",
+    "clean": "tsc -b tsconfig.build.json --clean && rm -rf packages/*/dist connectors/*/dist apps/*/dist",
+    "typecheck": "tsc -b tsconfig.build.json",
+    "test": "npm run build && node --test \"packages/*/dist/**/*.test.js\" \"connectors/*/dist/**/*.test.js\" \"apps/*/dist/**/*.test.js\"",
+    "evals": "npm run build && node evals/run.js",
+    "verify": "npm run build && npm run test --silent && npm run evals --silent",
+    "api": "npm run build && node apps/control-api/dist/main.js",
+    "console": "npm run build && node apps/control-console/dist/main.js",
+    "demo": "npm run build && node examples/approval-required-agent/run.js",
+    "arc": "node packages/cli/dist/bin.js"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.1",
+    "typescript": "5.9.3"
+  }
+}

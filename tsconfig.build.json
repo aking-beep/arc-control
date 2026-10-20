@@ -1,0 +1,22 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/schemas" },
+    { "path": "packages/store" },
+    { "path": "packages/agent-identity" },
+    { "path": "packages/policy-engine" },
+    { "path": "packages/approvals" },
+    { "path": "packages/evidence" },
+    { "path": "packages/audit" },
+    { "path": "packages/execution" },
+    { "path": "packages/gateway" },
+    { "path": "packages/mcp-security" },
+    { "path": "packages/sdk-typescript" },
+    { "path": "packages/cli" },
+    { "path": "connectors/generic-http" },
+    { "path": "connectors/simulation" },
+    { "path": "connectors/mcp" },
+    { "path": "apps/control-api" },
+    { "path": "apps/control-console" }
+  ]
+}

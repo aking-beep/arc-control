@@ -1,0 +1,169 @@
+import { AUDIT_GENESIS_DIGEST, canonicalize, digestText } from '@arc-control/schemas';
+import type {
+  Action,
+  Agent,
+  AgentCredential,
+  ApprovalRequest,
+  AuditRecord,
+  ChainVerification,
+  Decision,
+  EvidenceRecord,
+  ExecutionAttempt,
+  Policy,
+  Tool,
+} from '@arc-control/schemas';
+import { Mutex } from './mutex.js';
+import type { AuditLogStore, Collection, ControlStore, LogReadOptions } from './types.js';
+
+export class MemoryCollection<T> implements Collection<T> {
+  readonly #items = new Map<string, T>();
+  readonly #mutex = new Mutex();
+
+  async get(id: string): Promise<T | undefined> {
+    return this.#items.get(id);
+  }
+
+  async put(id: string, value: T): Promise<T> {
+    this.#items.set(id, value);
+    return value;
+  }
+
+  async delete(id: string): Promise<boolean> {
+    return this.#items.delete(id);
+  }
+
+  async list(): Promise<readonly T[]> {
+    return [...this.#items.values()];
+  }
+
+  async find(predicate: (value: T) => boolean): Promise<T | undefined> {
+    for (const value of this.#items.values()) {
+      if (predicate(value)) return value;
+    }
+    return undefined;
+  }
+
+  async filter(predicate: (value: T) => boolean): Promise<readonly T[]> {
+    return [...this.#items.values()].filter(predicate);
+  }
+
+  async count(): Promise<number> {
+    return this.#items.size;
+  }
+
+  transact<R>(critical: () => Promise<R> | R): Promise<R> {
+    return this.#mutex.run(critical);
+  }
+}
+
+export class MemoryAuditLog implements AuditLogStore {
+  readonly #records: AuditRecord[] = [];
+  readonly #mutex = new Mutex();
+  /** Called after each append so a durable store can persist the record. */
+  readonly #onAppend: ((record: AuditRecord) => Promise<void> | void) | undefined;
+
+  constructor(options: { seed?: readonly AuditRecord[]; onAppend?: (record: AuditRecord) => Promise<void> | void } = {}) {
+    if (options.seed) this.#records.push(...options.seed);
+    this.#onAppend = options.onAppend;
+  }
+
+  append(build: (previous: AuditRecord | undefined, sequence: number) => AuditRecord): Promise<AuditRecord> {
+    return this.#mutex.run(async () => {
+      const previous = this.#records.at(-1);
+      const record = build(previous, (previous?.sequence ?? 0) + 1);
+      this.#records.push(record);
+      await this.#onAppend?.(record);
+      return record;
+    });
+  }
+
+  async read(options: LogReadOptions = {}): Promise<readonly AuditRecord[]> {
+    let records = this.#records.filter(
+      (record) => options.afterSequence === undefined || record.sequence > options.afterSequence,
+    );
+    if (options.reverse) records = records.slice().reverse();
+    if (options.limit !== undefined) records = records.slice(0, options.limit);
+    return records;
+  }
+
+  async last(): Promise<AuditRecord | undefined> {
+    return this.#records.at(-1);
+  }
+
+  async count(): Promise<number> {
+    return this.#records.length;
+  }
+
+  async verify(): Promise<ChainVerification> {
+    return verifyChain(this.#records);
+  }
+}
+
+/**
+ * Recomputes every digest and link in a chain. This is deliberately a pure
+ * function over the records: an auditor can run it against an export without
+ * trusting the system that produced it.
+ */
+export function verifyChain(records: readonly AuditRecord[]): ChainVerification {
+  const failures: ChainVerification['failures'][number][] = [];
+  let expectedPrevious = AUDIT_GENESIS_DIGEST;
+  let expectedSequence = 1;
+
+  for (const record of records) {
+    if (record.sequence !== expectedSequence) {
+      failures.push({
+        sequence: record.sequence,
+        id: record.id,
+        problem: 'sequence_gap',
+        detail: `expected sequence ${expectedSequence}, found ${record.sequence}`,
+      });
+    }
+
+    if (record.previousDigest !== expectedPrevious) {
+      failures.push({
+        sequence: record.sequence,
+        id: record.id,
+        problem: 'broken_link',
+        detail: `previousDigest does not match the digest of record ${expectedSequence - 1}`,
+      });
+    }
+
+    const recomputed = computeAuditDigest(record);
+    if (recomputed !== record.digest) {
+      failures.push({
+        sequence: record.sequence,
+        id: record.id,
+        problem: 'digest_mismatch',
+        detail: 'record content does not match its stored digest',
+      });
+    }
+
+    expectedPrevious = record.digest;
+    expectedSequence = record.sequence + 1;
+  }
+
+  return { valid: failures.length === 0, recordsChecked: records.length, failures };
+}
+
+/** The digest of an audit record: everything but the digest field itself. */
+export function computeAuditDigest(record: AuditRecord): string {
+  const { digest: _ignored, ...content } = record;
+  return digestText(canonicalize(content));
+}
+
+export class MemoryStore implements ControlStore {
+  readonly agents = new MemoryCollection<Agent>();
+  readonly credentials = new MemoryCollection<AgentCredential>();
+  readonly tools = new MemoryCollection<Tool>();
+  readonly policies = new MemoryCollection<Policy>();
+  readonly actions = new MemoryCollection<Action>();
+  readonly decisions = new MemoryCollection<Decision>();
+  readonly approvals = new MemoryCollection<ApprovalRequest>();
+  readonly executions = new MemoryCollection<ExecutionAttempt>();
+  readonly evidence = new MemoryCollection<EvidenceRecord>();
+  readonly audit: AuditLogStore = new MemoryAuditLog();
+
+  async close(): Promise<void> {
+    /* nothing to release */
+  }
+}

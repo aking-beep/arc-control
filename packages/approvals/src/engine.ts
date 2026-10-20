@@ -1,0 +1,283 @@
+import {
+  ArcError,
+  newId,
+  type Action,
+  type ApprovalRequest,
+  type ApprovalRequirement,
+  type ApprovalStatus,
+  type ApprovalVote,
+  type Decision,
+} from '@arc-control/schemas';
+import type { ControlStore } from '@arc-control/store';
+
+export interface ApprovalEngineOptions {
+  readonly now?: () => Date;
+  /** Fallback window when a policy rule does not set one. */
+  readonly defaultExpiresInSeconds?: number;
+}
+
+/** Identity of the human casting a vote, as established by the console session. */
+export interface Approver {
+  readonly identifier: string;
+  readonly roles: readonly string[];
+}
+
+/**
+ * The approval engine owns the lifecycle of an action a policy will not
+ * authorize on its own.
+ *
+ * Three properties make an approval trustworthy, and all three are enforced
+ * here rather than left to the console:
+ *
+ *  - **Authority.** Only an approver the policy named may vote.
+ *  - **Finality.** A resolved or expired request cannot be revisited, and one
+ *    approver cannot vote twice to reach a threshold alone.
+ *  - **Single use.** An approval is consumed when the action executes, so a
+ *    granted approval can never authorize a second execution.
+ */
+export class ApprovalEngine {
+  readonly #store: ControlStore;
+  readonly #now: () => Date;
+  readonly #defaultWindow: number;
+
+  constructor(store: ControlStore, options: ApprovalEngineOptions = {}) {
+    this.#store = store;
+    this.#now = options.now ?? (() => new Date());
+    this.#defaultWindow = options.defaultExpiresInSeconds ?? 3600;
+  }
+
+  /** Opens a request for a decision that came back REQUIRE_APPROVAL. */
+  async request(args: {
+    readonly action: Action;
+    readonly decision: Decision;
+    readonly requirement: ApprovalRequirement;
+    /** Redacted parameters, safe to render to a human. */
+    readonly parameters: Readonly<Record<string, unknown>>;
+    /** The agent's registered owner, carried so `owner` and separation of duties can be resolved later. */
+    readonly agentOwner: string;
+  }): Promise<ApprovalRequest> {
+    const { action, decision, requirement } = args;
+
+    if (requirement.approvers.length === 0) {
+      throw new ArcError('internal', 'a REQUIRE_APPROVAL decision reached the approval engine with no approvers', {
+        details: { policyId: decision.policyId, ruleId: decision.ruleId },
+      });
+    }
+
+    const createdAt = this.#now();
+    const windowSeconds = requirement.expiresInSeconds ?? this.#defaultWindow;
+
+    const request: ApprovalRequest = {
+      id: newId('approval'),
+      actionId: action.id,
+      decisionId: decision.id,
+      agentId: action.agentId,
+      agentName: action.agentName,
+      agentOwner: args.agentOwner,
+      organizationId: action.organizationId,
+      tool: action.tool,
+      parameters: args.parameters,
+      ...(decision.policyId ? { policyId: decision.policyId } : {}),
+      ...(decision.ruleId ? { ruleId: decision.ruleId } : {}),
+      reason: decision.reason,
+      requirement: {
+        ...requirement,
+        approvers: requirement.approvers,
+        minApprovals: requirement.minApprovals ?? 1,
+      },
+      status: 'pending',
+      votes: [],
+      createdAt: createdAt.toISOString(),
+      expiresAt: new Date(createdAt.getTime() + windowSeconds * 1000).toISOString(),
+    };
+
+    await this.#store.approvals.put(request.id, request);
+    return request;
+  }
+
+  async get(approvalId: string): Promise<ApprovalRequest | undefined> {
+    return this.#store.approvals.get(approvalId);
+  }
+
+  async require(approvalId: string): Promise<ApprovalRequest> {
+    const request = await this.get(approvalId);
+    if (!request) throw new ArcError('not_found', `no approval request with id ${approvalId}`);
+    return request;
+  }
+
+  /** Requests still actionable, newest first. The console's work queue. */
+  async listPending(filter: { organizationId?: string; approver?: Approver } = {}): Promise<readonly ApprovalRequest[]> {
+    const all = await this.#store.approvals.list();
+    const now = this.#now().getTime();
+
+    return all
+      .filter((request) => request.status === 'pending' && Date.parse(request.expiresAt) > now)
+      .filter((request) => !filter.organizationId || request.organizationId === filter.organizationId)
+      .filter((request) => !filter.approver || this.canApprove(request, filter.approver))
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }
+
+  /**
+   * Casts a vote. A single rejection resolves the request: when a named
+   * approver says no, waiting for the others cannot make the action safe.
+   */
+  async vote(args: {
+    readonly approvalId: string;
+    readonly approver: Approver;
+    readonly vote: 'approve' | 'reject';
+    readonly comment?: string;
+  }): Promise<ApprovalRequest> {
+    return this.#store.approvals.transact(async () => {
+      const request = await this.#expireIfDue(await this.require(args.approvalId));
+
+      if (request.status !== 'pending') {
+        throw new ArcError('conflict', `this approval request is already ${request.status}`, {
+          details: { approvalId: request.id, status: request.status },
+        });
+      }
+
+      if (!this.canApprove(request, args.approver)) {
+        throw new ArcError('policy_denied', `${args.approver.identifier} is not an approver for this request`, {
+          details: { approvalId: request.id, approvers: request.requirement.approvers },
+        });
+      }
+
+      if (request.votes.some((cast) => cast.approver === args.approver.identifier)) {
+        throw new ArcError('conflict', `${args.approver.identifier} has already voted on this request`, {
+          details: { approvalId: request.id },
+        });
+      }
+
+      const vote: ApprovalVote = {
+        approver: args.approver.identifier,
+        vote: args.vote,
+        ...(args.comment ? { comment: args.comment } : {}),
+        votedAt: this.#now().toISOString(),
+      };
+
+      const votes = [...request.votes, vote];
+      const approvals = votes.filter((cast) => cast.vote === 'approve').length;
+      const rejected = votes.some((cast) => cast.vote === 'reject');
+
+      let status: ApprovalStatus = 'pending';
+      if (rejected) status = 'rejected';
+      else if (approvals >= request.requirement.minApprovals) status = 'approved';
+
+      const updated: ApprovalRequest = {
+        ...request,
+        votes,
+        status,
+        ...(status === 'pending' ? {} : { resolvedAt: this.#now().toISOString() }),
+      };
+
+      await this.#store.approvals.put(updated.id, updated);
+      return updated;
+    });
+  }
+
+  /**
+   * Claims an approved request for execution, marking it consumed. Returns the
+   * consumed request, or throws if it is not executable. Claiming and
+   * executing are separate steps so a crash between them leaves a consumed
+   * approval rather than a replayable one.
+   */
+  async consume(approvalId: string): Promise<ApprovalRequest> {
+    return this.#store.approvals.transact(async () => {
+      const request = await this.#expireIfDue(await this.require(approvalId));
+
+      if (request.consumedAt) {
+        throw new ArcError('conflict', 'this approval has already authorized an execution', {
+          details: { approvalId: request.id, consumedAt: request.consumedAt },
+        });
+      }
+
+      switch (request.status) {
+        case 'approved':
+          break;
+        case 'pending':
+          throw new ArcError('approval_required', 'this action is still waiting for approval', {
+            details: { approvalId: request.id, approvals: request.votes.length },
+          });
+        case 'rejected':
+          throw new ArcError('approval_rejected', 'a named approver rejected this action', {
+            details: { approvalId: request.id },
+          });
+        case 'expired':
+          throw new ArcError('approval_expired', 'the approval window for this action has closed', {
+            details: { approvalId: request.id, expiresAt: request.expiresAt },
+          });
+        case 'cancelled':
+          throw new ArcError('conflict', 'this approval request was cancelled', {
+            details: { approvalId: request.id },
+          });
+      }
+
+      const consumed: ApprovalRequest = { ...request, consumedAt: this.#now().toISOString() };
+      await this.#store.approvals.put(consumed.id, consumed);
+      return consumed;
+    });
+  }
+
+  async cancel(approvalId: string, reason: string): Promise<ApprovalRequest> {
+    return this.#store.approvals.transact(async () => {
+      const request = await this.require(approvalId);
+      if (request.status !== 'pending') {
+        throw new ArcError('conflict', `cannot cancel a request that is already ${request.status}`);
+      }
+      const cancelled: ApprovalRequest = {
+        ...request,
+        status: 'cancelled',
+        reason: `${request.reason} (cancelled: ${reason})`,
+        resolvedAt: this.#now().toISOString(),
+      };
+      await this.#store.approvals.put(cancelled.id, cancelled);
+      return cancelled;
+    });
+  }
+
+  /** Expires every pending request past its window. Safe to call repeatedly. */
+  async expireDue(): Promise<number> {
+    const pending = await this.#store.approvals.filter((request) => request.status === 'pending');
+    let expired = 0;
+    for (const request of pending) {
+      const updated = await this.#expireIfDue(request);
+      if (updated.status === 'expired') expired += 1;
+    }
+    return expired;
+  }
+
+  /**
+   * Whether this human may vote on this request.
+   *
+   * `owner` resolves against the agent's registered owner. Separation of
+   * duties, when the policy asks for it, bars that owner however they would
+   * otherwise match — including through a role they happen to hold — because
+   * the point of the control is that nobody approves their own agent's work.
+   */
+  canApprove(request: ApprovalRequest, approver: Approver): boolean {
+    if (request.requirement.requireSeparationOfDuties && approver.identifier === request.agentOwner) {
+      return false;
+    }
+
+    return request.requirement.approvers.some((selector) => {
+      if (selector === '*') return true;
+      if (selector === 'owner') return approver.identifier === request.agentOwner;
+      if (selector.startsWith('role:')) return approver.roles.includes(selector.slice('role:'.length));
+      if (selector.startsWith('user:')) return approver.identifier === selector.slice('user:'.length);
+      return approver.identifier === selector;
+    });
+  }
+
+  async #expireIfDue(request: ApprovalRequest): Promise<ApprovalRequest> {
+    if (request.status !== 'pending') return request;
+    if (Date.parse(request.expiresAt) > this.#now().getTime()) return request;
+
+    const expired: ApprovalRequest = {
+      ...request,
+      status: 'expired',
+      resolvedAt: this.#now().toISOString(),
+    };
+    await this.#store.approvals.put(expired.id, expired);
+    return expired;
+  }
+}

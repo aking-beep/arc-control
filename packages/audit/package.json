@@ -1,0 +1,27 @@
+{
+  "name": "@arc-control/audit",
+  "version": "0.1.0",
+  "description": "Hash-chained, append-only audit log with independent chain verification.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean"
+  },
+  "dependencies": {
+    "@arc-control/schemas": "0.1.0",
+    "@arc-control/store": "0.1.0"
+  }
+}

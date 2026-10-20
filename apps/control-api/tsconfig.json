@@ -1,0 +1,51 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": [
+    "src/**/*.ts"
+  ],
+  "references": [
+    {
+      "path": "../../packages/schemas"
+    },
+    {
+      "path": "../../packages/store"
+    },
+    {
+      "path": "../../packages/gateway"
+    },
+    {
+      "path": "../../packages/agent-identity"
+    },
+    {
+      "path": "../../packages/policy-engine"
+    },
+    {
+      "path": "../../packages/approvals"
+    },
+    {
+      "path": "../../packages/audit"
+    },
+    {
+      "path": "../../packages/evidence"
+    },
+    {
+      "path": "../../packages/execution"
+    },
+    {
+      "path": "../../packages/mcp-security"
+    },
+    {
+      "path": "../../connectors/simulation"
+    },
+    {
+      "path": "../../connectors/generic-http"
+    },
+    {
+      "path": "../../connectors/mcp"
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "name": "@arc-control/cli",
+  "version": "0.1.0",
+  "description": "The arc command line: policy checks, agent management, evidence and audit verification.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "arc": "./dist/bin.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean"
+  },
+  "dependencies": {
+    "@arc-control/schemas": "0.1.0",
+    "@arc-control/store": "0.1.0",
+    "@arc-control/policy-engine": "0.1.0",
+    "@arc-control/audit": "0.1.0",
+    "@arc-control/mcp-security": "0.1.0",
+    "@arc-control/gateway": "0.1.0",
+    "@arc-control/execution": "0.1.0",
+    "@arc-control/agent-identity": "0.1.0",
+    "@arc-control/sdk-typescript": "0.1.0",
+    "@arc-control/connector-simulation": "0.1.0"
+  }
+}
