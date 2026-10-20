@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arctransformationgroup.com/arc-control/v0.1/tool.schema.json",
+  "title": "ARC Control Tool",
+  "description": "A tool is a named capability an agent may ask to use. ARC Control treats the definition as a contract: parameters outside the declared schema are rejected before policy evaluation, so a policy never has to reason about parameters that cannot exist.",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "description",
+    "system",
+    "effect",
+    "riskTier",
+    "connector",
+    "connectorConfig",
+    "parameters",
+    "labels",
+    "createdAt",
+    "updatedAt"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": "string", "pattern": "^arc_tl_[0-9a-f]{32}$" },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{1,126}[a-z0-9]$",
+      "description": "Qualified name used by agents and policies, e.g. \"stripe.refund\"."
+    },
+    "description": { "type": "string", "minLength": 1 },
+    "system": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Logical system the tool acts upon, e.g. \"stripe\", \"github\", \"aws\"."
+    },
+    "effect": {
+      "enum": ["read", "write", "irreversible"],
+      "description": "How reversible the action is. The single most useful signal for writing policy, which is why it is declared rather than inferred."
+    },
+    "riskTier": { "enum": ["low", "medium", "high", "critical"] },
+    "connector": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Name of the connector that executes this tool."
+    },
+    "connectorConfig": {
+      "type": "object",
+      "description": "Connector-specific routing. Never contains secrets; credentials belong to the connector.",
+      "additionalProperties": true
+    },
+    "parameters": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/parameterSpec" }
+    },
+    "labels": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" }
+  },
+  "$defs": {
+    "parameterSpec": {
+      "type": "object",
+      "required": ["name", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "type": { "enum": ["string", "number", "integer", "boolean", "object", "array"] },
+        "required": { "type": "boolean", "default": false },
+        "description": { "type": "string" },
+        "enum": {
+          "type": "array",
+          "items": { "type": ["string", "number", "boolean"] }
+        },
+        "minimum": { "type": "number" },
+        "maximum": { "type": "number" },
+        "pattern": { "type": "string", "format": "regex" },
+        "maxLength": { "type": "integer", "minimum": 0 },
+        "sensitive": {
+          "type": "boolean",
+          "default": false,
+          "description": "Marks a parameter whose value must never reach evidence or audit in the clear."
+        }
+      }
+    }
+  }
+}

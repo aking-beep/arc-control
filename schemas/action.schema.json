@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arctransformationgroup.com/arc-control/v0.1/action.schema.json",
+  "title": "ARC Control Action",
+  "description": "An action is a single thing an agent asked to do. It is recorded before any decision is made, so a denied action is as durable as an executed one — the attempt is itself the security signal.",
+  "type": "object",
+  "required": [
+    "id",
+    "agentId",
+    "agentName",
+    "organizationId",
+    "environment",
+    "tool",
+    "toolId",
+    "parameters",
+    "parametersDigest",
+    "requestedAt"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": "string", "pattern": "^arc_act_[0-9a-f]{32}$" },
+    "agentId": { "type": "string", "pattern": "^arc_ag_[0-9a-f]{32}$" },
+    "agentName": { "type": "string" },
+    "organizationId": { "type": "string" },
+    "environment": { "type": "string" },
+    "tool": { "type": "string", "description": "Tool name as requested, e.g. \"stripe.refund\"." },
+    "toolId": { "type": "string", "pattern": "^arc_tl_[0-9a-f]{32}$" },
+    "parameters": { "type": "object", "additionalProperties": true },
+    "parametersDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Digest over the canonical form of the parameters as submitted, before redaction."
+    },
+    "idempotencyKey": {
+      "type": "string",
+      "description": "Caller-supplied key. A repeat with the same key and parameters returns the original outcome rather than acting twice; a repeat with different parameters is refused."
+    },
+    "intent": {
+      "type": "string",
+      "description": "Free-text intent from the agent. Advisory only: never used in policy decisions, because an agent's own account of its intent is not evidence."
+    },
+    "correlationId": { "type": "string", "description": "Ties the action to an agent run or upstream trace." },
+    "requestedAt": { "type": "string", "format": "date-time" }
+  }
+}

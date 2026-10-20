@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arctransformationgroup.com/arc-control/v0.1/agent.schema.json",
+  "title": "ARC Control Agent",
+  "description": "An agent is the principal ARC Control authorizes. It is never a human: a human acts through the console or an approval, an agent acts through the gateway. Every agent has an owner who is accountable for what it does.",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "kind",
+    "status",
+    "organizationId",
+    "environment",
+    "owner",
+    "roles",
+    "declaredTools",
+    "labels",
+    "createdAt",
+    "updatedAt"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^arc_ag_[0-9a-f]{32}$",
+      "description": "Opaque identifier assigned by ARC Control."
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$",
+      "description": "Stable handle used in policies and audit records, e.g. \"finance-agent\"."
+    },
+    "kind": {
+      "enum": ["autonomous", "assistant", "workflow", "service"]
+    },
+    "status": {
+      "enum": ["active", "suspended"],
+      "description": "A suspended agent is refused at authentication, before policy is consulted."
+    },
+    "organizationId": { "type": "string", "minLength": 1 },
+    "environment": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Deployment environment; policies may scope to it."
+    },
+    "owner": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The human or team accountable for this agent. Resolves the `owner` approver selector."
+    },
+    "description": { "type": "string" },
+    "roles": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Roles the agent holds. Policies match on these rather than naming agents directly."
+    },
+    "declaredTools": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Tools the agent declares it needs. Advisory: policy still decides every call."
+    },
+    "labels": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" }
+  }
+}

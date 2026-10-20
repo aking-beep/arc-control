@@ -162,9 +162,29 @@ function validateRule(rule: PolicyRule, path: string, seen: Set<string>): Valida
   }
   if (rule.effect === 'REQUIRE_APPROVAL') {
     if (!rule.approval || rule.approval.approvers.length === 0) {
-      issues.push({ path: `${path}.approval.approvers`, message: 'a REQUIRE_APPROVAL rule must name at least one approver' });
-    } else if ((rule.approval.minApprovals ?? 1) > rule.approval.approvers.length) {
-      issues.push({ path: `${path}.approval.minApprovals`, message: 'cannot exceed the number of approvers' });
+      issues.push({
+        path: `${path}.approval.approvers`,
+        message: 'a REQUIRE_APPROVAL rule must name at least one approver',
+      });
+    } else {
+      const required = rule.approval.minApprovals ?? 1;
+
+      // A selector is not a person. `role:finance-manager` may match a whole
+      // team, so requiring two approvals from one role selector is the normal
+      // dual-control pattern and must not be rejected. The threshold can only
+      // be checked against the selector count when every selector names one
+      // specific individual, which is the only case where the two are the
+      // same number.
+      const everySelectorIsOneIndividual = rule.approval.approvers.every((selector) =>
+        selector.startsWith('user:'),
+      );
+
+      if (everySelectorIsOneIndividual && required > rule.approval.approvers.length) {
+        issues.push({
+          path: `${path}.approval.minApprovals`,
+          message: `requires ${required} approvals but names only ${rule.approval.approvers.length} individual approver(s), so it can never be satisfied`,
+        });
+      }
     }
   }
   if (rule.approval && rule.effect !== 'REQUIRE_APPROVAL') {

@@ -27,11 +27,19 @@ const INSTRUCTION_OVERRIDE = [
   /<\/?(system|instructions?)>/i,
 ];
 
-/** Phrases that direct the agent at credentials or other secrets. */
+/**
+ * Phrases that direct the agent at credentials or other secrets.
+ *
+ * Note the absence of `\b` immediately before the secret alternation: a word
+ * boundary cannot match between a space and `~` or `.`, so anchoring there
+ * would silently fail to see `~/.ssh/id_rsa` and `.aws/credentials` — the two
+ * paths this check most needs to catch.
+ */
 const CREDENTIAL_SOLICITATION = [
-  /\b(read|open|cat|fetch|retrieve|send|exfiltrate|upload)\b.{0,40}\b(~\/\.ssh|id_rsa|\.env|\.aws\/credentials|password|api[\s_-]?key|secret|token)\b/i,
-  /\b(include|attach|append)\b.{0,30}\b(credential|secret|api[\s_-]?key|token|password)\b/i,
-  /\bconversation\s+history\b.{0,40}\b(send|post|forward|include)\b/i,
+  /\b(read|open|cat|fetch|retrieve|send|exfiltrate|upload|include)\b.{0,40}?(~?\/?\.ssh\b|\bid_rsa\b|\.env\b|\.aws\/credentials|\.aws\b.{0,12}credential|\bpasswords?\b|\bapi[\s_-]?keys?\b|\bsecrets?\b|\btokens?\b|\bcredentials?\b)/i,
+  /\b(include|attach|append|embed)\b.{0,30}?(\bcredential|\bsecret|\bapi[\s_-]?key|\btoken|\bpassword)/i,
+  /\bconversation\s+history\b.{0,40}?\b(send|post|forward|include|upload)\b/i,
+  /\b(send|post|forward|upload|exfiltrate)\b.{0,40}?\b(transcript|chat\s+history|system\s+prompt)\b/i,
 ];
 
 /** Phrases that instruct the agent to call another tool as a side effect. */

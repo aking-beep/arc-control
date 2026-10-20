@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arctransformationgroup.com/arc-control/v0.1/evidence.schema.json",
+  "title": "ARC Control Evidence Record",
+  "description": "Evidence is the durable answer to \"what did this agent try to do, who or what authorized it, and what actually happened?\". One record per action, written whether the action was allowed, denied or abandoned waiting on a human. The record is self-contained on purpose: it can be handed to an auditor without granting access to ARC Control itself.",
+  "type": "object",
+  "required": [
+    "id",
+    "schemaVersion",
+    "actionId",
+    "organizationId",
+    "environment",
+    "agent",
+    "tool",
+    "request",
+    "decision",
+    "outcome",
+    "obligations",
+    "createdAt",
+    "integrityDigest"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^arc_ev_[0-9a-f]{32}$",
+      "description": "The identifier quoted in a denial message or a compliance export."
+    },
+    "schemaVersion": { "const": 1 },
+    "actionId": { "type": "string", "pattern": "^arc_act_[0-9a-f]{32}$" },
+    "organizationId": { "type": "string" },
+    "environment": { "type": "string" },
+
+    "agent": {
+      "type": "object",
+      "required": ["id", "name", "owner", "roles", "credentialId"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "owner": { "type": "string" },
+        "roles": { "type": "array", "items": { "type": "string" } },
+        "credentialId": {
+          "type": "string",
+          "description": "Which credential authenticated the request, so a compromised key can be traced to everything it did."
+        }
+      }
+    },
+
+    "tool": {
+      "type": "object",
+      "required": ["name", "system", "effect", "riskTier", "connector"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "system": { "type": "string" },
+        "effect": { "enum": ["read", "write", "irreversible"] },
+        "riskTier": { "enum": ["low", "medium", "high", "critical"] },
+        "connector": { "type": "string" }
+      }
+    },
+
+    "request": {
+      "type": "object",
+      "required": ["parameters", "parametersDigest", "requestedAt"],
+      "additionalProperties": false,
+      "properties": {
+        "parameters": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Parameters with sensitive values replaced by \"[redacted]\". The digest below is over the unredacted form, so redaction does not weaken verification."
+        },
+        "parametersDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "intent": { "type": "string" },
+        "correlationId": { "type": "string" },
+        "requestedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+
+    "decision": {
+      "type": "object",
+      "required": ["id", "effect", "reason", "decidedAt", "evaluationMs", "traceDigest"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "effect": { "enum": ["ALLOW", "REQUIRE_APPROVAL", "DENY"] },
+        "policyId": { "type": "string" },
+        "policyVersion": { "type": "integer" },
+        "ruleId": { "type": "string" },
+        "reason": { "type": "string" },
+        "decidedAt": { "type": "string", "format": "date-time" },
+        "evaluationMs": { "type": "number", "minimum": 0 },
+        "traceDigest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Digest over the rule-by-rule trace, so a tampered trace is detectable without duplicating it here."
+        }
+      }
+    },
+
+    "approval": {
+      "type": "object",
+      "required": ["id", "status", "approvers", "minApprovals", "votes"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "status": { "enum": ["pending", "approved", "rejected", "expired", "cancelled"] },
+        "approvers": { "type": "array", "items": { "type": "string" } },
+        "minApprovals": { "type": "integer", "minimum": 1 },
+        "votes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["approver", "vote", "votedAt"],
+            "additionalProperties": false,
+            "properties": {
+              "approver": { "type": "string" },
+              "vote": { "enum": ["approve", "reject"] },
+              "votedAt": { "type": "string", "format": "date-time" }
+            }
+          }
+        },
+        "resolvedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+
+    "execution": {
+      "type": "object",
+      "required": ["id", "connector", "status", "startedAt", "finishedAt", "durationMs"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "connector": { "type": "string" },
+        "status": { "enum": ["succeeded", "failed"] },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "finishedAt": { "type": "string", "format": "date-time" },
+        "durationMs": { "type": "number", "minimum": 0 },
+        "resultDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "error": {
+          "type": "object",
+          "required": ["code", "message"],
+          "additionalProperties": false,
+          "properties": { "code": { "type": "string" }, "message": { "type": "string" } }
+        }
+      }
+    },
+
+    "outcome": {
+      "enum": ["allowed", "denied", "pending_approval", "approved", "rejected", "expired", "executed", "failed"]
+    },
+    "obligations": { "type": "array", "items": { "type": "string" } },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "integrityDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Digest over every other field. Changing any of them invalidates the record, and `arc evidence verify` recomputes it without trusting the exporter."
+    }
+  }
+}

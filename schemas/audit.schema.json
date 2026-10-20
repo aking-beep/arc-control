@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arctransformationgroup.com/arc-control/v0.1/audit.schema.json",
+  "title": "ARC Control Audit Record",
+  "description": "The audit log is append-only and hash-chained: every record carries the digest of its predecessor, so editing a record breaks the link every later record depends on, and removing one leaves a sequence gap. Verification needs nothing but the records themselves.",
+  "type": "object",
+  "required": [
+    "id",
+    "sequence",
+    "type",
+    "organizationId",
+    "occurredAt",
+    "actor",
+    "subject",
+    "summary",
+    "data",
+    "previousDigest",
+    "digest"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": "string", "pattern": "^arc_aud_[0-9a-f]{32}$" },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonic position in the chain, starting at 1. A gap is a removed record."
+    },
+    "type": {
+      "enum": [
+        "agent.registered",
+        "agent.updated",
+        "agent.suspended",
+        "agent.resumed",
+        "credential.issued",
+        "credential.revoked",
+        "tool.registered",
+        "tool.updated",
+        "policy.created",
+        "policy.updated",
+        "policy.disabled",
+        "action.requested",
+        "action.allowed",
+        "action.denied",
+        "action.executed",
+        "action.failed",
+        "approval.requested",
+        "approval.voted",
+        "approval.approved",
+        "approval.rejected",
+        "approval.expired",
+        "evidence.recorded"
+      ]
+    },
+    "organizationId": { "type": "string" },
+    "occurredAt": { "type": "string", "format": "date-time" },
+    "actor": {
+      "type": "string",
+      "description": "Who or what caused the event: an agent id, a human identifier, or \"system\"."
+    },
+    "subject": { "type": "string", "description": "The object acted upon." },
+    "summary": { "type": "string", "description": "One line a human can read without decoding the data field." },
+    "data": { "type": "object", "additionalProperties": true },
+    "previousDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Digest of the previous record, or sha256:0*64 for the first."
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Digest over this record's content including previousDigest."
+    }
+  }
+}

@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arctransformationgroup.com/arc-control/v0.1/policy.schema.json",
+  "title": "ARC Control Policy",
+  "description": "A policy is a document an auditor can read. It matches a set of agents and tools, then evaluates ordered rules against the requested action; the first rule whose condition holds decides, and if none holds the fallback applies. Conditions are a closed expression language with no embedded code, so evaluation is total, side-effect free and identical every time.",
+  "type": "object",
+  "required": ["id", "version", "name", "enabled", "match", "rules", "fallback"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$",
+      "description": "Operator-facing identifier cited in every decision, e.g. \"FINANCE-004\"."
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Policies are versioned rather than edited, so a decision citing version 3 can still be explained after the policy has moved on."
+    },
+    "name": { "type": "string", "minLength": 1 },
+    "description": { "type": "string" },
+    "enabled": { "type": "boolean" },
+    "match": { "$ref": "#/$defs/policyMatch" },
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/policyRule" }
+    },
+    "fallback": {
+      "type": "object",
+      "required": ["effect", "reason"],
+      "additionalProperties": false,
+      "description": "Applied when the policy matches but no rule condition holds, so a matching policy always decides.",
+      "properties": {
+        "effect": { "$ref": "#/$defs/effect" },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    },
+    "labels": { "type": "object", "additionalProperties": { "type": "string" } },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" }
+  },
+  "$defs": {
+    "effect": {
+      "enum": ["ALLOW", "REQUIRE_APPROVAL", "DENY"],
+      "description": "Across all matching policies the strictest effect wins: DENY over REQUIRE_APPROVAL over ALLOW. Adding a policy can therefore only tighten authorization."
+    },
+
+    "policyMatch": {
+      "type": "object",
+      "description": "Narrows which actions the policy applies to. An omitted selector matches everything; every selector present must match, so narrowing a policy can never widen what it governs.",
+      "additionalProperties": false,
+      "properties": {
+        "agents": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Agent names, \"role:<role>\", \"label:<key>\" or \"label:<key>=<value>\", or \"*\"."
+        },
+        "tools": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Tool names; a trailing \"*\" matches a prefix, e.g. \"stripe.*\"."
+        },
+        "systems": { "type": "array", "items": { "type": "string" } },
+        "environments": { "type": "array", "items": { "type": "string" } },
+        "effects": {
+          "type": "array",
+          "items": { "enum": ["read", "write", "irreversible"] }
+        }
+      }
+    },
+
+    "policyRule": {
+      "type": "object",
+      "required": ["id", "when", "effect", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable identifier, cited verbatim in decisions and evidence."
+        },
+        "description": { "type": "string" },
+        "when": { "$ref": "#/$defs/condition" },
+        "effect": { "$ref": "#/$defs/effect" },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The explanation an operator or auditor reads. Required: a decision without a reason is not auditable."
+        },
+        "approval": { "$ref": "#/$defs/approvalRequirement" },
+        "obligations": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Obligations the gateway must honour when this rule decides, e.g. \"redact:pii\"."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "effect": { "const": "REQUIRE_APPROVAL" } }, "required": ["effect"] },
+          "then": { "required": ["approval"] },
+          "else": {
+            "not": { "required": ["approval"] },
+            "description": "Only a REQUIRE_APPROVAL rule may carry an approval requirement."
+          }
+        }
+      ]
+    },
+
+    "approvalRequirement": {
+      "type": "object",
+      "required": ["approvers"],
+      "additionalProperties": false,
+      "description": "Who must approve and for how long the request stays open. Attached to the rule so the policy — not the calling code — decides who holds the authority.",
+      "properties": {
+        "approvers": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" },
+          "description": "Selectors: \"role:finance-manager\", \"user:cfo@example.com\", \"owner\", or \"*\"."
+        },
+        "minApprovals": { "type": "integer", "minimum": 1, "default": 1 },
+        "expiresInSeconds": { "type": "integer", "minimum": 1, "default": 3600 },
+        "requireSeparationOfDuties": {
+          "type": "boolean",
+          "default": false,
+          "description": "Bars the agent's own owner from approving, however else they would match."
+        }
+      }
+    },
+
+    "operand": {
+      "description": "A literal, or a reference string beginning with \"$.\" that names a path into the policy input, e.g. \"$.action.parameters.amount\".",
+      "type": ["string", "number", "boolean", "null", "array"]
+    },
+
+    "comparison": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": { "$ref": "#/$defs/operand" }
+    },
+
+    "condition": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "description": "Exactly one operator per condition object.",
+      "additionalProperties": false,
+      "properties": {
+        "always": { "const": true },
+        "eq": { "$ref": "#/$defs/comparison" },
+        "ne": { "$ref": "#/$defs/comparison" },
+        "gt": { "$ref": "#/$defs/comparison" },
+        "gte": { "$ref": "#/$defs/comparison" },
+        "lt": { "$ref": "#/$defs/comparison" },
+        "lte": { "$ref": "#/$defs/comparison" },
+        "in": { "$ref": "#/$defs/comparison" },
+        "nin": { "$ref": "#/$defs/comparison" },
+        "contains": { "$ref": "#/$defs/comparison" },
+        "startsWith": { "$ref": "#/$defs/comparison" },
+        "endsWith": { "$ref": "#/$defs/comparison" },
+        "matches": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": [{ "$ref": "#/$defs/operand" }, { "type": "string", "format": "regex" }]
+        },
+        "exists": { "type": "string", "pattern": "^\\$\\." },
+        "and": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/condition" } },
+        "or": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/condition" } },
+        "not": { "$ref": "#/$defs/condition" }
+      }
+    }
+  }
+}
