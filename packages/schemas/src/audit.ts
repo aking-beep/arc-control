@@ -1,8 +1,12 @@
 /**
  * The audit log is append-only and hash-chained: every record carries the
- * digest of its predecessor, so removing or editing a record breaks the chain
- * at that point and every point after it. Verification needs nothing but the
- * records themselves.
+ * digest of its predecessor, so editing a record, or removing one from the
+ * middle, breaks the chain at that point and at every point after it.
+ *
+ * Walking the records detects those on its own. It cannot detect
+ * **truncation** — remove records from the end and what remains is a shorter
+ * chain in which every digest and link is still correct. Catching that needs
+ * an expected head from outside the log; see `ChainExpectation`.
  */
 export type AuditEventType =
   | 'agent.registered'
@@ -50,13 +54,43 @@ export interface AuditRecord {
 /** `previousDigest` of the first record in a chain. */
 export const AUDIT_GENESIS_DIGEST = 'sha256:0000000000000000000000000000000000000000000000000000000000000000';
 
+/**
+ * What a chain can be checked against.
+ *
+ * Walking the records alone detects an edited record and an *interior*
+ * deletion, but it cannot detect truncation: lop records off the end and what
+ * remains is a shorter, perfectly valid chain. Detecting that requires knowing
+ * what the head should be, which has to come from outside the log — which is
+ * exactly why `arc audit verify` prints the head digest for an operator to
+ * record somewhere else.
+ */
+export interface ChainExpectation {
+  /** Digest of the record that should be at the head. */
+  readonly headDigest?: string;
+  /** Sequence number the chain should reach. */
+  readonly headSequence?: number;
+}
+
+export type ChainProblem =
+  | 'digest_mismatch'
+  | 'broken_link'
+  | 'sequence_gap'
+  | 'truncated'
+  | 'head_mismatch'
+  | 'empty';
+
 export interface ChainVerification {
   readonly valid: boolean;
   readonly recordsChecked: number;
   readonly failures: readonly {
     readonly sequence: number;
     readonly id: string;
-    readonly problem: 'digest_mismatch' | 'broken_link' | 'sequence_gap';
+    readonly problem: ChainProblem;
     readonly detail: string;
   }[];
+  /** The digest at the head of the chain as verified, for anchoring. */
+  readonly headDigest?: string;
+  readonly headSequence?: number;
+  /** True when the chain was checked against an expected head rather than only internally. */
+  readonly checkedAgainstExpectation: boolean;
 }

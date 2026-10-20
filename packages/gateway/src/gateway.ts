@@ -200,6 +200,18 @@ export class Gateway {
     return this.#executeAndFinish(principal, tool, action, decision, approval);
   }
 
+  /**
+   * The underlying store.
+   *
+   * Exposed so a surface can use a capability a particular implementation
+   * offers — the API asks a `FileStore` for its recorded audit head, which is
+   * what lets chain verification detect truncation. Reads and writes still go
+   * through the methods above; this is not a general-purpose escape hatch.
+   */
+  get store(): ControlStore {
+    return this.#store;
+  }
+
   // --- reads --------------------------------------------------------------
 
   /** One evidence record by id. */

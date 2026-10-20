@@ -1,0 +1,20 @@
+# Durable storage for the audit chain and evidence.
+#
+# ReadWriteOnce, and the API runs as a single replica, because the v0.1
+# FileStore is a single-node store: two writers on one volume would interleave
+# appends and fork the hash chain. Horizontal scale waits for the clustered
+# store in v0.5 — see docs/ROADMAP.md.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: arc-control-data
+  namespace: arc-control
+  labels:
+    app.kubernetes.io/name: arc-control
+    app.kubernetes.io/component: storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi

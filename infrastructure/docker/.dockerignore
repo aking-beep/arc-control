@@ -1,0 +1,14 @@
+node_modules
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+.git
+.github
+docs
+evals
+examples
+infrastructure
+*.md
+.env
+.env.*
+arc-data

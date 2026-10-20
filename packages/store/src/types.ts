@@ -4,6 +4,7 @@ import type {
   Agent,
   ApprovalRequest,
   AuditRecord,
+  ChainExpectation,
   ChainVerification,
   Decision,
   EvidenceRecord,
@@ -41,7 +42,11 @@ export interface AuditLogStore {
   read(options?: LogReadOptions): Promise<readonly AuditRecord[]>;
   last(): Promise<AuditRecord | undefined>;
   count(): Promise<number>;
-  verify(): Promise<ChainVerification>;
+  /**
+   * Verifies the chain. Without an expectation this detects edits, broken
+   * links and interior deletions; truncation needs an expected head.
+   */
+  verify(expectation?: ChainExpectation): Promise<ChainVerification>;
 }
 
 /** Everything ARC Control persists. */
@@ -56,6 +61,18 @@ export interface ControlStore {
   readonly executions: Collection<ExecutionAttempt>;
   readonly evidence: Collection<EvidenceRecord>;
   readonly audit: AuditLogStore;
+
+  /**
+   * The head of the audit chain as this store recorded it, when the
+   * implementation keeps that separately from the log.
+   *
+   * Optional because it is a property of the storage layer, not of the model:
+   * an in-memory store has nowhere to keep it. Where it exists, verification
+   * can use it to detect truncation of the log — which walking the records
+   * alone cannot do, since a truncated chain is internally valid.
+   */
+  recordedAuditHead?(): Promise<ChainExpectation | undefined>;
+
   /** Flushes anything buffered and releases handles. */
   close(): Promise<void>;
 }

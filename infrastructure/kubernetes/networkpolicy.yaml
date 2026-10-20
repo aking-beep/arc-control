@@ -1,0 +1,148 @@
+# Network policy.
+#
+# This is the control that makes ARC Control's central guarantee true. Policy,
+# approvals and evidence are worth nothing if an agent can reach Stripe
+# directly — ARC Control is then a suggestion. Deciding which pods may reach
+# which systems is a cluster concern, not something the gateway can enforce
+# about itself, so it belongs here.
+#
+# Adapt the selectors to the cluster. The shape is what matters:
+#   agents may reach the API and nothing else outbound;
+#   only the API may reach target systems.
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: arc-control-api
+  namespace: arc-control
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: arc-control
+      app.kubernetes.io/component: api
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # The console, in this namespace.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: arc-control
+              app.kubernetes.io/component: console
+      ports:
+        - protocol: TCP
+          port: 8787
+    # Agents, wherever they run. Narrow this to the namespaces that actually
+    # host agents.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              arc-control.io/agents: "true"
+      ports:
+        - protocol: TCP
+          port: 8787
+  egress:
+    # DNS.
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Target systems and MCP servers, over TLS. Replace this with explicit
+    # CIDRs or an egress gateway: the connector holds real credentials, so
+    # "anywhere on 443" is wider than it needs to be.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              # Cloud instance metadata. The HTTP connector's host allowlist
+              # already refuses this; blocking it here means a bug in that
+              # allowlist is not sufficient on its own.
+              - 169.254.169.254/32
+              - 169.254.170.2/32
+      ports:
+        - protocol: TCP
+          port: 443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: arc-control-console
+  namespace: arc-control
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: arc-control
+      app.kubernetes.io/component: console
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Only the ingress controller. Humans reach the console through whatever
+    # authenticates them; see docs/TRUST_MODEL.md.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              arc-control.io/ingress: "true"
+      ports:
+        - protocol: TCP
+          port: 8788
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # The console talks to the API and to nothing else at all.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: arc-control
+              app.kubernetes.io/component: api
+      ports:
+        - protocol: TCP
+          port: 8787
+---
+# Agents may reach the control plane and nothing else.
+#
+# Apply this in each namespace that hosts agents, with the agent pod selector
+# adjusted. Without something of this shape, nothing stops an agent holding a
+# credential of its own and bypassing the gateway entirely.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agents-egress-through-arc-control-only
+  namespace: agents
+spec:
+  podSelector:
+    matchLabels:
+      arc-control.io/governed: "true"
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              app.kubernetes.io/name: arc-control
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: api
+      ports:
+        - protocol: TCP
+          port: 8787

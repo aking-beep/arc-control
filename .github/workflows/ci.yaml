@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Build, test and evals
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # 22 is the minimum the engines field allows; 24 catches anything the
+        # next LTS changes under us. There are no runtime dependencies, so the
+        # only moving part is Node itself.
+        node: ['22', '24']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      # --ignore-scripts skips the root `prepare` build, so the build step
+      # below is the one whose output is reported.
+      - name: Install
+        run: npm ci --ignore-scripts
+
+      - name: Build
+        run: npm run build
+
+      - name: Tests
+        run: node --test "packages/*/dist/**/*.test.js" "connectors/*/dist/**/*.test.js" "apps/*/dist/**/*.test.js"
+
+      # The evals assert the control plane's guarantees — a denied action never
+      # reaches the target system, adding a policy can only tighten
+      # authorization, one authorization means one effect. A break here is a
+      # break in the product, not in a test.
+      - name: Control-plane evals
+        run: node evals/run.js
+
+      - name: Examples
+        run: |
+          node examples/approval-required-agent/run.js
+          node examples/protected-mcp-server/run.js
+
+  no-runtime-dependencies:
+    name: No runtime dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # A control plane's supply chain is part of its threat model, so the
+      # "zero runtime dependencies" claim in the README is enforced rather
+      # than asserted. Workspace siblings are not third-party.
+      - name: Assert every dependency is a workspace sibling
+        run: node .github/scripts/check-dependencies.mjs
+
+  schemas:
+    name: Published schemas
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Parse and check every published schema
+        run: node .github/scripts/check-schemas.mjs
+
+  policies:
+    name: Lint the shipped policies
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+
+      # `arc policy lint` is what an operator runs before trusting a policy.
+      # Running it here keeps the command working and the shipped policies
+      # valid.
+      - name: arc policy lint
+        run: |
+          node .github/scripts/export-demo-policies.mjs /tmp/demo-policies.json
+          node packages/cli/dist/bin.js policy lint /tmp/demo-policies.json

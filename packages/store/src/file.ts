@@ -2,6 +2,7 @@ import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises
 import { join } from 'node:path';
 import type {
   Action,
+  ChainExpectation,
   Agent,
   AgentCredential,
   ApprovalRequest,
@@ -68,11 +69,18 @@ export class FileStore implements ControlStore {
     await mkdir(directory, { recursive: true });
 
     const auditPath = join(directory, 'audit.jsonl');
+    const headPath = join(directory, 'audit.head.json');
     const seed = await readJsonLines<AuditRecord>(auditPath);
+
     const audit = new MemoryAuditLog({
       seed,
       onAppend: async (record) => {
         await appendFile(auditPath, `${JSON.stringify(record)}\n`, 'utf8');
+        // The head marker is written after the record it describes, so a crash
+        // between the two leaves the marker behind the log rather than ahead
+        // of it — which reads as "a record was appended and not yet marked",
+        // not as "records are missing".
+        await writeHead(headPath, record);
       },
     });
 
@@ -93,6 +101,33 @@ export class FileStore implements ControlStore {
 
   get path(): string {
     return this.directory;
+  }
+
+  /**
+   * The recorded head of the audit chain, if the marker file is present.
+   *
+   * This exists because walking the records alone cannot detect truncation:
+   * lop entries off the end of `audit.jsonl` and what remains is a shorter,
+   * internally valid chain. Keeping the head in a separate file means
+   * truncating the log alone is caught.
+   *
+   * It is defence in depth, not a guarantee. An attacker who can rewrite
+   * `audit.jsonl` can usually rewrite this file too. What it reliably catches
+   * is the accidental case — a crash mid-write, a partial restore, a log
+   * rotation that dropped the tail — which is the common one. The real
+   * guarantee needs the head digest anchored outside ARC Control entirely.
+   */
+  async recordedAuditHead(): Promise<ChainExpectation | undefined> {
+    try {
+      const raw = JSON.parse(await readFile(join(this.directory, 'audit.head.json'), 'utf8')) as {
+        sequence?: number;
+        digest?: string;
+      };
+      if (typeof raw.digest !== 'string' || typeof raw.sequence !== 'number') return undefined;
+      return { headDigest: raw.digest, headSequence: raw.sequence };
+    } catch {
+      return undefined;
+    }
   }
 
   async close(): Promise<void> {
@@ -184,4 +219,16 @@ async function readJsonLines<T>(path: string): Promise<T[]> {
     }
   }
   return records;
+}
+
+/** Writes the head marker atomically, so a crash never leaves it half-written. */
+async function writeHead(path: string, record: AuditRecord): Promise<void> {
+  const body = JSON.stringify(
+    { sequence: record.sequence, digest: record.digest, updatedAt: new Date().toISOString() },
+    null,
+    2,
+  );
+  const temporary = `${path}.tmp`;
+  await writeFile(temporary, `${body}\n`, 'utf8');
+  await rename(temporary, path);
 }

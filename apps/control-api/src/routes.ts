@@ -1,4 +1,4 @@
-import { ArcError, type ActionRequest, type Policy } from '@arc-control/schemas';
+import { ArcError, type ActionRequest, type ChainExpectation, type Policy } from '@arc-control/schemas';
 import type { Gateway } from '@arc-control/gateway';
 import { scanManifest, type McpServerManifest } from '@arc-control/mcp-security';
 import { Router, withStatus, type RequestContext } from './http.js';
@@ -323,11 +323,30 @@ export function buildRoutes(options: RouteOptions): Router {
     };
   });
 
-  /** Verifies the hash chain end to end. */
+  /**
+   * Verifies the hash chain end to end.
+   *
+   * When the store keeps a head marker, the chain is checked against it, which
+   * catches truncation of the log — walking the records alone cannot, since a
+   * truncated chain is internally valid. An operator who has anchored the head
+   * digest elsewhere can pass it as `?headDigest=` to check against that
+   * instead, which is the stronger test.
+   */
   router.get('/v1/audit/verify', async (context) => {
     operators.authenticate(context);
-    const verification = await gateway.audit.verify();
-    return withStatus(verification.valid ? 200 : 409, verification);
+
+    const expectation = await resolveExpectation(gateway, context);
+    const verification = await gateway.audit.verify(expectation);
+
+    return withStatus(verification.valid ? 200 : 409, {
+      ...verification,
+      ...(verification.checkedAgainstExpectation
+        ? {}
+        : {
+            notice:
+              'The chain was checked against itself only. This detects an edited record and a missing record in the middle, but not truncation. Anchor the head digest outside ARC Control and pass it as ?headDigest= to detect that.',
+          }),
+    });
   });
 
   // --- MCP security -------------------------------------------------------
@@ -346,6 +365,27 @@ export function buildRoutes(options: RouteOptions): Router {
   });
 
   return router;
+}
+
+/**
+ * Works out what to check the chain against: an explicitly supplied head wins,
+ * then the store's own head marker, then nothing.
+ */
+async function resolveExpectation(
+  gateway: Gateway,
+  context: RequestContext,
+): Promise<ChainExpectation | undefined> {
+  const headDigest = context.query.get('headDigest');
+  const headSequence = context.query.get('headSequence');
+
+  if (headDigest || headSequence) {
+    return {
+      ...(headDigest ? { headDigest } : {}),
+      ...(headSequence ? { headSequence: positiveInt(headSequence, 0) } : {}),
+    };
+  }
+
+  return gateway.store.recordedAuditHead?.();
 }
 
 function requireFields(body: unknown, fields: readonly string[]): void {

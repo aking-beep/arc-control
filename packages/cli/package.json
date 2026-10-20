@@ -13,10 +13,11 @@
     }
   },
   "bin": {
-    "arc": "./dist/bin.js"
+    "arc": "./bin/arc.js"
   },
   "files": [
     "dist",
+    "bin",
     "README.md"
   ],
   "scripts": {

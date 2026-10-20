@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { detectDrift, manifestDigest, scanManifest, type McpServerManifest } from '@arc-control/mcp-security';
 import { McpClient } from '@arc-control/connector-mcp';
-import { flagString, type ParsedArgs } from '../args.js';
+import { flagBool, flagString, flagStrings, type ParsedArgs } from '../args.js';
 import { detail, out, paintSeverity, style } from '../output.js';
 
 /**
@@ -34,7 +34,7 @@ export async function scanMcp(args: ParsedArgs): Promise<number> {
 
   const report = scanManifest(manifest, suppress.length > 0 ? { suppress } : {});
 
-  if (args.flags.json === true) {
+  if (flagBool(args, 'json')) {
     out(JSON.stringify(report, null, 2));
     return report.passed ? 0 : 1;
   }
@@ -91,7 +91,7 @@ export async function diffMcp(args: ParsedArgs): Promise<number> {
 
   const drift = detectDrift(pinned, observed);
 
-  if (args.flags.json === true) {
+  if (flagBool(args, 'json')) {
     out(JSON.stringify(drift, null, 2));
     return drift.changed ? 1 : 0;
   }
@@ -133,9 +133,7 @@ async function readManifest(path: string | undefined): Promise<McpServerManifest
 
 async function fetchManifest(endpoint: string, args: ParsedArgs): Promise<McpServerManifest> {
   const headers: Record<string, string> = {};
-  const raw = args.flags.header;
-  for (const entry of Array.isArray(raw) ? raw : [raw]) {
-    if (typeof entry !== 'string') continue;
+  for (const entry of flagStrings(args, 'header')) {
     const separator = entry.indexOf(':');
     if (separator === -1) continue;
     headers[entry.slice(0, separator).trim()] = entry.slice(separator + 1).trim();

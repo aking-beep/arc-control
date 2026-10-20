@@ -457,6 +457,173 @@ export default {
       },
     },
     {
+      name: 'truncating the audit log is undetectable without an anchored head',
+      async run() {
+        const { verifyChain } = await import('@arc-control/audit');
+        const { gateway, apiKey } = await buildHarness();
+
+        await gateway.handle(apiKey, refund(120));
+        await gateway.handle(apiKey, refund(4200));
+        const records = await gateway.audit.read();
+
+        // This is a real limit of hash chaining, not a bug: lop records off
+        // the end and what remains is a shorter chain in which every digest
+        // and every link is correct. The eval exists so nobody later reads
+        // `valid: true` here as proof the log is complete.
+        const truncated = records.slice(0, -3);
+        const blind = verifyChain(truncated);
+
+        expect.equal(blind.valid, true, 'a truncated chain is internally valid — this is the limit');
+        expect.equal(
+          blind.checkedAgainstExpectation,
+          false,
+          'and the result must say it was checked against itself only',
+        );
+      },
+    },
+    {
+      name: 'truncation is detected when the head was anchored',
+      async run() {
+        const { verifyChain } = await import('@arc-control/audit');
+        const { gateway, apiKey } = await buildHarness();
+
+        await gateway.handle(apiKey, refund(120));
+        await gateway.handle(apiKey, refund(4200));
+        const records = await gateway.audit.read();
+
+        // What an operator records out of band, as `arc audit verify` prints it.
+        const anchored = { headDigest: records.at(-1).digest, headSequence: records.at(-1).sequence };
+
+        expect.equal(verifyChain(records, anchored).valid, true, 'the intact chain matches its anchor');
+
+        const checked = verifyChain(records.slice(0, -3), anchored);
+        expect.equal(checked.valid, false, 'a truncated chain must fail against an anchored head');
+        expect.ok(
+          checked.failures.some((failure) => failure.problem === 'truncated'),
+          'and the failure must name truncation',
+        );
+        expect.equal(checked.checkedAgainstExpectation, true, 'and record that an expectation was used');
+      },
+    },
+    {
+      name: 'a rewritten chain is detected when the head was anchored',
+      async run() {
+        const { verifyChain } = await import('@arc-control/audit');
+        const { AuditLog } = await import('@arc-control/audit');
+        const { MemoryStore } = await import('@arc-control/store');
+        const { gateway, apiKey } = await buildHarness();
+
+        await gateway.handle(apiKey, refund(4200));
+        const original = await gateway.audit.read();
+        const anchored = { headDigest: original.at(-1).digest, headSequence: original.at(-1).sequence };
+
+        // An attacker with write access to the storage rebuilds the chain from
+        // scratch, omitting the denial. Every digest is recomputed, so the
+        // chain verifies against itself — and fails against the anchor.
+        const rebuilt = new AuditLog(new MemoryStore());
+        for (const record of original.filter((candidate) => candidate.type !== 'action.denied')) {
+          await rebuilt.append({
+            type: record.type,
+            organizationId: record.organizationId,
+            actor: record.actor,
+            subject: record.subject,
+            summary: record.summary,
+            data: record.data,
+          });
+        }
+        const forged = await rebuilt.read();
+
+        expect.equal(verifyChain(forged).valid, true, 'a fully rewritten chain verifies against itself');
+        expect.equal(
+          verifyChain(forged, anchored).valid,
+          false,
+          'but not against a head anchored outside ARC Control',
+        );
+      },
+    },
+    {
+      name: 'the durable store records its own audit head, catching a truncated log',
+      async run() {
+        const { mkdtemp, rm, readFile, writeFile } = await import('node:fs/promises');
+        const { tmpdir } = await import('node:os');
+        const { join } = await import('node:path');
+        const { FileStore } = await import('@arc-control/store');
+        const { Gateway } = await import('@arc-control/gateway');
+        const { SimulationConnector } = await import('@arc-control/connector-simulation');
+
+        const directory = await mkdtemp(join(tmpdir(), 'arc-eval-head-'));
+        const actor = { identifier: 'evals', via: 'system' };
+
+        try {
+          const store = await FileStore.open(directory);
+          const connector = new SimulationConnector().handle('stripe.refund', () => ({ ok: true }));
+          const gateway = new Gateway({ store });
+          gateway.addConnector(connector);
+
+          await gateway.admin.registerTool(
+            {
+              name: 'stripe.refund',
+              description: 'Refund a charge.',
+              effect: 'irreversible',
+              connector: 'simulation',
+              parameters: [
+                { name: 'customer', type: 'string', required: true },
+                { name: 'amount', type: 'number', required: true },
+              ],
+            },
+            actor,
+          );
+          await gateway.admin.publishPolicy(
+            {
+              id: 'ALLOW-ALL',
+              version: 1,
+              name: 'Allow refunds',
+              enabled: true,
+              match: { tools: ['stripe.refund'] },
+              rules: [{ id: 'allow', when: { always: true }, effect: 'ALLOW', reason: 'permitted' }],
+              fallback: { effect: 'DENY', reason: 'no rule matched' },
+            },
+            actor,
+          );
+          const agent = await gateway.admin.registerAgent(
+            { name: 'finance-agent', owner: 'finance-ops@example.com', roles: ['finance'] },
+            actor,
+          );
+          const { apiKey } = await gateway.admin.issueKey(agent.id, actor);
+          await gateway.handle(apiKey, refund(100));
+
+          const head = await store.recordedAuditHead();
+          expect.ok(head?.headDigest, 'the store must record its own head');
+          expect.equal(
+            (await gateway.audit.verify(head)).valid,
+            true,
+            'and the intact chain must verify against it',
+          );
+          await store.close();
+
+          // Truncate the log alone, leaving the marker behind.
+          const logPath = join(directory, 'audit.jsonl');
+          const lines = (await readFile(logPath, 'utf8')).split('\n').filter(Boolean);
+          await writeFile(logPath, `${lines.slice(0, -2).join('\n')}\n`, 'utf8');
+
+          const reopened = await FileStore.open(directory);
+          try {
+            const expectation = await reopened.recordedAuditHead();
+            const verification = await reopened.audit.verify(expectation);
+            expect.equal(verification.valid, false, 'truncating the log alone must be caught by the marker');
+            expect.ok(
+              verification.failures.some((failure) => failure.problem === 'truncated'),
+              'and reported as truncation',
+            );
+          } finally {
+            await reopened.close();
+          }
+        } finally {
+          await rm(directory, { recursive: true, force: true });
+        }
+      },
+    },
+    {
       name: 'an evidence record verifies on its own, and fails if altered',
       async run() {
         const { verifyEvidence } = await import('@arc-control/evidence');

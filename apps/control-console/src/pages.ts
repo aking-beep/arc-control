@@ -373,7 +373,8 @@ export async function auditPage(context: PageContext): Promise<string> {
   const body = html`<h1>Audit</h1>
     <p class="lede">
       Append-only and hash-chained: each record carries the digest of its predecessor, so editing one breaks every link
-      after it and removing one leaves a sequence gap. Verification recomputes the chain from the records alone.
+      after it and removing one from the middle leaves a sequence gap. Verification recomputes the chain from the
+      records alone, which does not detect truncation — see below.
     </p>
 
     <div class="card">
@@ -385,9 +386,21 @@ export async function auditPage(context: PageContext): Promise<string> {
             ${verification.recordsChecked} record(s)`,
           )}
       ${verification.valid ? '' : jsonBlock(verification.failures)}
+
+      ${verification.headDigest
+        ? raw(html`<p class="reason" style="margin-bottom:4px">
+            Head: <span class="mono">${verification.headDigest}</span>
+            ${verification.headSequence === undefined ? '' : raw(html`<span class="reason"> (sequence ${verification.headSequence})</span>`)}
+          </p>`)
+        : ''}
+
       <p class="reason" style="margin-bottom:0">
-        This is tamper evidence, not tamper proofing: an attacker who controls the storage can rewrite the whole chain.
-        Anchoring the head digest outside ARC Control is what closes that gap.
+        ${verification.checkedAgainstExpectation
+          ? 'Checked against a recorded head, so truncation of the log would have been detected.'
+          : 'Checked against itself only. This detects an edited record and a record missing from the middle, but not truncation: removing entries from the end leaves a shorter chain that still verifies.'}
+        This is tamper evidence, not tamper proofing — an attacker who controls the storage can rewrite the whole chain
+        and recompute every digest. Recording the head digest above somewhere ARC Control cannot reach is what closes
+        both gaps.
       </p>
     </div>
 

@@ -2,7 +2,8 @@ import { readFile } from 'node:fs/promises';
 import { verifyEvidence } from '@arc-control/evidence';
 import { verifyChain } from '@arc-control/audit';
 import { FileStore } from '@arc-control/store';
-import type { AuditRecord, EvidenceRecord } from '@arc-control/schemas';
+import { ArcError } from '@arc-control/schemas';
+import type { AuditRecord, ChainExpectation, EvidenceRecord } from '@arc-control/schemas';
 import { flagString, type ParsedArgs } from '../args.js';
 import { detail, out, style, table } from '../output.js';
 
@@ -21,38 +22,113 @@ export async function verifyAudit(args: ParsedArgs): Promise<number> {
 
   if (!dataDir && !file) {
     out('usage: arc audit verify (--data <dir> | --file <audit.jsonl>)');
+    out();
+    out('  --expect-head <digest>     head digest recorded earlier, from an anchor');
+    out('  --expect-records <count>   sequence the chain should reach');
+    out();
+    out('Without an expected head the chain is checked against itself, which');
+    out('detects an edited record and a missing record in the middle — but not');
+    out('truncation, because a truncated chain is internally valid.');
     return 2;
   }
 
   const records = file ? await readJsonLines<AuditRecord>(file) : await readFromStore(dataDir!);
-  const verification = verifyChain(records);
+
+  // What to check against, strongest first: a head the operator anchored
+  // elsewhere, then the store's own head marker, then nothing.
+  const expectation = await resolveExpectation(args, dataDir, file);
+  const verification = verifyChain(records, expectation.value ?? {});
 
   out(style.bold('Audit chain verification'));
   detail([
     ['source', file ?? `${dataDir}/audit.jsonl`],
     ['records', String(verification.recordsChecked)],
+    ['checked against', expectation.describe],
     ['result', verification.valid ? style.green('INTACT') : style.red('BROKEN')],
   ]);
   out();
 
-  if (verification.valid) {
-    const head = records.at(-1);
-    if (head) {
-      out(style.dim('Head digest — anchor this outside ARC Control to make the chain tamper-proof'));
-      out(`  ${head.digest}`);
-      out();
-    }
-    out(style.green('Every record matches its digest and links to its predecessor.'));
-    return 0;
+  if (!verification.valid) {
+    table(
+      ['sequence', 'problem', 'detail'],
+      verification.failures.map((failure) => [String(failure.sequence), failure.problem, failure.detail]),
+    );
+    out();
+    out(
+      style.red(
+        'The audit log has been altered. Treat every record at or after the first failure as untrustworthy.',
+      ),
+    );
+    return 1;
   }
 
-  table(
-    ['sequence', 'problem', 'detail'],
-    verification.failures.map((failure) => [String(failure.sequence), failure.problem, failure.detail]),
-  );
-  out();
-  out(style.red('The audit log has been altered. Treat every record at or after the first failure as untrustworthy.'));
-  return 1;
+  if (verification.headDigest) {
+    out(style.dim('Head digest — record this outside ARC Control, then pass it back with --expect-head'));
+    out(`  ${verification.headDigest}  ${style.dim(`(sequence ${verification.headSequence})`)}`);
+    out();
+  }
+
+  out(style.green('Every record matches its digest and links to its predecessor.'));
+
+  if (!verification.checkedAgainstExpectation) {
+    out();
+    out(
+      style.yellow(
+        'Note: nothing was available to check the head against, so truncation would not\n' +
+          '      have been detected — removing records from the end leaves a shorter chain\n' +
+          '      that verifies. Anchor the head digest above and pass it as --expect-head.',
+      ),
+    );
+  }
+
+  return 0;
+}
+
+interface ResolvedExpectation {
+  readonly value: ChainExpectation | undefined;
+  readonly describe: string;
+}
+
+async function resolveExpectation(
+  args: ParsedArgs,
+  dataDir: string | undefined,
+  file: string | undefined,
+): Promise<ResolvedExpectation> {
+  const expectedHead = flagString(args, 'expect-head');
+  const expectedRecords = flagString(args, 'expect-records');
+
+  if (expectedHead || expectedRecords) {
+    const parsedCount = expectedRecords === undefined ? undefined : Number(expectedRecords);
+    if (parsedCount !== undefined && (!Number.isInteger(parsedCount) || parsedCount < 0)) {
+      throw new ArcError('invalid_request', '--expect-records must be a non-negative integer');
+    }
+
+    return {
+      value: {
+        ...(expectedHead ? { headDigest: expectedHead } : {}),
+        ...(parsedCount !== undefined ? { headSequence: parsedCount } : {}),
+      },
+      describe: style.green('the head you supplied'),
+    };
+  }
+
+  // The store's own marker is weaker than an external anchor — an attacker who
+  // can rewrite the log can usually rewrite the marker beside it — but it
+  // reliably catches the accidental case: a crash mid-write, a partial
+  // restore, a rotation that dropped the tail.
+  if (dataDir && !file) {
+    const store = await FileStore.open(dataDir);
+    try {
+      const recorded = await store.recordedAuditHead();
+      if (recorded) {
+        return { value: recorded, describe: `the store's head marker ${style.dim('(audit.head.json)')}` };
+      }
+    } finally {
+      await store.close();
+    }
+  }
+
+  return { value: undefined, describe: style.yellow('itself only — truncation undetectable') };
 }
 
 export async function verifyEvidenceFile(args: ParsedArgs): Promise<number> {

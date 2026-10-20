@@ -5,6 +5,7 @@ import type {
   AgentCredential,
   ApprovalRequest,
   AuditRecord,
+  ChainExpectation,
   ChainVerification,
   Decision,
   EvidenceRecord,
@@ -94,17 +95,29 @@ export class MemoryAuditLog implements AuditLogStore {
     return this.#records.length;
   }
 
-  async verify(): Promise<ChainVerification> {
-    return verifyChain(this.#records);
+  async verify(expectation?: ChainExpectation): Promise<ChainVerification> {
+    return verifyChain(this.#records, expectation);
   }
 }
 
 /**
- * Recomputes every digest and link in a chain. This is deliberately a pure
- * function over the records: an auditor can run it against an export without
- * trusting the system that produced it.
+ * Recomputes every digest and link in a chain.
+ *
+ * This is deliberately a pure function over the records: an auditor can run it
+ * against an export without trusting the system that produced it.
+ *
+ * What it detects on its own: a record whose content no longer matches its
+ * digest, a broken link, and a missing record in the middle of the chain.
+ *
+ * What it cannot detect on its own: **truncation**. Remove records from the
+ * end and what remains is a shorter chain that is internally perfectly valid.
+ * Catching that needs an expected head, which has to come from outside the log
+ * — pass `expectation`, and see `ChainExpectation`.
  */
-export function verifyChain(records: readonly AuditRecord[]): ChainVerification {
+export function verifyChain(
+  records: readonly AuditRecord[],
+  expectation: ChainExpectation = {},
+): ChainVerification {
   const failures: ChainVerification['failures'][number][] = [];
   let expectedPrevious = AUDIT_GENESIS_DIGEST;
   let expectedSequence = 1;
@@ -142,7 +155,60 @@ export function verifyChain(records: readonly AuditRecord[]): ChainVerification 
     expectedSequence = record.sequence + 1;
   }
 
-  return { valid: failures.length === 0, recordsChecked: records.length, failures };
+  const head = records.at(-1);
+  const checkedAgainstExpectation =
+    expectation.headDigest !== undefined || expectation.headSequence !== undefined;
+
+  if (expectation.headSequence !== undefined) {
+    if (!head) {
+      failures.push({
+        sequence: 0,
+        id: '(none)',
+        problem: 'empty',
+        detail: `the chain is empty but was expected to reach sequence ${expectation.headSequence}`,
+      });
+    } else if (head.sequence < expectation.headSequence) {
+      failures.push({
+        sequence: head.sequence,
+        id: head.id,
+        problem: 'truncated',
+        detail: `the chain ends at sequence ${head.sequence} but was expected to reach ${expectation.headSequence}: ${expectation.headSequence - head.sequence} record(s) are missing from the end`,
+      });
+    } else if (head.sequence > expectation.headSequence) {
+      failures.push({
+        sequence: head.sequence,
+        id: head.id,
+        problem: 'head_mismatch',
+        detail: `the chain reaches sequence ${head.sequence} but was expected to end at ${expectation.headSequence}`,
+      });
+    }
+  }
+
+  if (expectation.headDigest !== undefined) {
+    if (!head) {
+      failures.push({
+        sequence: 0,
+        id: '(none)',
+        problem: 'empty',
+        detail: 'the chain is empty but an expected head digest was given',
+      });
+    } else if (head.digest !== expectation.headDigest) {
+      failures.push({
+        sequence: head.sequence,
+        id: head.id,
+        problem: 'head_mismatch',
+        detail: `the head digest is ${head.digest} but ${expectation.headDigest} was expected; the chain has been rewritten or truncated`,
+      });
+    }
+  }
+
+  return {
+    valid: failures.length === 0,
+    recordsChecked: records.length,
+    failures,
+    ...(head ? { headDigest: head.digest, headSequence: head.sequence } : {}),
+    checkedAgainstExpectation,
+  };
 }
 
 /** The digest of an audit record: everything but the digest field itself. */

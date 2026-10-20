@@ -5,6 +5,7 @@ import {
   newId,
   type AuditEventType,
   type AuditRecord,
+  type ChainExpectation,
   type ChainVerification,
 } from '@arc-control/schemas';
 import { computeAuditDigest, verifyChain, type ControlStore, type LogReadOptions } from '@arc-control/store';
@@ -33,10 +34,13 @@ export interface AuditEvent {
  * sequence gap. `verify()` recomputes the whole chain and needs nothing but
  * the records, which is what makes an export independently checkable.
  *
- * This is tamper *evidence*, not tamper *proofing*: an attacker who controls
- * the storage can rewrite the entire chain. Anchoring the head digest
- * somewhere ARC Control does not control is what closes that gap, and is the
- * v0.5 work tracked in the roadmap.
+ * This is tamper *evidence*, not tamper *proofing*, and the limit has two
+ * parts. An attacker who controls the storage can rewrite the entire chain and
+ * recompute every digest. And walking the records alone cannot detect
+ * truncation at all: remove entries from the end and what remains is a
+ * shorter, internally valid chain, which is why `verify` takes an expected
+ * head. Both parts close the same way — anchoring the head digest somewhere
+ * ARC Control does not control, which is the v0.5 work in the roadmap.
  */
 export class AuditLog {
   readonly #store: ControlStore;
@@ -78,9 +82,16 @@ export class AuditLog {
     return this.#store.audit.count();
   }
 
-  /** Verifies the stored chain end to end. */
-  async verify(): Promise<ChainVerification> {
-    return this.#store.audit.verify();
+  /**
+   * Verifies the stored chain end to end.
+   *
+   * Without an expectation this detects an edited record, a broken link and a
+   * missing record in the middle of the chain. It cannot detect truncation —
+   * removing records from the end leaves a shorter chain that is internally
+   * valid — so pass the head an operator recorded earlier to catch that.
+   */
+  async verify(expectation?: ChainExpectation): Promise<ChainVerification> {
+    return this.#store.audit.verify(expectation);
   }
 
   /** Records concerning one subject, oldest first: the timeline for an action or agent. */

@@ -129,8 +129,30 @@ export class ArcControlClient {
     return this.#request('GET', `/v1/audit${suffix}`, undefined, 'operator');
   }
 
-  async verifyAudit(): Promise<{ valid: boolean; recordsChecked: number; failures: readonly unknown[] }> {
-    return this.#request('GET', '/v1/audit/verify', undefined, 'operator');
+  /**
+   * Verifies the audit chain.
+   *
+   * `checkedAgainstExpectation` says whether the chain was compared with a
+   * recorded head. When it is false the result means only that the records
+   * present are self-consistent — truncation would not have been detected.
+   * Pass a head anchored outside ARC Control to check for that.
+   */
+  async verifyAudit(
+    expectation: { headDigest?: string; headSequence?: number } = {},
+  ): Promise<{
+    valid: boolean;
+    recordsChecked: number;
+    failures: readonly unknown[];
+    headDigest?: string;
+    headSequence?: number;
+    checkedAgainstExpectation: boolean;
+    notice?: string;
+  }> {
+    const search = new URLSearchParams();
+    if (expectation.headDigest) search.set('headDigest', expectation.headDigest);
+    if (expectation.headSequence !== undefined) search.set('headSequence', String(expectation.headSequence));
+    const suffix = search.size > 0 ? `?${search.toString()}` : '';
+    return this.#request('GET', `/v1/audit/verify${suffix}`, undefined, 'operator');
   }
 
   async suspendAgent(agentId: string): Promise<Record<string, unknown>> {

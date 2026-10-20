@@ -1,0 +1,95 @@
+name: Security review
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly, so a newly-published advisory against the toolchain surfaces
+    # without waiting for someone to push.
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: npm audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci --ignore-scripts
+
+      # There are no third-party runtime dependencies, so this covers the
+      # development toolchain. A moderate finding in TypeScript does not
+      # reach a deployed control plane, but it should still be seen.
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=low
+
+      - name: Audit the full tree
+        run: npm audit --audit-level=moderate
+        continue-on-error: true
+
+  secrets:
+    name: No secrets in the tree
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # An agent key has a known, distinctive shape. A real one committed to
+      # this repository would be a live credential for somebody's control
+      # plane, so it is worth a dedicated check rather than relying on a
+      # generic scanner to recognize the format.
+      - name: Look for committed agent credentials
+        run: |
+          if git grep -nIE 'arck_[0-9a-f]{16}_[0-9a-f]{64}' -- . ':!*.md' ':!.github/**'; then
+            echo
+            echo "A real-shaped agent credential is committed. Revoke it, then remove it."
+            exit 1
+          fi
+          echo "No agent credentials found."
+
+      - name: Look for a populated operator token
+        run: |
+          if git grep -nIE 'ARC_OPERATOR_TOKEN=[^\s"'"'"']+' -- . ':!*.md' ':!.github/**' ':!**/.env.example'; then
+            echo
+            echo "An operator token appears to be committed with a value."
+            exit 1
+          fi
+          echo "No populated operator token found."
+
+  guarantees:
+    name: Guarantees still hold
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+
+      # Duplicated from CI deliberately. These are the properties the product
+      # is built on, and this job exists so a failure is reported as a
+      # security failure rather than as a test failure.
+      - name: Authorization and security evals
+        run: node evals/run.js authorization security
+
+      - name: Reliability evals
+        run: node evals/run.js reliability

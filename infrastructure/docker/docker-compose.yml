@@ -1,0 +1,84 @@
+# ARC Control — a single-node deployment.
+#
+# Enough for a pilot, a demonstration or an air-gapped install. The API and
+# console are separate services because they have different exposure: the API
+# is reached by agents, the console by humans.
+#
+# Before running:
+#   cp .env.example .env   and set ARC_OPERATOR_TOKEN to something generated
+#
+# Then:
+#   docker compose -f infrastructure/docker/docker-compose.yml up --build
+
+name: arc-control
+
+services:
+  api:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/Dockerfile
+    command: ["node", "apps/control-api/dist/main.js"]
+    environment:
+      ARC_HOST: 0.0.0.0
+      ARC_PORT: "8787"
+      ARC_DATA_DIR: /var/lib/arc-control
+      # Operator endpoints refuse every request when this is unset, which is
+      # the correct default: an unauthenticated control plane is worse than
+      # none, because people believe it.
+      ARC_OPERATOR_TOKEN: ${ARC_OPERATOR_TOKEN:?set ARC_OPERATOR_TOKEN in .env}
+      ARC_SEED_DEMO: ${ARC_SEED_DEMO:-false}
+    ports:
+      # Bound to loopback. Agents reach this through the compose network;
+      # exposing it publicly is a deployment decision, not a default.
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - arc-data:/var/lib/arc-control
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8787/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+
+  console:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/Dockerfile
+    command: ["node", "apps/control-console/dist/main.js"]
+    environment:
+      ARC_CONSOLE_HOST: 0.0.0.0
+      ARC_CONSOLE_PORT: "8788"
+      ARC_API_BASE: http://api:8787
+      ARC_OPERATOR_TOKEN: ${ARC_OPERATOR_TOKEN:?set ARC_OPERATOR_TOKEN in .env}
+      # v0.1 takes the operator's identity from configuration. Put something
+      # that authenticates humans in front of this; see docs/TRUST_MODEL.md.
+      ARC_OPERATOR_IDENTITY: ${ARC_OPERATOR_IDENTITY:-operator@localhost}
+      ARC_OPERATOR_ROLES: ${ARC_OPERATOR_ROLES:-finance-manager,platform-oncall}
+    ports:
+      - "127.0.0.1:8788:8788"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+
+volumes:
+  arc-data:

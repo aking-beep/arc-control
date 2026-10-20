@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { digest, validatePolicy, type Policy, type PolicyInput } from '@arc-control/schemas';
 import { PolicyEngine } from '@arc-control/policy-engine';
-import { flagString, type ParsedArgs } from '../args.js';
+import { flagBool, flagString, type ParsedArgs } from '../args.js';
 import { detail, out, paintEffect, style, table } from '../output.js';
 
 /**
@@ -90,7 +90,7 @@ export async function testPolicy(args: ParsedArgs): Promise<number> {
       ],
     ]);
 
-    if (args.flags.trace === true || !passed) {
+    if (flagBool(args, 'trace') || !passed) {
       out(`  ${style.dim('trace')}`);
       table(
         ['policy', 'rule', 'matched', 'effect', 'note'],
