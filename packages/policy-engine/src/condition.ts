@@ -1,4 +1,4 @@
-import type { Condition } from '@arc-control/schemas';
+import { compilePattern, PatternError, type Condition } from '@arc-control/schemas';
 import { MISSING, resolveOperand, type Resolved } from './reference.js';
 
 /**
@@ -100,13 +100,15 @@ function evaluateComparison(operator: string, operand: unknown, input: unknown):
       if (text.length > MAX_MATCH_LENGTH) {
         throw new ConditionError(`matches refuses input longer than ${MAX_MATCH_LENGTH} characters`);
       }
-      let pattern: RegExp;
       try {
-        pattern = new RegExp(right);
-      } catch {
-        throw new ConditionError(`"${right}" is not a valid regular expression`);
+        return compilePattern(right).test(text);
+      } catch (cause) {
+        throw new ConditionError(
+          cause instanceof PatternError
+            ? `"${right}" is not a usable regular expression: ${cause.message}`
+            : String(cause),
+        );
       }
-      return pattern.test(text);
     }
 
     default:

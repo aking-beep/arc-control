@@ -38,6 +38,7 @@ export type Condition =
   | { readonly contains: readonly [Operand, Operand] }
   | { readonly startsWith: readonly [Operand, Operand] }
   | { readonly endsWith: readonly [Operand, Operand] }
+  /** JavaScript regular expression syntax. A leading `(?i)` is honoured as a case-insensitive flag. */
   | { readonly matches: readonly [Operand, string] }
   | { readonly exists: Operand }
   | { readonly and: readonly Condition[] }

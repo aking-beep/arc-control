@@ -10,6 +10,7 @@ export * from './evidence.js';
 export * from './audit.js';
 export * from './validate.js';
 export * from './redact.js';
+export * from './regex.js';
 
 /** Version of the ARC Control object model these types describe. */
 export const SCHEMA_VERSION = 1 as const;

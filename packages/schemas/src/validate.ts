@@ -1,6 +1,7 @@
 import type { ParameterSpec } from './tool.js';
 import type { Condition, Policy, PolicyRule } from './policy.js';
 import { CONDITION_OPERATORS } from './policy.js';
+import { patternCompiles } from './regex.js';
 
 export interface ValidationIssue {
   readonly path: string;
@@ -245,10 +246,9 @@ export function validateCondition(condition: Condition, path: string, depth = 0)
     if (typeof operand[1] !== 'string') {
       return [{ path: `${path}.matches[1]`, message: 'expected a regular expression string' }];
     }
-    try {
-      new RegExp(operand[1]);
-    } catch {
-      return [{ path: `${path}.matches[1]`, message: 'is not a valid regular expression' }];
+    const compiled = patternCompiles(operand[1]);
+    if (!compiled.ok) {
+      return [{ path: `${path}.matches[1]`, message: `is not a usable regular expression: ${compiled.message}` }];
     }
   }
 

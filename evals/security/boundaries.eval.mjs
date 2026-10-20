@@ -316,6 +316,137 @@ export default {
       },
     },
     {
+      name: 'an MCP tool rewritten after registration is refused at execution',
+      async run() {
+        const { Gateway } = await import('@arc-control/gateway');
+        const { MemoryStore } = await import('@arc-control/store');
+        const { McpConnector } = await import('@arc-control/connector-mcp');
+        const { createMockMcpServer } = await import('../../examples/protected-mcp-server/mock-mcp-server.js');
+
+        const vendor = createMockMcpServer();
+        const port = await vendor.listen();
+        const actor = { identifier: 'evals', via: 'system' };
+
+        try {
+          const connector = new McpConnector({ endpoint: `http://127.0.0.1:${port}/mcp`, name: 'vendor-docs' });
+          await connector.connect();
+
+          const gateway = new Gateway({ store: new MemoryStore() });
+          gateway.addConnector(connector);
+
+          await gateway.admin.registerTool(
+            {
+              name: 'vendor.search_docs',
+              description: 'Search the vendor documentation index.',
+              system: 'vendor',
+              effect: 'write',
+              connector: connector.name,
+              connectorConfig: { mcpTool: 'search_docs' },
+              parameters: [{ name: 'query', type: 'string', required: true }],
+            },
+            actor,
+          );
+          await gateway.admin.publishPolicy(
+            {
+              id: 'VENDOR-001',
+              version: 1,
+              name: 'Vendor access',
+              enabled: true,
+              match: { systems: ['vendor'] },
+              rules: [{ id: 'allow', when: { always: true }, effect: 'ALLOW', reason: 'permitted' }],
+              fallback: { effect: 'DENY', reason: 'no rule matched' },
+            },
+            actor,
+          );
+          const agent = await gateway.admin.registerAgent(
+            { name: 'research-agent', owner: 'research@example.com', roles: ['research'] },
+            actor,
+          );
+          const { apiKey } = await gateway.admin.issueKey(agent.id, actor);
+
+          const before = await gateway.handle(apiKey, {
+            tool: 'vendor.search_docs',
+            parameters: { query: 'rate limits' },
+          });
+          expect.equal(before.outcome, 'executed', 'the reviewed tool works');
+
+          // The vendor silently rewrites the approved description. MCP gives
+          // the client no notification that this happened.
+          vendor.poisonSearchDocs();
+
+          const after = await gateway.handle(apiKey, {
+            tool: 'vendor.search_docs',
+            parameters: { query: 'rate limits' },
+          });
+          expect.equal(after.outcome, 'failed', 'a tool that is no longer the approved one must not be called');
+          expect.equal(after.error.code, 'manifest_drift', 'and the refusal must say why');
+
+          const evidence = await gateway.evidence(after.evidenceId);
+          expect.equal(evidence.execution.status, 'failed', 'the refusal must be evidenced');
+        } finally {
+          await vendor.close();
+        }
+      },
+    },
+    {
+      name: 'a write tool verifies its pin before every call, a read tool may cache',
+      async run() {
+        const { McpConnector } = await import('@arc-control/connector-mcp');
+        const { createMockMcpServer } = await import('../../examples/protected-mcp-server/mock-mcp-server.js');
+
+        const vendor = createMockMcpServer();
+        const port = await vendor.listen();
+
+        try {
+          const connector = new McpConnector({ endpoint: `http://127.0.0.1:${port}/mcp`, name: 'vendor-docs' });
+          await connector.connect();
+
+          const base = {
+            id: 'arc_tl_x',
+            name: 'vendor.search_docs',
+            description: '',
+            system: 'vendor',
+            riskTier: 'high',
+            connector: connector.name,
+            connectorConfig: { mcpTool: 'search_docs' },
+            parameters: [],
+            labels: {},
+            createdAt: '',
+            updatedAt: '',
+          };
+          const context = (effect) => ({
+            action: { parameters: { query: 'x' } },
+            tool: { ...base, effect },
+            principal: {},
+            signal: new AbortController().signal,
+            attempt: 1,
+          });
+
+          vendor.poisonSearchDocs();
+
+          // A read may run against a pin verified moments ago: the cost of
+          // re-listing before every call is not worth it for a query.
+          const read = await connector.execute(context('read'));
+          expect.ok(read.output, 'a read inside the window still runs');
+
+          // A write must not. A stale pin there means acting on a tool
+          // description nobody approved.
+          await expect.rejects(
+            () => connector.execute(context('write')),
+            'manifest_drift',
+            'a write must verify its pin before every call',
+          );
+          await expect.rejects(
+            () => connector.execute(context('irreversible')),
+            'manifest_drift',
+            'and so must an irreversible action',
+          );
+        } finally {
+          await vendor.close();
+        }
+      },
+    },
+    {
       name: 'an agent cannot act as a different agent by claiming one',
       async run() {
         const { gateway, apiKey } = await buildHarness();

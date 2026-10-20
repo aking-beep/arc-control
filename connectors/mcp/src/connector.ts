@@ -12,14 +12,21 @@ export interface McpConnectorOptions extends McpClientOptions {
    */
   readonly enforceManifestPinning?: boolean;
   /**
-   * How long a verified tool surface is trusted before it is re-read, in
-   * milliseconds. Defaults to 60 seconds.
+   * How long a verified tool surface may be trusted before it is re-read, in
+   * milliseconds.
    *
-   * Verifying on literally every call would double the latency ARC Control
-   * adds to each action, and a server that rewrites a description mid-window
-   * is caught by the next check, the console's drift report or the scheduled
-   * re-scan. Set this to 0 to verify before every call where that cost is
-   * worth paying.
+   * Left unset, the window depends on what the tool does, because that is
+   * what decides whether the cost is worth paying:
+   *
+   *  - A `read` tool gets a 60 second window. Re-listing before every call
+   *    would double the latency ARC Control adds, and the worst outcome of a
+   *    stale pin on a read is that one query ran against a server whose
+   *    description had changed.
+   *  - A `write` or `irreversible` tool is verified before **every** call. A
+   *    stale pin there means taking an irreversible action on behalf of a tool
+   *    description nobody approved, and no latency saving justifies that.
+   *
+   * Set a number to use one window for every effect; 0 always verifies.
    */
   readonly manifestRecheckMs?: number;
 }
@@ -43,7 +50,7 @@ export class McpConnector implements Connector {
   readonly name: string;
   readonly #client: McpClient;
   readonly #enforcePinning: boolean;
-  readonly #recheckMs: number;
+  readonly #recheckMs: number | undefined;
   #pinned: McpServerManifest | undefined;
   #pinnedDigest: string | undefined;
   #verifiedAt = 0;
@@ -52,7 +59,7 @@ export class McpConnector implements Connector {
     this.#client = new McpClient(options);
     this.name = `mcp:${this.#client.name}`;
     this.#enforcePinning = options.enforceManifestPinning ?? true;
-    this.#recheckMs = options.manifestRecheckMs ?? 60_000;
+    this.#recheckMs = options.manifestRecheckMs;
   }
 
   get endpoint(): string {
@@ -103,7 +110,7 @@ export class McpConnector implements Connector {
   async execute(context: ExecutionContext): Promise<ConnectorResult> {
     const remoteName = this.#remoteName(context.tool);
 
-    if (this.#enforcePinning) await this.#assertSurfaceUnchanged(remoteName);
+    if (this.#enforcePinning) await this.#assertSurfaceUnchanged(remoteName, context.tool.effect);
 
     const output = await this.#client.callTool(remoteName, context.action.parameters, context.signal);
     return { output, metadata: { mcpServer: this.#client.name, mcpTool: remoteName } };
@@ -170,9 +177,11 @@ export class McpConnector implements Connector {
     return separator === -1 ? tool.name : tool.name.slice(separator + 1);
   }
 
-  async #assertSurfaceUnchanged(remoteName: string): Promise<void> {
+  async #assertSurfaceUnchanged(remoteName: string, effect: Tool['effect']): Promise<void> {
     if (!this.#pinned || this.#pinnedDigest === undefined) return;
-    if (this.#recheckMs > 0 && Date.now() - this.#verifiedAt < this.#recheckMs) return;
+
+    const window = this.#recheckMs ?? (effect === 'read' ? READ_RECHECK_MS : 0);
+    if (window > 0 && Date.now() - this.#verifiedAt < window) return;
 
     const observed = await this.#client.listTools();
     if (manifestDigest(observed) === this.#pinnedDigest) {
@@ -250,3 +259,6 @@ function mapType(type: unknown): 'string' | 'number' | 'integer' | 'boolean' | '
       return 'string';
   }
 }
+
+/** Default re-check window for read-only MCP tools. */
+const READ_RECHECK_MS = 60_000;
