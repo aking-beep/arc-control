@@ -50,7 +50,7 @@ agent → gateway → identify → inspect → evaluate policy
 - **Connectors** — MCP, generic HTTP (host-allowlisted), simulation
 - **Surfaces** — control API, control console, TypeScript SDK, `arc` CLI
 
-Verification: 66 tests, 48 eval properties, zero runtime dependencies.
+Verification: 81 tests, 52 eval properties, zero runtime dependencies.
 
 ---
 

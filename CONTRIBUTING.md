@@ -12,7 +12,7 @@ a few of the conventions here will look strict until you know why.
 
 ```bash
 npm install          # also builds, via the prepare script
-npm run verify       # build + 66 tests + 48 eval properties
+npm run verify       # build + 81 tests + 52 eval properties
 ```
 
 Node 22 or later. No other toolchain, no services, no containers.
@@ -146,10 +146,14 @@ expect.equal(
 ```
 
 **If your change touches a guarantee, add an eval.** Writing them for v0.1
-found four real bugs — a validator that rejected dual control, a regex that
-could not match the paths it most needed to, pinning that was not enforced
-where it mattered, and a pattern syntax that failed with no explanation. Each
-is recorded in the commit that fixed it.
+found four real bugs: a validator that rejected dual control, a regex that
+could not match the paths it most needed to, MCP pinning that was not enforced
+where it mattered, and — found by running the CLI against a real store — audit
+log truncation going undetected while the docs claimed removal was always
+caught. Each is recorded in the commit that fixed it.
+
+Note what those have in common: every one was in code that passed its unit
+tests, because every one was a gap in a *guarantee* rather than in a function.
 
 Evals must be deterministic. One of the v0.1 evals was briefly flaky because it
 forged a credential by appending a fixed digit, which happened to reproduce the

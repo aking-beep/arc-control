@@ -374,8 +374,8 @@ infrastructure/         docker, kubernetes, terraform
 ```bash
 npm install
 npm run build          # tsc -b across the workspace
-npm test               # 66 tests on node:test
-npm run evals          # 48 control-plane properties
+npm test               # 81 tests on node:test
+npm run evals          # 52 control-plane properties
 npm run verify         # build, test and evals
 ```
 
@@ -383,8 +383,8 @@ The evals are not unit tests. A unit test asks whether a function does what its
 author intended; an eval asks whether the control plane still upholds a property
 somebody is relying on — *a denied action never reaches the target system*,
 *adding a policy can only tighten authorization*, *one authorization means one
-effect*. Writing them found four real bugs, each recorded in the commit that
-fixed it.
+effect*. Writing them found four real bugs — including one in the headline
+audit guarantee — each recorded in the commit that fixed it.
 
 ```
 ARC Control — control-plane evals
@@ -395,7 +395,7 @@ Identity is the first gate (authorization/identity)
   PASS suspending an agent stops it before policy is consulted
   …
 
-48/48 properties hold.
+52/52 properties hold.
 ```
 
 ---
