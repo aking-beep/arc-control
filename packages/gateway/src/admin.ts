@@ -1,0 +1,170 @@
+import { digest } from '@arc-control/schemas';
+import type { Agent, AgentRegistration, Policy, Tool, ToolRegistration } from '@arc-control/schemas';
+import type { AgentRegistry, IssuedCredential } from '@arc-control/agent-identity';
+import type { AuditLog } from '@arc-control/audit';
+import type { ToolRegistry } from '@arc-control/execution';
+import type { PolicyStore } from './policies.js';
+
+/**
+ * Administration, with auditing attached.
+ *
+ * Registering an agent, defining a tool and publishing a policy all change
+ * what agents are permitted to do, so each belongs in the audit log as much as
+ * an action does — "who widened this policy, and when?" is the first question
+ * any incident review asks.
+ *
+ * These operations live on the gateway rather than in the API layer so that
+ * every entry point is audited by construction. The HTTP API, the CLI and a
+ * seed script all go through this path, and none of them can forget to.
+ */
+
+/** Who performed an administrative change. */
+export interface Actor {
+  readonly identifier: string;
+  /** How the change arrived, recorded for context. */
+  readonly via?: 'api' | 'cli' | 'console' | 'seed' | 'system';
+}
+
+export interface AdminDependencies {
+  readonly agents: AgentRegistry;
+  readonly tools: ToolRegistry;
+  readonly policies: PolicyStore;
+  readonly audit: AuditLog;
+}
+
+export class Administration {
+  readonly #deps: AdminDependencies;
+
+  constructor(dependencies: AdminDependencies) {
+    this.#deps = dependencies;
+  }
+
+  async registerAgent(registration: AgentRegistration, actor: Actor): Promise<Agent> {
+    const agent = await this.#deps.agents.register(registration);
+    await this.#deps.audit.append({
+      type: 'agent.registered',
+      organizationId: agent.organizationId,
+      actor: actor.identifier,
+      subject: agent.id,
+      summary: `${actor.identifier} registered agent "${agent.name}" owned by ${agent.owner}`,
+      data: { name: agent.name, owner: agent.owner, roles: agent.roles, kind: agent.kind, via: actor.via },
+    });
+    return agent;
+  }
+
+  async setAgentStatus(agentId: string, status: 'active' | 'suspended', actor: Actor): Promise<Agent> {
+    const agent =
+      status === 'suspended'
+        ? await this.#deps.agents.suspend(agentId)
+        : await this.#deps.agents.resume(agentId);
+
+    await this.#deps.audit.append({
+      type: status === 'suspended' ? 'agent.suspended' : 'agent.resumed',
+      organizationId: agent.organizationId,
+      actor: actor.identifier,
+      subject: agent.id,
+      summary: `${actor.identifier} ${status === 'suspended' ? 'suspended' : 'resumed'} agent "${agent.name}"`,
+      data: { via: actor.via },
+    });
+    return agent;
+  }
+
+  async issueKey(agentId: string, actor: Actor, options: { expiresAt?: string } = {}): Promise<IssuedCredential> {
+    const agent = await this.#deps.agents.require(agentId);
+    const issued = await this.#deps.agents.issueKey(agentId, options);
+
+    await this.#deps.audit.append({
+      type: 'credential.issued',
+      organizationId: agent.organizationId,
+      actor: actor.identifier,
+      subject: agent.id,
+      summary: `${actor.identifier} issued credential ${issued.credential.displayPrefix} for "${agent.name}"`,
+      data: {
+        credentialId: issued.credential.id,
+        displayPrefix: issued.credential.displayPrefix,
+        expiresAt: issued.credential.expiresAt,
+        via: actor.via,
+      },
+    });
+
+    return issued;
+  }
+
+  async revokeKey(credentialId: string, actor: Actor): Promise<void> {
+    const credential = await this.#deps.agents.revokeKey(credentialId);
+    const agent = await this.#deps.agents.get(credential.agentId);
+
+    await this.#deps.audit.append({
+      type: 'credential.revoked',
+      organizationId: agent?.organizationId ?? 'default',
+      actor: actor.identifier,
+      subject: credential.agentId,
+      summary: `${actor.identifier} revoked credential ${credential.displayPrefix}`,
+      data: { credentialId: credential.id, via: actor.via },
+    });
+  }
+
+  async registerTool(registration: ToolRegistration, actor: Actor): Promise<Tool> {
+    const tool = await this.#deps.tools.register(registration);
+    await this.#deps.audit.append({
+      type: 'tool.registered',
+      organizationId: 'default',
+      actor: actor.identifier,
+      subject: tool.id,
+      summary: `${actor.identifier} registered tool "${tool.name}" (${tool.effect}, ${tool.riskTier} risk) on connector ${tool.connector}`,
+      data: {
+        name: tool.name,
+        connector: tool.connector,
+        effect: tool.effect,
+        riskTier: tool.riskTier,
+        parameters: tool.parameters.map((spec) => spec.name),
+        via: actor.via,
+      },
+    });
+    return tool;
+  }
+
+  /**
+   * Publishes a policy. The audit record carries the document's digest, so a
+   * decision citing `FINANCE-004` version 3 can be matched against the exact
+   * text that was in force when it was made.
+   */
+  async publishPolicy(policy: Policy, actor: Actor): Promise<Policy> {
+    const previous = await this.#deps.policies.get(policy.id);
+    const stored = await this.#deps.policies.publish(policy);
+
+    await this.#deps.audit.append({
+      type: previous ? 'policy.updated' : 'policy.created',
+      organizationId: 'default',
+      actor: actor.identifier,
+      subject: stored.id,
+      summary: previous
+        ? `${actor.identifier} updated ${stored.id} from version ${previous.version} to ${stored.version}`
+        : `${actor.identifier} created ${stored.id} version ${stored.version}`,
+      data: {
+        policyId: stored.id,
+        version: stored.version,
+        previousVersion: previous?.version,
+        enabled: stored.enabled,
+        rules: stored.rules.map((rule) => ({ id: rule.id, effect: rule.effect })),
+        documentDigest: digest(stored),
+        via: actor.via,
+      },
+    });
+
+    return stored;
+  }
+
+  async setPolicyEnabled(policyId: string, enabled: boolean, actor: Actor): Promise<Policy> {
+    const policy = await this.#deps.policies.setEnabled(policyId, enabled);
+    await this.#deps.audit.append({
+      type: enabled ? 'policy.updated' : 'policy.disabled',
+      organizationId: 'default',
+      actor: actor.identifier,
+      subject: policy.id,
+      summary: `${actor.identifier} ${enabled ? 'enabled' : 'disabled'} ${policy.id}`,
+      data: { policyId: policy.id, version: policy.version, enabled, via: actor.via },
+    });
+    return policy;
+  }
+}

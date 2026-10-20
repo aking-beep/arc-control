@@ -23,6 +23,7 @@ import { buildEvidence } from '@arc-control/evidence';
 import { Executor, ToolRegistry, type Connector } from '@arc-control/execution';
 import { buildPolicyInput, PolicyEngine } from '@arc-control/policy-engine';
 import { PolicyStore } from './policies.js';
+import { Administration } from './admin.js';
 
 export interface GatewayOptions {
   readonly store: ControlStore;
@@ -64,6 +65,8 @@ export class Gateway {
   readonly policies: PolicyStore;
   readonly approvals: ApprovalEngine;
   readonly audit: AuditLog;
+  /** Audited administration: registering agents and tools, publishing policy. */
+  readonly admin: Administration;
 
   readonly #store: ControlStore;
   readonly #policyEngine: PolicyEngine;
@@ -91,6 +94,13 @@ export class Gateway {
     this.policies = new PolicyStore(this.#store, shared);
     this.approvals = new ApprovalEngine(this.#store, shared);
     this.audit = new AuditLog(this.#store, shared);
+
+    this.admin = new Administration({
+      agents: this.agents,
+      tools: this.tools,
+      policies: this.policies,
+      audit: this.audit,
+    });
 
     this.#policyEngine = options.policyEngine ?? new PolicyEngine(shared);
     this.#executor = options.executor ?? new Executor(shared);
