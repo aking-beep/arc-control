@@ -1,6 +1,6 @@
 # ADR-0001: One canonical policy engine for agent authorization
 
-**Status:** Proposed. The decision is the owner's.
+**Status:** Accepted (Option A) on 2026-10-21 — the owner's consolidation plan names `arc-control` the one canonical enterprise platform. The open questions below remain open.
 **Date:** 2026-10-21
 **Scope:** `arc-control` (this repo), `ark` (`@ark/core` governance kernel, `@ark/guard`, `@ark/db` receipts, ARK Control app), `ark-ai-agent-platform` (`src/permissions`, `src/approvals`, `src/audit.py`).
 
@@ -84,7 +84,7 @@ Rejected. Three engines means three meanings of "approved", two of which (`ark` 
 
 Ordered so each step is shippable and nothing is deleted before its replacement runs.
 
-1. **Fix the fall-through defect** above, and correct `POLICY_MODEL.md` to match. Add an eval: an erroring DENY rule followed by an `always` ALLOW rule must not allow.
+1. ✅ **Done 2026-10-21.** **Fix the fall-through defect** above, and correct `POLICY_MODEL.md` to match. Add an eval: an erroring DENY rule followed by an `always` ALLOW rule must not allow.
 2. **Close the ARC Control gaps ARK already solved**, in the gateway, with tests and evals:
    - atomic idempotency claim (unique `(agentId, tool, idempotencyKey)` reservation taken *before* execution; `FileStore` under its mutex, a SQL store via conditional insert);
    - `ExecutionAttempt.status` gains `attempted` (written before the connector call) and `outcome_unknown` (connector threw or timed out; never retried);

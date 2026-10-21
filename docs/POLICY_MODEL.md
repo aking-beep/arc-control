@@ -152,8 +152,9 @@ A policy that cannot be evaluated never allows anything.
   rollout. That is a deliberate, named choice, not a default.)
 - **A condition throws** — unknown operator, malformed shape, a type mismatch —
   the rule is recorded as *not matching*, the error is kept in the trace, and
-  the policy falls through to its fallback. An unevaluable rule can never
-  authorize an action.
+  evaluation of that policy stops: its fallback decides, and no later rule is
+  consulted. If the fallback is `ALLOW`, the policy denies instead. An
+  unevaluable rule can never authorize an action.
 - **A referenced parameter is absent** → the comparison is false.
 - **A numeric comparison receives a string** → an error, not a coercion. A
   refund limit must never pass because the amount arrived as `"10"` instead of
