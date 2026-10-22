@@ -239,9 +239,13 @@ describe('Gateway: identity is the first gate', () => {
   });
 
   it('refuses a forged credential', async () => {
+    // Change the last character to something it is not: overwriting it with a
+    // fixed '0' left the key intact whenever the random key already ended in '0'.
+    const last = harness.apiKey.at(-1);
+    const forged = `${harness.apiKey.slice(0, -1)}${last === '0' ? '1' : '0'}`;
     await assert.rejects(
       () =>
-        harness.gateway.handle(`${harness.apiKey.slice(0, -1)}0`, {
+        harness.gateway.handle(forged, {
           tool: 'stripe.refund',
           parameters: { customer: 'c', amount: 1 },
         }),
