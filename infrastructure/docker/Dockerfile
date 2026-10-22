@@ -35,7 +35,7 @@ COPY apps/control-console/package.json             apps/control-console/
 
 # `--ignore-scripts` skips the root `prepare` build, which cannot run before
 # the sources are copied in.
-RUN npm ci --ignore-scripts
+RUN npm ci --ignore-scripts --no-audit --no-fund
 
 COPY tsconfig.base.json tsconfig.build.json ./
 COPY packages/ packages/
@@ -51,7 +51,7 @@ COPY schemas/ schemas/
 RUN npm run build && npm test --silent && npm run evals --silent
 
 # Drop TypeScript and the rest of the dev tree from what gets copied forward.
-RUN npm prune --omit=dev --ignore-scripts
+RUN npm prune --omit=dev --ignore-scripts --no-audit --no-fund
 
 # ---- runtime ----------------------------------------------------------------
 FROM node:22.22.0-bookworm-slim AS runtime
