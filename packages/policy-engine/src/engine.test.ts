@@ -141,6 +141,48 @@ describe('PolicyEngine: failing closed', () => {
     assert.match(failed?.error ?? '', /requires two numbers or two strings/);
   });
 
+  it('does not let a later rule decide for a rule that could not be evaluated', () => {
+    const ceiling: Policy = {
+      id: 'FINANCE-009',
+      version: 1,
+      name: 'Hard ceiling, otherwise allow',
+      enabled: true,
+      match: { tools: ['stripe.refund'] },
+      rules: [
+        {
+          id: 'over-1000',
+          when: { gt: ['$.action.parameters.amount', 1000] },
+          effect: 'DENY',
+          reason: 'over the hard ceiling',
+        },
+        { id: 'otherwise', when: { always: true }, effect: 'ALLOW', reason: 'under the ceiling' },
+      ],
+      fallback: { effect: 'REQUIRE_APPROVAL', reason: 'refund could not be checked' },
+    };
+    const decision = engine.evaluate([ceiling], input({ amount: '50000' }));
+    assert.equal(decision.effect, 'REQUIRE_APPROVAL');
+    assert.equal(decision.trace.some((entry) => entry.ruleId === 'otherwise'), false);
+    assert.match(decision.trace.find((entry) => entry.ruleId === 'over-1000')?.error ?? '', /two numbers/);
+  });
+
+  it('denies a rule error even when the fallback would allow', () => {
+    const permissive: Policy = {
+      id: 'MONITOR-001',
+      version: 1,
+      name: 'Permissive fallback',
+      enabled: true,
+      match: { tools: ['stripe.refund'] },
+      rules: [
+        { id: 'over-1000', when: { gt: ['$.action.parameters.amount', 1000] }, effect: 'DENY', reason: 'too large' },
+      ],
+      fallback: { effect: 'ALLOW', reason: 'nothing objected' },
+    };
+    const decision = engine.evaluate([permissive], input({ amount: '50000' }));
+    assert.equal(decision.effect, 'DENY');
+    assert.equal(decision.reason, 'rule over-1000 could not be evaluated');
+    assert.equal(engine.evaluate([permissive], input({ amount: 10 })).effect, 'ALLOW');
+  });
+
   it('does not allow when the governed parameter is missing entirely', () => {
     const decision = engine.evaluate([FINANCE_004], input({ parameters: { customer: 'customer_123' } }));
     assert.equal(decision.effect, 'DENY');

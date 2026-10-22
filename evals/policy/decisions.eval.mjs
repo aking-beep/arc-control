@@ -182,6 +182,37 @@ export default {
       },
     },
     {
+      name: 'a broken DENY rule is not overruled by a later ALLOW rule',
+      async run() {
+        const { PolicyEngine } = await import('@arc-control/policy-engine');
+        const ceiling = {
+          id: 'CEILING-001',
+          version: 1,
+          name: 'Hard ceiling, otherwise allow',
+          enabled: true,
+          match: {},
+          rules: [
+            { id: 'over-1000', when: { gt: ['$.action.parameters.amount', 1000] }, effect: 'DENY', reason: 'over the ceiling' },
+            { id: 'otherwise', when: { always: true }, effect: 'ALLOW', reason: 'under the ceiling' },
+          ],
+          fallback: { effect: 'ALLOW', reason: 'nothing objected' },
+        };
+
+        const decision = new PolicyEngine().evaluate([ceiling], {
+          agent: { id: 'a', name: 'n', kind: 'autonomous', environment: 'production', owner: 'o', roles: [], labels: {} },
+          tool: { name: 't', system: 's', effect: 'write', riskTier: 'low', labels: {} },
+          action: { id: 'arc_act_x', parameters: { amount: '50000' } },
+          context: { environment: 'production', requestedAt: '2026-01-01T00:00:00.000Z', hourUtc: 0, dayOfWeekUtc: 4 },
+        });
+
+        expect.equal(
+          decision.effect,
+          'DENY',
+          'a rule that cannot be evaluated ends the policy: neither a later rule nor an ALLOW fallback may decide for it',
+        );
+      },
+    },
+    {
       name: 'the same inputs always produce the same citation',
       async run() {
         const { PolicyEngine } = await import('@arc-control/policy-engine');

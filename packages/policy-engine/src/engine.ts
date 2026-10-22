@@ -34,7 +34,8 @@ export interface PolicyEngineOptions {
  *     authorization, never loosen it — so a new policy is safe to roll out.
  *  2. **Fail closed.** A malformed condition, a missing parameter or a thrown
  *     error never produces an ALLOW. The rule is recorded as not matching, the
- *     error is kept in the trace, and the policy falls through to its fallback.
+ *     error is kept in the trace, and the policy goes straight to its fallback
+ *     — or to DENY, if the fallback would allow.
  */
 export class PolicyEngine {
   readonly #defaultEffect: PolicyEffect;
@@ -121,6 +122,12 @@ export class PolicyEngine {
         ...(error ? { error } : {}),
       });
 
+      // An unevaluable rule ends evaluation of this policy. Moving on to the
+      // next rule would let a later, broader rule decide what the broken one
+      // was written to stop — `[deny if amount > 1000, allow always]` given a
+      // string amount would ALLOW.
+      if (error) return failClosed(policy, rule.id, trace);
+
       if (!matched) continue;
 
       return {
@@ -153,6 +160,37 @@ export class PolicyEngine {
       ruleId: '(fallback)',
     };
   }
+}
+
+/**
+ * The result of a policy whose rule could not be evaluated: its fallback, or
+ * DENY when the fallback would allow. An unevaluable rule can never authorize
+ * an action, whatever the policy author chose as the default.
+ */
+function failClosed(policy: Policy, ruleId: string, trace: RuleTrace[]): PolicyEvaluation {
+  const allowed = policy.fallback.effect === 'ALLOW';
+  const effect: PolicyEffect = allowed ? 'DENY' : policy.fallback.effect;
+  const reason = allowed
+    ? `rule ${ruleId} could not be evaluated`
+    : policy.fallback.reason;
+
+  trace.push({
+    policyId: policy.id,
+    policyVersion: policy.version,
+    ruleId: '(fallback)',
+    matched: true,
+    effect,
+    reason,
+  });
+
+  return {
+    policyId: policy.id,
+    policyVersion: policy.version,
+    applied: true,
+    effect,
+    reason,
+    ruleId: '(fallback)',
+  };
 }
 
 /** Fills in the defaults a REQUIRE_APPROVAL rule may omit. */
