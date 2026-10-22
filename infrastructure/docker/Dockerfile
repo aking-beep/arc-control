@@ -41,6 +41,12 @@ COPY tsconfig.base.json tsconfig.build.json ./
 COPY packages/ packages/
 COPY connectors/ connectors/
 COPY apps/ apps/
+# The image is only built if the evals pass, so the evals and what they import
+# (the mock MCP server in examples/) have to be in the build stage. schemas/ is
+# copied into the runtime image below, so it must exist here too.
+COPY evals/ evals/
+COPY examples/ examples/
+COPY schemas/ schemas/
 
 RUN npm run build && npm test --silent && npm run evals --silent
 
