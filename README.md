@@ -424,6 +424,7 @@ not planned.
 | [POLICY_MODEL.md](./docs/POLICY_MODEL.md) | The policy language and why it is shaped this way |
 | [EVIDENCE_MODEL.md](./docs/EVIDENCE_MODEL.md) | What a record contains and how to verify one |
 | [ROADMAP.md](./docs/ROADMAP.md) | v0.1 through v1.0 |
+| [PORTFOLIO.md](./docs/PORTFOLIO.md) | Every repository in the ARC Control division, and how each relates to this one |
 | [SECURITY.md](./SECURITY.md) | Reporting a vulnerability |
 | [CONTRIBUTING.md](./CONTRIBUTING.md) | How to work in this repository |
 
