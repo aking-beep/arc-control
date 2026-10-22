@@ -20,11 +20,11 @@ listing one here does not publish its code.
 | `aking-beep/ai-workflow-templates` | An open catalog of AI workflows, most stopping at a human gate | Separate product, public. |
 | `aking-beep/reference-architectures` | An open library of system blueprints and their trade-offs | Separate product, public. |
 | `aking-beep/ark-ai-agent-platform` | A governed single-agent runtime on AWS | **Superseded.** Its useful parts are ported here under ADR-0001, then the repository is archived. |
-| `aking-beep/ark` | The original ARK monorepo, whose Control app overlaps this one | **Legacy, migrating.** ADR-0001 steps 2–11 port its Control safeguards here; its AI Fit apps have moved to `aifit-engine`, which belongs to ARC Labs. |
+| `aking-beep/ark` | The original ARK monorepo, whose Control app overlaps this one | **Legacy, migrating.** ADR-0001 steps 2–11 port its Control safeguards here; its AI Fit apps have moved to `aifit-engine` (AI Fit is an ARC Labs product; AI Fit Teams, in `apps/teams`, is Control's). |
 
 ## What belongs here
 
-Two kinds of work:
+Three kinds of work:
 
 - **Making autonomous systems trustworthy.** The ARC Labs charter's test: if the question
   is "can we make this autonomous system trustworthy", it is a Control question. This
@@ -34,9 +34,9 @@ Two kinds of work:
 - **Operator resources for running AI in production**: the free skills, workflow and
   reference-architecture libraries.
 
-None of these live in this repository. Its scope rule (README, "Scope") still holds: only
-what contributes to identity, authorization, policy, execution, evidence, security or
-observability goes in here.
+Only the control platform lives in this repository; every other row is its own repository.
+The README's scope rule still holds here: only what contributes to identity,
+authorization, policy, execution, evidence, security or observability goes in.
 
 Control work is not an experiment and does not enter the Labs pipeline.
 
