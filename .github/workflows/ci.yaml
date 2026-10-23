@@ -58,6 +58,12 @@ jobs:
           node examples/approval-required-agent/run.js
           node examples/protected-mcp-server/run.js
 
+      # The console walkthrough drives the API and the console over HTTP and
+      # asserts each of the nine steps, so it fails the build rather than
+      # printing a transcript nobody reads.
+      - name: Console walkthrough
+        run: node examples/console-walkthrough/run.js
+
   no-runtime-dependencies:
     name: No runtime dependencies
     runs-on: ubuntu-latest
