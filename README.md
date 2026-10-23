@@ -192,9 +192,26 @@ curl -s localhost:8787/v1/actions -H "authorization: Bearer $KEY" \
   -d '{"tool":"stripe.refund","parameters":{"customer":"customer_123","amount":4200}}'
 ```
 
-Open <http://127.0.0.1:8788> to see the agents, the policies, the approvals
-queue, the evidence and the audit chain. Approve the held refund from the
-console and it executes.
+Open <http://127.0.0.1:8788>. The console has ten sections, grouped by what an
+operator is doing:
+
+| | |
+| --- | --- |
+| **Operate** | **Overview** — what needs a human, in order of consequence · **Approvals** — the queue, and one request per card |
+| **Inventory** | **Agents** — who is authorized, and their credentials and activity · **Tools** — what may be asked for, at what risk |
+| **Govern** | **Policies** — the decision ladder of every policy · **Access** — which policies govern which agent-and-tool pair |
+| **Record** | **Evidence** — one record per attempt, with its timeline and digests · **Audit** — the hash chain, and what verifying it does and does not prove |
+| **Assure** | **Security** — chain, connector posture, on-demand MCP scan · **Reports** — an operational snapshot over a stated window |
+
+Approve the held refund from the console and it executes.
+
+To watch the whole path without a browser — an agent asking, policy deciding, a
+human approving, the action executing, the evidence recorded and the chain
+verified, each step asserted:
+
+```bash
+npm run demo:console
+```
 
 ---
 
