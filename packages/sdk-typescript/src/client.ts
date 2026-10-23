@@ -74,6 +74,21 @@ export class ArcControlClient {
     return this.#request('GET', '/v1/agents', undefined, 'operator');
   }
 
+  async getAgent(agentId: string): Promise<Record<string, unknown>> {
+    return this.#request('GET', `/v1/agents/${encodeURIComponent(agentId)}`, undefined, 'operator');
+  }
+
+  /**
+   * Credential metadata for one agent.
+   *
+   * Metadata only, and that is a property of the contract rather than of this
+   * method: ARC Control keeps a salted hash of each key and returns the
+   * plaintext once, at issue. There is no secret here to leak.
+   */
+  async listAgentKeys(agentId: string): Promise<{ credentials: readonly Record<string, unknown>[] }> {
+    return this.#request('GET', `/v1/agents/${encodeURIComponent(agentId)}/keys`, undefined, 'operator');
+  }
+
   async listTools(): Promise<{ tools: readonly Record<string, unknown>[] }> {
     return this.#request('GET', '/v1/tools', undefined, 'operator');
   }
@@ -82,12 +97,27 @@ export class ArcControlClient {
     return this.#request('GET', '/v1/policies', undefined, 'operator');
   }
 
+  async getPolicy(policyId: string): Promise<Record<string, unknown>> {
+    return this.#request('GET', `/v1/policies/${encodeURIComponent(policyId)}`, undefined, 'operator');
+  }
+
   async setPolicyEnabled(policyId: string, enabled: boolean): Promise<Record<string, unknown>> {
     return this.#request('POST', `/v1/policies/${policyId}/${enabled ? 'enable' : 'disable'}`, {}, 'operator');
   }
 
+  /**
+   * Approval requests awaiting a human.
+   *
+   * The API lists *pending* requests only. A resolved request stays reachable
+   * by id through `getApproval`, and its outcome is in evidence and the audit
+   * log; there is no endpoint that lists approval history.
+   */
   async listApprovals(options: { mine?: boolean } = {}): Promise<{ approvals: readonly Record<string, unknown>[] }> {
     return this.#request('GET', `/v1/approvals${options.mine ? '?mine=true' : ''}`, undefined, 'operator');
+  }
+
+  async getApproval(approvalId: string): Promise<Record<string, unknown>> {
+    return this.#request('GET', `/v1/approvals/${encodeURIComponent(approvalId)}`, undefined, 'operator');
   }
 
   async vote(approvalId: string, vote: 'approve' | 'reject', comment?: string): Promise<Record<string, unknown>> {
@@ -142,7 +172,12 @@ export class ArcControlClient {
   ): Promise<{
     valid: boolean;
     recordsChecked: number;
-    failures: readonly unknown[];
+    failures: readonly {
+      readonly sequence: number;
+      readonly id: string;
+      readonly problem: string;
+      readonly detail: string;
+    }[];
     headDigest?: string;
     headSequence?: number;
     checkedAgainstExpectation: boolean;
@@ -152,7 +187,25 @@ export class ArcControlClient {
     if (expectation.headDigest) search.set('headDigest', expectation.headDigest);
     if (expectation.headSequence !== undefined) search.set('headSequence', String(expectation.headSequence));
     const suffix = search.size > 0 ? `?${search.toString()}` : '';
-    return this.#request('GET', `/v1/audit/verify${suffix}`, undefined, 'operator');
+
+    // The API answers 409 when the chain does not verify. That is the
+    // verification succeeding and reporting "broken", not a failed call: the
+    // body is a full ChainVerification naming every problem. Throwing here
+    // would leave a caller unable to tell a broken chain from an unreachable
+    // API — and the broken chain is the thing an operator most needs to see.
+    return this.#request('GET', `/v1/audit/verify${suffix}`, undefined, 'operator', [409]);
+  }
+
+  /**
+   * Scans an MCP server manifest. Stateless: nothing is registered and no
+   * result is persisted, so a report exists only in the response.
+   */
+  async scanMcp(manifest: {
+    name: string;
+    endpoint: string;
+    tools?: readonly Record<string, unknown>[];
+  }): Promise<Record<string, unknown>> {
+    return this.#request('POST', '/v1/mcp/scan', { tools: [], ...manifest }, 'operator');
   }
 
   async suspendAgent(agentId: string): Promise<Record<string, unknown>> {
@@ -165,11 +218,18 @@ export class ArcControlClient {
 
   // --- transport ----------------------------------------------------------
 
+  /**
+   * @param alsoAccept statuses that are not 2xx but still carry a result the
+   *   caller asked for, rather than an error envelope. `GET /v1/audit/verify`
+   *   is the case this exists for: it answers 409 with a full verification
+   *   report when the chain is broken.
+   */
   async #request<T>(
     method: string,
     path: string,
     body: unknown,
     credential: 'agent' | 'operator' | 'none',
+    alsoAccept: readonly number[] = [],
   ): Promise<T> {
     const headers: Record<string, string> = { accept: 'application/json' };
 
@@ -205,6 +265,7 @@ export class ArcControlClient {
         // A 202 means the action is held for approval, which `act()` returns
         // as a normal result rather than an error.
         if (response.status === 202) return payload as T;
+        if (alsoAccept.includes(response.status)) return payload as T;
         throw fromErrorBody(payload, response.status);
       }
 

@@ -1,3 +1,5 @@
-export { createConsole, type ConsoleApp, type ConsoleOptions } from './server.js';
+export { createConsole, MAX_FORM_BYTES, type ConsoleApp, type ConsoleOptions } from './server.js';
 export * from './pages.js';
-export { html, raw, escapeHtml, layout } from './render.js';
+export * from './components.js';
+export * from './format.js';
+export * from './render.js';
