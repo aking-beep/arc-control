@@ -415,7 +415,7 @@ export async function approvalDetailPage(context: PageContext, approvalId: strin
 
   <div class="split-wide">
     <div>
-      <h3>Parameters (as recorded, redacted)</h3>
+      <h2 class="quiet">Parameters (as recorded, redacted)</h2>
       ${parameterTable(request.parameters, 'Parameters', tool?.parameters)}
 
       ${sectionTitle('Lifecycle')}
@@ -461,7 +461,7 @@ export async function approvalDetailPage(context: PageContext, approvalId: strin
     <aside class="card stack">
       ${requirementLine(request.requirement)}
       <div>
-        <h3>Votes</h3>
+        <h2 class="quiet">Votes</h2>
         ${voteList(request.votes)}
       </div>
       ${status === 'pending'

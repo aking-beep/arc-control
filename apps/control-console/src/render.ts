@@ -206,10 +206,10 @@ ${options.body}
  * their own systems, so this says so at the top of every page rather than on
  * the pages that happen to show records.
  */
-const DEMO_STRIP = `<div class="demo-strip" role="note">
+const DEMO_STRIP = `<aside class="demo-strip" aria-label="Environment notice">
   <strong>Demonstration environment</strong>
   <span>This API was started with <span class="mono">ARC_SEED_DEMO=true</span>. The agents, tools and policies are the worked example from <span class="mono">apps/control-api/src/seed.ts</span> and the connector effects are simulated. The gateway, policy engine, approval engine, evidence and audit chain are real, and so is every record below.</span>
-</div>`;
+</aside>`;
 
 export function bannerView(banner: Banner): Trusted {
   const glyph = banner.kind === 'error' ? '✕' : banner.kind === 'success' ? '✓' : 'i';
@@ -607,8 +607,28 @@ body {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
-a { color: var(--accent); text-decoration: none; }
-a:hover { text-decoration: underline; text-underline-offset: 2px; }
+/*
+ * Links in prose are underlined, not just coloured. WCAG 1.4.1: colour alone
+ * cannot be the only thing that marks a link, and these pages are read in
+ * greyscale often enough — printed into an audit report — that the underline
+ * is the only cue that survives.
+ *
+ * It comes back off where the link is the whole content of a cell, a chip or a
+ * nav item: there the link is identified by its position and its column
+ * heading, not by its colour, and underlining every identifier in a dense
+ * table costs legibility for nothing.
+ */
+a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+a:hover { text-decoration-thickness: 2px; }
+.dt a, .matrix a, .rail-item, .chip, .button, .skip-link,
+.count-line a, .filters a, .section-aside a, .back a,
+h1 a, h2 a, .attention a.cta, .masthead a, details.raw summary a {
+  text-decoration: none;
+}
+.dt a:hover, .matrix a:hover, .count-line a:hover, .section-aside a:hover,
+.back a:hover, h1 a:hover, h2 a:hover, .attention a.cta:hover {
+  text-decoration: underline;
+}
 
 /* Focus: a 3px ring at 2px offset, never removed. */
 :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
@@ -700,7 +720,7 @@ main { flex: 1; min-width: 0; }
 h1 { font-size: 22px; font-weight: 650; line-height: 1.3; letter-spacing: -0.01em; margin: 0; }
 h1.display { font-size: 28px; line-height: 1.2; }
 h2 { font-size: 16px; font-weight: 650; margin: 0 0 12px; }
-h3 { font-size: 12px; font-weight: 600; color: var(--ink-soft); margin: 0 0 8px; }
+h3, h2.quiet { font-size: 12px; font-weight: 600; color: var(--ink-soft); margin: 0 0 8px; }
 .lede { margin: 6px 0 0; max-width: 78ch; font-size: 15px; line-height: 1.55; color: var(--ink-soft); }
 .section-title {
   display: flex; align-items: baseline; justify-content: space-between;

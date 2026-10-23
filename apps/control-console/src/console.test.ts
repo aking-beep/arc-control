@@ -812,6 +812,47 @@ describe('Accessibility', () => {
     assert.match(page, /aria-label="Of 1 records: 1 pending approval\./);
   });
 
+  /**
+   * WCAG 1.4.1. These pages are read in greyscale often enough — printed into
+   * an audit report — that an underline is the only cue that survives, so a
+   * link inside prose carries one. A link that is the whole content of a table
+   * cell is identified by its column instead, and does not.
+   */
+  it('underlines links in prose, and not identifiers in dense tables', async () => {
+    const { context } = contextFor(routes());
+    const page = await overviewPage(context);
+
+    assert.ok(page.includes('a { color: var(--accent); text-decoration: underline;'));
+    assert.ok(page.includes('.dt a, .matrix a,'), 'table and matrix links opt out');
+  });
+
+  it('puts every region of the page inside a landmark', async () => {
+    const { context } = contextFor(routes({ '/health': { ...HEALTH, demoSeed: true } }));
+    const page = await overviewPage(context);
+
+    assert.ok(page.includes('<aside class="demo-strip" aria-label="Environment notice">'), 'the demo notice is a landmark');
+    assert.ok(page.includes('<nav class="rail" aria-label="Console">'));
+    assert.ok(page.includes('<main id="main">'));
+  });
+
+  it('never skips a heading level', async () => {
+    for (const render of [overviewPage, approvalsPage, agentsPage, toolsPage, policiesPage, accessPage, evidencePage, auditPage, securityPage, reportsPage]) {
+      const { context } = contextFor(routes());
+      const page = await render(context);
+      assertHeadingOrder(page);
+    }
+
+    for (const [render, id] of [
+      [agentDetailPage, 'arc_ag_1111'],
+      [approvalDetailPage, 'arc_apr_1111'],
+      [policyDetailPage, 'FINANCE-004'],
+      [evidenceDetailPage, 'arc_ev_1111'],
+    ] as const) {
+      const { context } = contextFor(routes({ '/v1/evidence?agentId=arc_ag_1111&limit=100': { evidence: [EVIDENCE] } }));
+      assertHeadingOrder(await render(context, id));
+    }
+  });
+
   it('marks an error banner as an alert and a notice as a status', () => {
     const { context } = contextFor(routes());
     assert.ok(errorPage({ ...context, banner: { kind: 'error', message: 'no' } }, 502, 'x').includes('role="alert"'));
@@ -960,3 +1001,20 @@ describe('Sensitive parameters', () => {
     assert.ok(page.includes('sensitive'), 'the approver is told the value is the redacted one');
   });
 });
+
+/**
+ * Asserts heading levels only ever increase by one. `h2.quiet` is an h2 that
+ * looks like a label; the level is what matters to a screen reader, and the
+ * appearance is what matters to the layout.
+ */
+function assertHeadingOrder(page: string): void {
+  const levels = [...page.matchAll(/<h([1-6])[\s>]/g)].map((match) => Number(match[1]));
+  assert.ok(levels.length > 0, 'the page has at least one heading');
+  assert.equal(levels[0], 1, 'the first heading is the h1');
+
+  let previous = levels[0]!;
+  for (const level of levels.slice(1)) {
+    assert.ok(level <= previous + 1, `heading jumped from h${previous} to h${level}`);
+    previous = level;
+  }
+}
