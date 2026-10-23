@@ -301,11 +301,12 @@ export function evidenceTable(
             >`)
           : raw(html`<span class="muted">not executed</span>`)}
       </td>
-      <td class="mono nowrap">
+      <td class="mono">
         ${decision.policyId
-          ? raw(html`<a href="/policies/${encodeURIComponent(String(decision.policyId))}"
-              >${decision.policyId}<span class="muted"> · ${decision.ruleId}</span></a
-            >`)
+          ? raw(html`<a class="nowrap" href="/policies/${encodeURIComponent(String(decision.policyId))}"
+                >${decision.policyId}</a
+              >
+              <span class="sub mono nowrap">${decision.ruleId}</span>`)
           : raw(html`<span class="muted">engine default</span>`)}
       </td>
       <td class="mono nowrap">

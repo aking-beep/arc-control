@@ -360,8 +360,12 @@ function sendHtml(response: ServerResponse, status: number, body: string): void 
     // The console renders no third-party resources and no inline scripts, so
     // the policy can be this strict. Ten sections changed nothing about that:
     // every interaction is a link, a query parameter or a form post.
+    //
+    // `img-src data:` exists for one thing: the inline SVG favicon. It admits
+    // no origin, makes no network request, and an SVG referenced this way
+    // cannot execute script. There is still no script source of any kind.
     'content-security-policy':
-      "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+      "default-src 'none'; img-src data:; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
     'x-content-type-options': 'nosniff',
     'referrer-policy': 'no-referrer',
     'cache-control': 'no-store',

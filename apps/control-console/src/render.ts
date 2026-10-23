@@ -126,6 +126,29 @@ export interface LayoutOptions {
   readonly demo?: boolean;
 }
 
+/**
+ * The brand mark as an inline SVG favicon.
+ *
+ * Inline rather than a file because the console serves exactly one resource —
+ * the document — and a tab icon is not worth a second request or a build step.
+ * Without it the browser asks the origin for `/favicon.ico` on every page view
+ * and takes a 404, which is noise in an operator's network log and a broken
+ * request on any host that does not happen to have one at its root.
+ *
+ * Three bars, the middle one full width: a decision point, which is what the
+ * product is. It reads as a mark rather than a glyph at 16px.
+ */
+const FAVICON =
+  'data:image/svg+xml,' +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">' +
+      '<rect width="32" height="32" rx="7" fill="#1d4ed8"/>' +
+      '<rect x="7" y="7.5" width="11" height="3" rx="1.5" fill="#ffffff" opacity="0.5"/>' +
+      '<rect x="7" y="14.5" width="18" height="3" rx="1.5" fill="#ffffff"/>' +
+      '<rect x="7" y="21.5" width="11" height="3" rx="1.5" fill="#ffffff" opacity="0.5"/>' +
+      '</svg>',
+  );
+
 export function layout(options: LayoutOptions): string {
   const groups = NAVIGATION.map((group) => {
     const items = group.items.map((item) => {
@@ -160,6 +183,7 @@ export function layout(options: LayoutOptions): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(options.title)} — ARC Control</title>
+<link rel="icon" href="${FAVICON}">
 <style>${STYLES}</style>
 </head>
 <body>
@@ -729,7 +753,10 @@ h3, h2.quiet { font-size: 12px; font-weight: 600; color: var(--ink-soft); margin
 .section-title h2 { margin: 0; }
 .section-aside { font-size: 13px; color: var(--ink-soft); }
 .back { margin: 0 0 12px; font-size: 13px; }
-.note { font-size: 13px; color: var(--ink-soft); margin: 12px 0 0; max-width: 100ch; line-height: 1.55; }
+.note {
+  font-size: 13px; color: var(--ink-soft); margin: 12px 0 0;
+  max-width: 100ch; line-height: 1.55; overflow-wrap: anywhere;
+}
 .card {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 16px 20px; margin-bottom: 16px;
@@ -754,7 +781,7 @@ h3, h2.quiet { font-size: 12px; font-weight: 600; color: var(--ink-soft); margin
 /* --- tables --- */
 .table-wrap {
   border: 1px solid var(--border); border-radius: var(--radius);
-  background: var(--surface); overflow-x: auto;
+  background: var(--surface); overflow-x: auto; contain: paint;
 }
 table.dt { width: 100%; border-collapse: collapse; }
 .dt th {

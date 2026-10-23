@@ -1193,14 +1193,18 @@ export async function auditPage(context: PageContext): Promise<string> {
 
   const rows = shown.map((record) => {
     const isFlagged = flagged.has(`${String(record.sequence)}:${String(record.id)}`);
+    // `subject` on an evidence.recorded event is the *action* id; the evidence
+    // record's own id is in `data.evidenceId`. Linking the subject produced a
+    // 404 on every such row.
+    const evidenceId = record.type === 'evidence.recorded' ? rec(record.data).evidenceId : undefined;
     return html`<tr class="${isFlagged ? 'flagged' : ''}">
       <td class="numeric mono tnum">${record.sequence}</td>
       <td class="mono tnum nowrap muted">${timestamp(record.occurredAt)}</td>
       <td class="mono nowrap">${record.type}</td>
       <td class="mono">${record.actor}</td>
       <td style="font-size:13px">
-        ${record.type === 'evidence.recorded'
-          ? raw(html`<a href="/evidence/${record.subject}">${record.summary}</a>`)
+        ${evidenceId
+          ? raw(html`<a href="/evidence/${evidenceId}">${record.summary}</a>`)
           : record.summary}
       </td>
       <td class="mono nowrap muted" title="${record.digest ?? ''}">${shortDigest(record.digest)}</td>

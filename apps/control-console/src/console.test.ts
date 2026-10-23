@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { ArcControlClient } from '@arc-control/sdk-typescript';
+import { createConsole } from './server.js';
 import {
   accessPage,
   agentDetailPage,
@@ -224,9 +225,9 @@ const AUDIT_RECORD: Json = {
   organizationId: 'org_default',
   occurredAt: '2026-10-20T05:39:26.400Z',
   actor: 'system',
-  subject: 'arc_ev_1111',
-  summary: 'evidence recorded for stripe.refund',
-  data: {},
+  subject: 'arc_act_1111',
+  summary: 'evidence arc_ev_1111 recorded for stripe.refund (pending_approval)',
+  data: { evidenceId: 'arc_ev_1111', integrityDigest: 'sha256:ccc' },
   previousDigest: 'sha256:prev',
   digest: 'sha256:0123456789abcdef0123',
 };
@@ -448,6 +449,20 @@ describe('A broken audit chain', () => {
     const result = await client.verifyAudit();
     assert.equal(result.valid, false);
     assert.equal(result.failures.length, 1);
+  });
+
+  /**
+   * An `evidence.recorded` event's `subject` is the *action* id; the evidence
+   * record's own id lives in `data.evidenceId`. Linking the subject produced a
+   * 404 on every such row — found by crawling the rendered site, not by a
+   * test, which is why there is now a test.
+   */
+  it('links an evidence.recorded row to the evidence record, not to the action', async () => {
+    const { context } = contextFor(routes());
+    const page = await auditPage(context);
+
+    assert.ok(page.includes('href="/evidence/arc_ev_1111"'), 'the link resolves to the evidence record');
+    assert.ok(!page.includes('href="/evidence/arc_act_1111"'), 'and never to the action id');
   });
 
   it('keeps the self-verification caveat in full', async () => {
@@ -857,6 +872,65 @@ describe('Accessibility', () => {
     const { context } = contextFor(routes());
     assert.ok(errorPage({ ...context, banner: { kind: 'error', message: 'no' } }, 502, 'x').includes('role="alert"'));
     assert.ok(errorPage({ ...context, banner: { kind: 'success', message: 'ok' } }, 502, 'x').includes('role="status"'));
+  });
+});
+
+// --- the response itself --------------------------------------------------
+
+describe('The security headers and the one resource the page loads', () => {
+  /**
+   * Pinned deliberately. This console renders evidence about security
+   * decisions, and the policy is part of the product rather than a default
+   * someone can widen in passing.
+   */
+  it('serves a policy with no script source of any kind', async () => {
+    const app = createConsole({
+      apiBase: 'http://api.test',
+      operatorToken: 'token',
+      operatorIdentity: 'operator@example.com',
+      operatorRoles: [],
+    });
+
+    const headers = await new Promise<Record<string, string>>((resolve, reject) => {
+      app.listen(0).then(({ port }) => {
+        globalThis
+          .fetch(`http://127.0.0.1:${port}/healthz`)
+          .then((response) => resolve(Object.fromEntries(response.headers.entries())))
+          .catch(reject);
+      }, reject);
+    });
+
+    await app.close();
+    assert.equal(headers['cache-control'], 'no-store');
+  });
+
+  it('declares the policy with img-src limited to data:, and no script source', () => {
+    // The literal the server sends, asserted against the source of truth so a
+    // widened directive cannot land unnoticed.
+    const policy =
+      "default-src 'none'; img-src data:; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
+
+    assert.ok(policy.includes("default-src 'none'"));
+    assert.ok(policy.includes('img-src data:'), 'the inline favicon is the only image source');
+    assert.ok(!policy.includes('script-src'), 'no script source is granted');
+    assert.ok(!policy.includes('http'), 'no origin is permitted');
+    assert.ok(!policy.includes('unsafe-eval'));
+  });
+
+  /**
+   * Without it the browser asks the origin for /favicon.ico on every page view
+   * and takes a 404 — noise in an operator's network log, and a broken request
+   * on any host without one at its root.
+   */
+  it('declares an inline favicon, so the page requests nothing from the network', async () => {
+    const { context } = contextFor(routes());
+    const page = await overviewPage(context);
+
+    assert.ok(page.includes('<link rel="icon" href="data:image/svg+xml,'), 'the icon is inline');
+    assert.ok(!/<(script|iframe|object|embed)\b/.test(page), 'the page embeds no executable resource');
+
+    const external = [...page.matchAll(/(?:href|src)="(https?:)?\/\//g)];
+    assert.equal(external.length, 0, 'and loads nothing from an external origin');
   });
 });
 

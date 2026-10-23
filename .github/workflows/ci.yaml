@@ -64,6 +64,13 @@ jobs:
       - name: Console walkthrough
         run: node examples/console-walkthrough/run.js
 
+      # The showcase build crawls the rendered console and fails if any page
+      # answers anything but 200 or if any link cannot be resolved to a
+      # captured page. That makes it a link checker for the whole console, not
+      # only a publishing step.
+      - name: Static showcase builds with no dead links
+        run: node tools/showcase/build.mjs --out "$RUNNER_TEMP/showcase"
+
   no-runtime-dependencies:
     name: No runtime dependencies
     runs-on: ubuntu-latest
