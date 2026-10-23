@@ -22,6 +22,7 @@
     "clean": "tsc -b --clean"
   },
   "dependencies": {
+    "@arc-control/policy-engine": "0.1.0",
     "@arc-control/schemas": "0.1.0",
     "@arc-control/sdk-typescript": "0.1.0"
   }

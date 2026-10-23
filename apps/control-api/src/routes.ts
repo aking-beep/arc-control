@@ -8,6 +8,8 @@ export interface RouteOptions {
   readonly gateway: Gateway;
   readonly operators: OperatorAuth;
   readonly version: string;
+  /** Reported on `/health` so the console can label a demonstration as one. */
+  readonly demoSeed?: boolean;
 }
 
 /**
@@ -46,6 +48,7 @@ export function buildRoutes(options: RouteOptions): Router {
       status: connectors.every((connector) => connector.healthy) ? 'ok' : 'degraded',
       version: options.version,
       operatorAuthConfigured: operators.configured,
+      demoSeed: options.demoSeed === true,
       counts: {
         agents: agents.length,
         tools: tools.length,

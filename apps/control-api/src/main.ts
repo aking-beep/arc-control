@@ -22,14 +22,17 @@ async function main(): Promise<void> {
 
   const store: ControlStore = dataDir ? await FileStore.open(dataDir) : new MemoryStore();
 
+  const demoSeed = process.env.ARC_SEED_DEMO === 'true';
+
   const api = createControlApi({
     store,
+    demoSeed,
     ...(operatorToken ? { operatorToken } : {}),
   });
 
   const lines: string[] = [];
 
-  if (process.env.ARC_SEED_DEMO === 'true') {
+  if (demoSeed) {
     const { apiKeys } = await seedDemo(api.gateway);
     lines.push('', 'Demo agents (simulated effects, real control path):');
     for (const [name, key] of Object.entries(apiKeys)) {

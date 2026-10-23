@@ -1,16 +1,26 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { ArcControlClient } from '@arc-control/sdk-typescript';
 import {
+  accessPage,
+  agentDetailPage,
   agentsPage,
+  approvalDetailPage,
   approvalsPage,
   auditPage,
+  confirmPage,
   errorPage,
   evidenceDetailPage,
   evidencePage,
   overviewPage,
   policiesPage,
+  policyDetailPage,
+  reportsPage,
+  securityPage,
+  toolsPage,
+  type ConfirmAction,
   type PageContext,
 } from './pages.js';
+import type { BannerKind } from './render.js';
 
 export interface ConsoleOptions {
   readonly apiBase: string;
@@ -26,7 +36,7 @@ export interface ConsoleApp {
 }
 
 /** Largest form body the console will read. */
-const MAX_FORM_BYTES = 64 * 1024;
+export const MAX_FORM_BYTES = 64 * 1024;
 
 /**
  * The enterprise console.
@@ -72,6 +82,17 @@ export function createConsole(options: ConsoleOptions): ConsoleApp {
   };
 }
 
+/** `arc_ev_…`, `arc_ag_…`, `arc_apr_…` — the id shapes the API issues. */
+const EVIDENCE_ID = /^\/evidence\/(arc_ev_[0-9a-f]+)$/;
+const AGENT_ID = /^\/agents\/(arc_ag_[0-9a-f]+)$/;
+const APPROVAL_ID = /^\/approvals\/(arc_apr_[0-9a-f]+)$/;
+const POLICY_ID = /^\/policies\/([A-Za-z0-9._-]+)$/;
+const CONFIRM = /^\/confirm\/(reject|suspend|disable)\/([A-Za-z0-9._-]+)$/;
+
+const AGENT_MUTATION = /^\/agents\/(arc_ag_[0-9a-f]+)\/(suspend|resume)$/;
+const POLICY_MUTATION = /^\/policies\/([A-Za-z0-9._-]+)\/(enable|disable)$/;
+const APPROVAL_VOTE = /^\/approvals\/(arc_apr_[0-9a-f]+)\/vote$/;
+
 async function route(
   request: IncomingMessage,
   response: ServerResponse,
@@ -82,29 +103,50 @@ async function route(
   const path = url.pathname.replace(/\/+$/, '') || '/';
   const method = request.method ?? 'GET';
 
+  const notice = url.searchParams.get('notice');
+  const kind = url.searchParams.get('kind');
+
   const context: PageContext = {
     client,
     apiBase: options.apiBase,
+    operatorIdentity: options.operatorIdentity,
+    operatorRoles: options.operatorRoles,
     query: url.searchParams,
-    ...(url.searchParams.get('notice') ? { banner: url.searchParams.get('notice')! } : {}),
+    ...(notice ? { banner: { kind: bannerKind(kind), message: notice } } : {}),
   };
 
-  // Mutations arrive as HTML form posts and redirect afterwards, so a reload
-  // never repeats a vote.
   if (method === 'POST') {
-    await handleMutation(request, response, client, path);
+    await handleMutation(request, response, client, context, path);
     return;
   }
 
-  if (method !== 'GET') {
+  if (method !== 'GET' && method !== 'HEAD') {
     sendHtml(response, 405, errorPage(context, 405, `${method} is not supported.`));
     return;
   }
 
   try {
-    const evidenceMatch = /^\/evidence\/(arc_ev_[0-9a-f]+)$/.exec(path);
-    if (evidenceMatch) {
-      sendHtml(response, 200, await evidenceDetailPage(context, evidenceMatch[1]!));
+    const evidence = EVIDENCE_ID.exec(path);
+    if (evidence) {
+      sendHtml(response, 200, await evidenceDetailPage(context, evidence[1]!));
+      return;
+    }
+
+    const agent = AGENT_ID.exec(path);
+    if (agent) {
+      sendHtml(response, 200, await agentDetailPage(context, agent[1]!));
+      return;
+    }
+
+    const approval = APPROVAL_ID.exec(path);
+    if (approval) {
+      sendHtml(response, 200, await approvalDetailPage(context, approval[1]!));
+      return;
+    }
+
+    const confirm = CONFIRM.exec(path);
+    if (confirm) {
+      sendHtml(response, 200, await confirmPage(context, confirm[1] as ConfirmAction, confirm[2]!));
       return;
     }
 
@@ -112,14 +154,20 @@ async function route(
       case '/':
         sendHtml(response, 200, await overviewPage(context));
         return;
+      case '/approvals':
+        sendHtml(response, 200, await approvalsPage(context));
+        return;
       case '/agents':
         sendHtml(response, 200, await agentsPage(context));
+        return;
+      case '/tools':
+        sendHtml(response, 200, await toolsPage(context));
         return;
       case '/policies':
         sendHtml(response, 200, await policiesPage(context));
         return;
-      case '/approvals':
-        sendHtml(response, 200, await approvalsPage(context));
+      case '/access':
+        sendHtml(response, 200, await accessPage(context));
         return;
       case '/evidence':
         sendHtml(response, 200, await evidencePage(context));
@@ -127,14 +175,29 @@ async function route(
       case '/audit':
         sendHtml(response, 200, await auditPage(context));
         return;
+      case '/security':
+        sendHtml(response, 200, await securityPage(context));
+        return;
+      case '/reports':
+        sendHtml(response, 200, await reportsPage(context));
+        return;
       case '/healthz':
-        response.writeHead(200, { 'content-type': 'application/json' });
+        response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
         response.end(JSON.stringify({ status: 'ok', apiBase: options.apiBase }));
         return;
       default:
-        sendHtml(response, 404, errorPage(context, 404, `There is no page at ${path}.`));
-        return;
+        break;
     }
+
+    // A policy id is matched last: its pattern is loose enough to shadow a
+    // literal section name, so every known route gets first refusal.
+    const policy = POLICY_ID.exec(path);
+    if (policy) {
+      sendHtml(response, 200, await policyDetailPage(context, policy[1]!));
+      return;
+    }
+
+    sendHtml(response, 404, errorPage(context, 404, `There is no page at ${path}.`));
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause);
     sendHtml(response, 502, errorPage(context, 502, `The control API could not be reached: ${message}`));
@@ -145,52 +208,130 @@ async function handleMutation(
   request: IncomingMessage,
   response: ServerResponse,
   client: ArcControlClient,
+  context: PageContext,
   path: string,
 ): Promise<void> {
   const form = await readForm(request);
 
+  // The scan changes nothing — it registers no tool and stores no result — so
+  // it answers with the report rather than redirecting to a record that does
+  // not exist.
+  if (path === '/security/scan') {
+    await renderScan(response, context, form);
+    return;
+  }
+
   try {
-    const vote = /^\/approvals\/(arc_apr_[0-9a-f]+)\/vote$/.exec(path);
+    const vote = APPROVAL_VOTE.exec(path);
     if (vote) {
       const choice = form.get('vote') === 'reject' ? 'reject' : 'approve';
-      const comment = form.get('comment') ?? undefined;
-      const result = await client.vote(vote[1]!, choice, comment || undefined);
+      const comment = form.get('comment')?.trim() || undefined;
+      const result = await client.vote(vote[1]!, choice, comment);
 
       // Approving is not itself the act. Only once the request is approved is
       // the action released, and that is a separate, audited call.
       if (choice === 'approve' && result.status === 'approved') {
         const executed = await client.executeApproved(vote[1]!);
-        redirect(response, `/approvals?notice=${encodeURIComponent(`Action ${String(executed.outcome)}.`)}`);
+        const outcome = String(executed.outcome ?? '');
+        redirect(
+          response,
+          '/approvals',
+          `Approved, and the action ${outcome}.`,
+          outcome === 'executed' ? 'success' : 'info',
+        );
         return;
       }
 
-      redirect(response, `/approvals?notice=${encodeURIComponent(`Recorded: ${choice}.`)}`);
+      if (choice === 'approve') {
+        redirect(
+          response,
+          '/approvals',
+          `Approval recorded. The request is ${String(result.status ?? 'still pending')}: the approvals engine has not released the action.`,
+          'info',
+        );
+        return;
+      }
+
+      redirect(response, '/approvals', 'Rejected. The action will not run.', 'success');
       return;
     }
 
-    const agent = /^\/agents\/(arc_ag_[0-9a-f]+)\/(suspend|resume)$/.exec(path);
+    const agent = AGENT_MUTATION.exec(path);
     if (agent) {
       if (agent[2] === 'suspend') await client.suspendAgent(agent[1]!);
       else await client.resumeAgent(agent[1]!);
-      redirect(response, `/agents?notice=${encodeURIComponent(`Agent ${agent[2]}ed.`)}`);
+      redirect(response, '/agents', `Agent ${agent[2]}ed.`, 'success');
       return;
     }
 
-    const policy = /^\/policies\/([A-Za-z0-9._-]+)\/(enable|disable)$/.exec(path);
+    const policy = POLICY_MUTATION.exec(path);
     if (policy) {
       await client.setPolicyEnabled(policy[1]!, policy[2] === 'enable');
-      redirect(response, `/policies?notice=${encodeURIComponent(`Policy ${policy[2]}d.`)}`);
+      redirect(response, '/policies', `Policy ${policy[1]} ${policy[2]}d.`, 'success');
       return;
     }
 
-    response.writeHead(404, { 'content-type': 'text/plain' });
+    response.writeHead(404, { 'content-type': 'text/plain', 'cache-control': 'no-store' });
     response.end('no such action');
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause);
-    redirect(response, `${path.split('/').slice(0, 2).join('/')}?notice=${encodeURIComponent(message)}`);
+    redirect(response, `/${path.split('/')[1] ?? ''}`, message, 'error');
   }
 }
 
+/**
+ * Runs an MCP manifest scan and renders the report.
+ *
+ * The tools field is operator-supplied JSON, so a parse failure is an ordinary
+ * outcome rather than a server error: the form comes back with what was typed
+ * and the reason it could not be read.
+ */
+async function renderScan(
+  response: ServerResponse,
+  context: PageContext,
+  form: URLSearchParams,
+): Promise<void> {
+  const name = form.get('name')?.trim() ?? '';
+  const endpoint = form.get('endpoint')?.trim() ?? '';
+  const toolsText = form.get('tools') ?? '';
+  const state = { name, endpoint, tools: toolsText };
+
+  if (!name || !endpoint) {
+    sendHtml(
+      response,
+      200,
+      await securityPage(context, { error: 'A server name and an endpoint are both required.', form: state }),
+    );
+    return;
+  }
+
+  let tools: Record<string, unknown>[];
+  try {
+    const parsed: unknown = toolsText.trim() ? JSON.parse(toolsText) : [];
+    if (!Array.isArray(parsed)) throw new Error('tools must be a JSON array');
+    tools = parsed as Record<string, unknown>[];
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    sendHtml(response, 200, await securityPage(context, { error: `invalid_request: ${message}`, form: state }));
+    return;
+  }
+
+  try {
+    const report = await context.client.scanMcp({ name, endpoint, tools });
+    sendHtml(response, 200, await securityPage(context, { report, form: state }));
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    sendHtml(response, 200, await securityPage(context, { error: message, form: state }));
+  }
+}
+
+/**
+ * Reads a form body.
+ *
+ * A body over the limit is rejected rather than truncated: a silently
+ * truncated manifest would be scanned, and would pass, having never been
+ * looked at in full.
+ */
 async function readForm(request: IncomingMessage): Promise<URLSearchParams> {
   const chunks: Buffer[] = [];
   let total = 0;
@@ -198,11 +339,18 @@ async function readForm(request: IncomingMessage): Promise<URLSearchParams> {
   for await (const chunk of request) {
     const buffer = chunk as Buffer;
     total += buffer.length;
-    if (total > MAX_FORM_BYTES) break;
+    if (total > MAX_FORM_BYTES) {
+      request.destroy();
+      throw new Error(`the submitted form is larger than the ${MAX_FORM_BYTES / 1024} KB limit`);
+    }
     chunks.push(buffer);
   }
 
   return new URLSearchParams(Buffer.concat(chunks).toString('utf8'));
+}
+
+function bannerKind(value: string | null): BannerKind {
+  return value === 'success' || value === 'error' ? value : 'info';
 }
 
 function sendHtml(response: ServerResponse, status: number, body: string): void {
@@ -210,9 +358,14 @@ function sendHtml(response: ServerResponse, status: number, body: string): void 
     'content-type': 'text/html; charset=utf-8',
     'content-length': Buffer.byteLength(body),
     // The console renders no third-party resources and no inline scripts, so
-    // the policy can be this strict.
+    // the policy can be this strict. Ten sections changed nothing about that:
+    // every interaction is a link, a query parameter or a form post.
+    //
+    // `img-src data:` exists for one thing: the inline SVG favicon. It admits
+    // no origin, makes no network request, and an SVG referenced this way
+    // cannot execute script. There is still no script source of any kind.
     'content-security-policy':
-      "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+      "default-src 'none'; img-src data:; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
     'x-content-type-options': 'nosniff',
     'referrer-policy': 'no-referrer',
     'cache-control': 'no-store',
@@ -220,7 +373,9 @@ function sendHtml(response: ServerResponse, status: number, body: string): void 
   response.end(body);
 }
 
-function redirect(response: ServerResponse, location: string): void {
-  response.writeHead(303, { location, 'cache-control': 'no-store' });
+/** Mutations redirect afterwards, so a reload never repeats a vote. */
+function redirect(response: ServerResponse, to: string, notice: string, kind: BannerKind): void {
+  const query = new URLSearchParams({ notice, kind });
+  response.writeHead(303, { location: `${to}?${query.toString()}`, 'cache-control': 'no-store' });
   response.end();
 }

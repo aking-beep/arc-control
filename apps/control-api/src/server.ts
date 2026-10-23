@@ -11,6 +11,13 @@ export interface ControlApiOptions {
   readonly operatorToken?: string;
   readonly defaultOrganizationId?: string;
   readonly defaultEnvironment?: string;
+  /**
+   * True when this API was started with the worked example loaded. Reported on
+   * `/health` so the console can label the environment as a demonstration
+   * rather than leaving an operator to guess whether the records in front of
+   * them describe their own systems.
+   */
+  readonly demoSeed?: boolean;
 }
 
 export interface ControlApi {
@@ -33,7 +40,12 @@ export function createControlApi(options: ControlApiOptions): ControlApi {
   });
 
   const operators = new OperatorAuth(options.operatorToken ? { token: options.operatorToken } : {});
-  const router = buildRoutes({ gateway, operators, version: API_VERSION });
+  const router = buildRoutes({
+    gateway,
+    operators,
+    version: API_VERSION,
+    demoSeed: options.demoSeed === true,
+  });
 
   const server = createServer((request, response) => {
     void router.handle(request, response).catch((cause: unknown) => {

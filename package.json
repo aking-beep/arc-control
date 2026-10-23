@@ -19,13 +19,15 @@
     "typecheck": "tsc -b tsconfig.build.json",
     "test": "npm run build && node --test \"packages/*/dist/**/*.test.js\" \"connectors/*/dist/**/*.test.js\" \"apps/*/dist/**/*.test.js\"",
     "evals": "npm run build && node evals/run.js",
-    "verify": "npm run build && npm run test --silent && npm run evals --silent",
+    "verify": "npm run build && npm run test --silent && npm run evals --silent && node examples/console-walkthrough/run.js > /dev/null",
     "api": "npm run build && node apps/control-api/dist/main.js",
     "console": "npm run build && node apps/control-console/dist/main.js",
     "demo": "npm run build && node examples/approval-required-agent/run.js",
     "arc": "node packages/cli/dist/bin.js",
     "prepare": "npm run build",
-    "examples": "npm run build && node examples/approval-required-agent/run.js && node examples/protected-mcp-server/run.js"
+    "examples": "npm run build && node examples/approval-required-agent/run.js && node examples/protected-mcp-server/run.js && node examples/console-walkthrough/run.js",
+    "demo:console": "npm run build && node examples/console-walkthrough/run.js",
+    "showcase": "npm run build && node tools/showcase/build.mjs"
   },
   "devDependencies": {
     "@types/node": "22.19.1",
