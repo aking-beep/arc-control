@@ -57,11 +57,22 @@ const OPERATOR_TOKEN = 'showcase-operator-token-not-a-credential';
 const OPERATOR_IDENTITY = 'operations@arctransformationgroup.com';
 const OPERATOR_ROLES = ['finance-manager', 'platform-oncall'];
 
-const outDir = parseOut(process.argv.slice(2));
+const argv = process.argv.slice(2);
+const outDir = path.resolve(flag('--out') ?? 'dist/showcase');
 
-function parseOut(argv) {
-  const index = argv.indexOf('--out');
-  return path.resolve(index === -1 ? 'dist/showcase' : argv[index + 1] ?? 'dist/showcase');
+/**
+ * Where "back to the site" goes, when the capture is embedded in one.
+ *
+ * Without it a visitor who clicks into the console has no way out but the
+ * browser's back button, which is a dead end on a marketing site. Left unset
+ * the bundle stays entirely self-contained, with only relative links.
+ */
+const home = flag('--home');
+const homeLabel = flag('--home-label') ?? 'ARC Transformation Group';
+
+function flag(name) {
+  const index = argv.indexOf(name);
+  return index === -1 ? undefined : argv[index + 1];
 }
 
 function commit() {
@@ -275,10 +286,14 @@ async function main() {
     await fs.mkdir(outDir, { recursive: true });
 
     const unresolved = new Set();
+    const stylesheet = { css: '' };
     for (const [url, html] of captured) {
-      const rendered = transform(html, { names, url, built, revision, unresolved, apiBase });
+      const rendered = transform(html, { names, url, built, revision, unresolved, apiBase, stylesheet });
       await fs.writeFile(path.join(outDir, names.get(url)), rendered, 'utf8');
     }
+
+    if (!stylesheet.css) throw new Error('no stylesheet was extracted; the capture would be unstyled');
+    await fs.writeFile(path.join(outDir, 'console.css'), stylesheet.css, 'utf8');
 
     if (unresolved.size > 0) {
       throw new Error(
@@ -303,7 +318,8 @@ async function main() {
       'utf8',
     );
 
-    process.stdout.write(`\nWrote ${names.size + 1} file(s) to ${path.relative(process.cwd(), outDir)}\n`);
+    const written = await fs.readdir(outDir);
+    process.stdout.write(`\nWrote ${written.length} file(s) to ${path.relative(process.cwd(), outDir)}\n`);
     process.stdout.write(`  entry  ${names.get('/')}\n`);
   } finally {
     await app.close();
@@ -354,7 +370,28 @@ function transform(html, context) {
   out = replaceNotice(out, context);
   out = normaliseApiBase(out, context);
   out = addShowcaseStyles(out);
+  out = extractStylesheet(out, context);
   return out;
+}
+
+/**
+ * Lifts the inlined stylesheet into one file the browser caches.
+ *
+ * The live console inlines its CSS deliberately: one request for the whole
+ * page, and a content security policy with no external source at all. A
+ * capture has different economics — 71 pages carrying the same 15 KB is a
+ * megabyte of duplication, and a visitor clicking through the sections
+ * re-downloads it every time. The file is same-directory and relative, so the
+ * folder stays portable.
+ */
+function extractStylesheet(html, context) {
+  return html.replace(/<style>([\s\S]*?)<\/style>/, (_whole, css) => {
+    if (!context.stylesheet.css) context.stylesheet.css = css;
+    else if (context.stylesheet.css !== css) {
+      throw new Error('pages disagree about the stylesheet; they cannot share one file');
+    }
+    return '<link rel="stylesheet" href="console.css">';
+  });
 }
 
 /**
@@ -448,7 +485,7 @@ function replaceNotice(html, context) {
   const notice = `<aside class="demo-strip" aria-label="About this page">
   <strong>Live design showcase</strong>
   <span>Real markup from the ARC Control console, captured from the running server against the shipped demo seed (<span class="mono">ARC_SEED_DEMO=true</span>). The policy decisions, the approval, the evidence records and the hash-chained audit log below are all real; the connector effects are simulated, and controls that would write are disabled. Built from <span class="mono">${context.revision}</span> on <span class="mono">${context.built.slice(0, 10)}</span>.</span>
-</aside>`;
+${home ? `  <a class="showcase-home" href="${home}">\u2190 ${homeLabel}</a>\n` : ''}</aside>`;
 
   if (html.includes('<aside class="demo-strip"')) {
     return html.replace(/<aside class="demo-strip"[\s\S]*?<\/aside>/, notice);
@@ -493,6 +530,11 @@ function addShowcaseStyles(html) {
   margin: 4px 0 0; font-size: 12px; line-height: 1.5; color: var(--ink-soft);
   border-left: 2px solid var(--border-strong); padding-left: 10px; max-width: 70ch;
 }
+.showcase-home {
+  margin-left: auto; white-space: nowrap; font-weight: 600;
+  color: var(--proto); text-decoration: underline; text-underline-offset: 2px;
+}
+@media (max-width: 900px) { .showcase-home { margin-left: 0; } }
 @media print { .inert-note { color: #444; } }
 </style>`,
   );

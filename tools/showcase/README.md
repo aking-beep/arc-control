@@ -1,12 +1,29 @@
 # The static showcase
 
 ```bash
-npm run showcase          # → dist/showcase/
+npm run showcase                          # → dist/showcase/
+node tools/showcase/build.mjs \
+  --out dist/showcase \
+  --home /ark-control                     # adds a way back to the site
 ```
+
+| Flag | |
+| --- | --- |
+| `--out <dir>` | Where to write. Defaults to `dist/showcase`. |
+| `--home <href>` | Adds a "back to the site" link to the notice on every page. Without it a visitor who clicks into the console has only the browser's back button, which is a dead end when the capture is embedded in a site. Left unset, the bundle contains no absolute link at all. |
+| `--home-label <text>` | The text of that link. Defaults to `ARC Transformation Group`. |
 
 Renders the console to a folder of flat `.html` files with relative links. The
 folder works at a site root, in a subdirectory, behind any host, and opened
 from disk — no rewrite rules, no clean-URL configuration, no `<base>` tag.
+
+The console inlines its stylesheet — one request per page, and a content
+security policy with no external source at all. A capture has different
+economics: 71 pages carrying the same 15 KB is a megabyte of duplication, and a
+visitor clicking through the sections re-downloads it each time. The builder
+lifts it into one `console.css` the browser caches, which takes the folder from
+2.7 MB to 920 KB and each page from 38 KB to 16 KB. It is same-directory and
+relative, so portability holds.
 
 ## Why a capture and not a deployment
 
