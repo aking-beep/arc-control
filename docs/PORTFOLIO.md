@@ -19,6 +19,8 @@ listing one here does not publish its code.
 | `aking-beep/arc-skills` | An open library of agent skills (`SKILL.md` packages) | Separate product, public. |
 | `aking-beep/ai-workflow-templates` | An open catalog of AI workflows, most stopping at a human gate | Separate product, public. |
 | `aking-beep/reference-architectures` | An open library of system blueprints and their trade-offs | Separate product, public. |
+| `aking-beep/prompt-reviewer` | Static review of whether a system prompt is ready to ship | Separate product, public. |
+| `aking-beep/connectivity-scanner` | Grades an endpoint for reachability, TLS, speed and security headers | Separate product, public. |
 | `aking-beep/ark-ai-agent-platform` | A governed single-agent runtime on AWS | **Superseded.** Its useful parts are ported here under ADR-0001, then the repository is archived. |
 | `aking-beep/ark` | The original ARK monorepo, whose Control app overlaps this one | **Legacy, migrating.** ADR-0001 steps 2–11 port its Control safeguards here; its AI Fit apps have moved to `aifit-engine` (AI Fit is an ARC Labs product; AI Fit Teams, in `apps/teams`, is Control's). |
 
@@ -32,7 +34,7 @@ Three kinds of work:
 - **Enterprise assessment and readiness products** sold to organizations, such as the
   experience-intelligence platform, the C.I.T.H. assessment and AI Fit Teams.
 - **Operator resources for running AI in production**: the free skills, workflow and
-  reference-architecture libraries.
+  reference-architecture libraries, and the prompt-review and connectivity-scanning tools.
 
 Only the control platform lives in this repository; every other row is its own repository.
 The README's scope rule still holds here: only what contributes to identity,
