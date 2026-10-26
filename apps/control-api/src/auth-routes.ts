@@ -88,24 +88,42 @@ function clearCookie(name: string, secure: boolean): string {
  *
  * A protocol-relative `//evil.example.com` is a URL to a browser and a path to
  * a naive check, so it is rejected explicitly.
+ *
+ * So are control characters, and that one is not hypothetical: the URL parser
+ * strips tab, carriage return and line feed *before* parsing, so
+ * `/\t/evil.example.com` passes every prefix check above and then resolves to
+ * `//evil.example.com` — a working open redirect through a value that reads
+ * like a path. Nothing legitimate needs them: a real `returnTo` is a path the
+ * console itself generated, where anything of the sort would be
+ * percent-encoded. Rejecting the whole C0 range and DEL is cheaper than
+ * reasoning about which characters a parser discards.
  */
 export function safeReturnTo(value: string | null): string {
   if (value === null || value === '') return '/';
   if (!value.startsWith('/')) return '/';
   if (value.startsWith('//')) return '/';
   if (value.includes('\\')) return '/';
+  // eslint-disable-next-line no-control-regex -- the point is to match them
+  if (/[\u0000-\u001f\u007f]/.test(value)) return '/';
   return value;
 }
 
 /**
  * The absolute address to send an operator to when the flow is finished.
  *
- * `safeReturnTo` has already reduced the request's own value to a path on this
- * origin: one leading slash, no second slash, no backslash. That is what keeps
- * this closed — the origin here is never taken from the request, only from the
- * deployment's own configuration, so no value a visitor can supply changes
- * where they end up. What remains is to put that path on the right origin,
- * because the console is usually not this one.
+ * `safeReturnTo` has already reduced the request's value to something that
+ * looks like a path on this deployment, but this does not rely on that. The
+ * first version did, and it was wrong: a tab in the middle of the path was
+ * enough to turn the resolved URL into `//evil.example.com`, because the
+ * checks there are about the *input* while what matters is the *destination*.
+ *
+ * So the destination is what gets checked. Resolve, then assert the result
+ * lands on the console's own origin, and send somebody to the console root if
+ * it does not. That holds whatever the parser does with the input, which is
+ * the property worth having here — the sign-in page is the most valuable place
+ * in the product to have an open redirect, since the attacker gets a victim
+ * who has just authenticated and is expecting to land somewhere that looks
+ * like ARC.
  *
  * With no console configured this returns the path unchanged, which is correct
  * for a single-origin deployment and the long-standing behaviour.
@@ -113,15 +131,23 @@ export function safeReturnTo(value: string | null): string {
 export function returnToUrl(path: string, consoleUrl: string | undefined): string {
   if (consoleUrl === undefined || consoleUrl === '') return path;
 
+  let base: URL;
   try {
-    // `new URL` resolves the path against the console's origin and discards
-    // any path the console URL itself carried, which is what we want: the
-    // path is already absolute from the root.
-    return new URL(path, consoleUrl).toString();
+    base = new URL(consoleUrl);
   } catch {
     // A console URL that will not parse is a configuration error, not a
     // reason to strand somebody mid-sign-in.
     return path;
+  }
+
+  try {
+    const resolved = new URL(path, base);
+    // The one question that matters, asked of the answer rather than of the
+    // question: is this still the console?
+    if (resolved.origin !== base.origin) return base.origin;
+    return resolved.toString();
+  } catch {
+    return base.origin;
   }
 }
 

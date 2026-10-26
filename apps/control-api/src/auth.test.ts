@@ -6,6 +6,7 @@ import { encodeBase64Url } from '@arc-control/operator-identity';
 import { SimulationConnector } from '@arc-control/connector-simulation';
 import { MemoryStore } from '@arc-control/store';
 import { createControlApi, type ControlApi } from './server.js';
+import { returnToUrl, safeReturnTo } from './auth-routes.js';
 
 /**
  * Signing in, end to end, against a stub identity provider on loopback.
@@ -115,6 +116,76 @@ function identityProvider(): {
 
 /** Maps an authorization code to the nonce it was issued against. */
 const nonceByCode = new Map<string, string>();
+
+/**
+ * Where sign-in sends somebody afterwards.
+ *
+ * The sign-in page is the most valuable place in this product to have an open
+ * redirect: the attacker gets a victim who has just authenticated and is
+ * expecting to land somewhere that looks like ARC.
+ *
+ * The first version of this code checked the *input* — one leading slash, no
+ * second slash, no backslash — and that was not enough. The URL parser strips
+ * tab, carriage return and line feed before parsing, so `/\t/evil.example.com`
+ * passed every check and then resolved to `//evil.example.com`. The lesson is
+ * in how these tests are written: the assertion is about the destination, not
+ * about which inputs were thought of.
+ */
+describe('where sign-in returns an operator to', () => {
+  const CONSOLE = 'http://console.internal:8788';
+
+  /**
+   * Each of these looks like a path to a prefix check and is a different
+   * origin to a browser.
+   */
+  const hostile: ReadonlyArray<readonly [string, string]> = [
+    ['a tab mid-path, which the URL parser strips', '/\t/evil.example.com'],
+    ['a line feed', '/\n/evil.example.com'],
+    ['a carriage return', '/\r/evil.example.com'],
+    ['two tabs and a real protocol-relative path', '/\t\t//evil.example.com'],
+    ['a NUL', '/\u0000/evil.example.com'],
+    ['a DEL', '/\u007f/evil.example.com'],
+    ['a plain protocol-relative path', '//evil.example.com'],
+    ['an absolute URL', 'https://evil.example.com/steal'],
+    ['a backslash, which some parsers treat as a slash', '/\\evil.example.com'],
+    ['an absolute URL with no scheme separator', 'https:evil.example.com'],
+  ];
+
+  for (const [description, value] of hostile) {
+    it(`sends an operator to the console despite ${description}`, () => {
+      const destination = returnToUrl(safeReturnTo(value), CONSOLE);
+
+      assert.ok(
+        destination.startsWith(CONSOLE),
+        `${JSON.stringify(value)} would have sent a signed-in operator to ${destination}`,
+      );
+      assert.equal(new URL(destination).origin, new URL(CONSOLE).origin);
+    });
+  }
+
+  it('keeps the page the operator actually asked for', () => {
+    assert.equal(
+      returnToUrl(safeReturnTo('/approvals?status=pending'), CONSOLE),
+      `${CONSOLE}/approvals?status=pending`,
+    );
+    assert.equal(returnToUrl(safeReturnTo('/assurance/ARC-AI-004'), CONSOLE), `${CONSOLE}/assurance/ARC-AI-004`);
+  });
+
+  /** A single-origin deployment has no console address, and needs none. */
+  it('returns a bare path when no console is configured', () => {
+    assert.equal(returnToUrl(safeReturnTo('/approvals'), undefined), '/approvals');
+    assert.equal(returnToUrl(safeReturnTo('//evil.example.com'), undefined), '/');
+  });
+
+  /** A console URL that will not parse must not strand somebody mid-sign-in. */
+  it('falls back to a path when the configured console URL is unusable', () => {
+    assert.equal(returnToUrl(safeReturnTo('/approvals'), 'not a url'), '/approvals');
+  });
+
+  it('discards any path on the configured console URL', () => {
+    assert.equal(returnToUrl(safeReturnTo('/approvals'), `${CONSOLE}/some/prefix`), `${CONSOLE}/approvals`);
+  });
+});
 
 describe('signing an operator in', () => {
   let provider: ReturnType<typeof identityProvider>;
