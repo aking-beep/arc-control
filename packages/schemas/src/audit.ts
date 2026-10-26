@@ -30,7 +30,32 @@ export type AuditEventType =
   | 'approval.approved'
   | 'approval.rejected'
   | 'approval.expired'
-  | 'evidence.recorded';
+  | 'evidence.recorded'
+  // 2.0 — kill switches and lifecycle.
+  | 'agent.retired'
+  | 'tool.disabled'
+  | 'tool.enabled'
+  | 'connector.disabled'
+  | 'connector.enabled'
+  | 'credential.rotated'
+  | 'credential.expired'
+  // 2.0 — governance administration. Every one of these is an operator
+  // changing what the platform asserts about itself, which is exactly the
+  // class of change an auditor asks to see a trail of.
+  | 'risk.created'
+  | 'risk.updated'
+  | 'risk.accepted'
+  | 'risk.closed'
+  | 'control.created'
+  | 'control.updated'
+  | 'control.enabled'
+  | 'control.disabled'
+  | 'assessment.ran'
+  | 'attestation.recorded'
+  | 'finding.opened'
+  | 'finding.updated'
+  | 'finding.resolved'
+  | 'bundle.exported';
 
 export interface AuditRecord {
   readonly id: string;

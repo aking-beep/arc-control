@@ -9,6 +9,8 @@
  * every time.
  */
 
+import type { ActionRiskClass, Reversibility } from './classification.js';
+
 /** The three outcomes ARC Control can produce for an action. */
 export type PolicyEffect = 'ALLOW' | 'REQUIRE_APPROVAL' | 'DENY';
 
@@ -130,6 +132,21 @@ export interface PolicyInput {
   readonly action: {
     readonly id: string;
     readonly parameters: Readonly<Record<string, unknown>>;
+    /**
+     * Deterministic risk classification of this action, available to rules as
+     * `$.action.risk.class`, `$.action.risk.reversibility` and
+     * `$.action.risk.sensitive`.
+     *
+     * Optional because a 1.0 caller building its own input does not supply
+     * it, and a rule referencing an absent value simply does not match —
+     * which fails closed for an ALLOW rule and is therefore the safe way for
+     * the field to be missing.
+     */
+    readonly risk?: {
+      readonly class: ActionRiskClass;
+      readonly reversibility: Reversibility;
+      readonly sensitive: boolean;
+    };
   };
   readonly context: {
     readonly environment: string;
@@ -183,4 +200,52 @@ export interface Decision {
   readonly trace: readonly RuleTrace[];
   readonly decidedAt: string;
   readonly evaluationMs: number;
+}
+
+
+/**
+ * One entry in a policy's version history.
+ *
+ * 1.0 stored the current policy and bumped `version` on publish, which
+ * answered "what does policy say now" but not "who changed it, when, and
+ * from what" — the question an auditor actually asks, and the one that makes
+ * a permission change defensible. Each publish now appends the full previous
+ * document alongside the new one, so any two versions can be diffed and every
+ * change has a name against it.
+ *
+ * History is append-only and never pruned by ARC: a retention decision about
+ * who authorized a permission change belongs to the customer, not to us.
+ */
+export interface PolicyVersionRecord {
+  readonly id: string;
+  readonly policyId: string;
+  readonly version: number;
+  /** The document as published at this version. */
+  readonly document: Policy;
+  /** The document this replaced. Absent for the first version. */
+  readonly previous?: Policy;
+  /** Operator who published it. */
+  readonly publishedBy: string;
+  /** How it was published: `api`, `console`, `cli` or `system` for a seed. */
+  readonly via: string;
+  readonly publishedAt: string;
+  /** Digest over `document`, so a history entry can be checked against an export. */
+  readonly documentDigest: string;
+  /** Summary of what changed, computed at publish time. */
+  readonly changes: readonly PolicyChange[];
+}
+
+export interface PolicyChange {
+  readonly kind:
+    | 'enabled'
+    | 'disabled'
+    | 'rule_added'
+    | 'rule_removed'
+    | 'rule_changed'
+    | 'match_changed'
+    | 'fallback_changed'
+    | 'metadata_changed';
+  readonly detail: string;
+  /** Rule id, when the change concerns one rule. */
+  readonly ruleId?: string;
 }

@@ -4,13 +4,20 @@ import type {
   Agent,
   AgentCredential,
   ApprovalRequest,
+  AssessmentRun,
   AuditRecord,
   ChainExpectation,
   ChainVerification,
+  ControlAssessment,
+  ControlDefinition,
   Decision,
   EvidenceRecord,
   ExecutionAttempt,
+  Finding,
+  HumanAttestation,
   Policy,
+  PolicyVersionRecord,
+  Risk,
   Tool,
 } from '@arc-control/schemas';
 import { Mutex } from './mutex.js';
@@ -228,6 +235,14 @@ export class MemoryStore implements ControlStore {
   readonly executions = new MemoryCollection<ExecutionAttempt>();
   readonly evidence = new MemoryCollection<EvidenceRecord>();
   readonly audit: AuditLogStore = new MemoryAuditLog();
+
+  readonly risks = new MemoryCollection<Risk>();
+  readonly controls = new MemoryCollection<ControlDefinition>();
+  readonly assessments = new MemoryCollection<ControlAssessment>();
+  readonly assessmentRuns = new MemoryCollection<AssessmentRun>();
+  readonly findings = new MemoryCollection<Finding>();
+  readonly attestations = new MemoryCollection<HumanAttestation>();
+  readonly policyVersions = new MemoryCollection<PolicyVersionRecord>();
 
   async close(): Promise<void> {
     /* nothing to release */
