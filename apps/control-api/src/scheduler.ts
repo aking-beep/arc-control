@@ -298,13 +298,18 @@ export class Scheduler {
    * Read from the delivery records rather than kept in memory, so a restart
    * does not re-notify everything that is currently overdue — which is
    * precisely when an operator least wants a hundred messages.
+   *
+   * Asked of the whole collection. This used to scan the newest 500
+   * deliveries, which is correct until a deployment writes its 501st: after
+   * that the window rolls past the record of having notified, and every
+   * overdue finding and expiring approval is announced again on every tick.
+   * A paged read cannot answer "ever", so it no longer tries to.
    */
   async #alreadyNotified(event: NotificationEvent, subject: string): Promise<boolean> {
     const notifier = this.#options.notifier;
     if (notifier === undefined) return true;
 
-    const existing = await notifier.deliveries(500);
-    return existing.some((delivery: { event: NotificationEvent; subject: string }) => delivery.event === event && delivery.subject === subject);
+    return notifier.hasNotified(event, subject);
   }
 
   #empty(problems: readonly string[]): TickResult {

@@ -101,6 +101,77 @@ describe('the scheduler', () => {
   }
 
   /**
+   * Once per subject means *ever*, not "within the last few hundred
+   * deliveries".
+   *
+   * The check used to read the newest 500 delivery records, which is correct
+   * right up to a deployment's 501st. After that the window rolls past the
+   * record of having notified, and every overdue finding and expiring
+   * approval is announced again on every tick — forever, every five minutes,
+   * which is how an alerting channel gets muted and the next real warning
+   * goes unread.
+   *
+   * So this test pushes the original delivery out of any plausible page
+   * before ticking again. It is slow by the standards of this file; the bug
+   * it pins down is invisible to a test with a handful of records.
+   */
+  it('does not notify twice once the delivery window has rolled past the record', async () => {
+    const h = await harness();
+    try {
+      await h.api.notifier.addChannel({ name: 'ops', url: hookUrl, events: ['finding.overdue'] });
+      // A second channel, so the filler traffic below is actually recorded.
+      // Without one, `notify` on an event nobody subscribes to writes no
+      // delivery record at all — the first version of this test buried the
+      // record under 600 notifications that produced nothing, and passed
+      // against the bug it was written to catch.
+      await h.api.notifier.addChannel({ name: 'traffic', url: hookUrl, events: ['approval.requested'] });
+
+      // An assessment raises the findings; a failing control is how one comes
+      // to exist. Then give it a deadline that has already passed, which is
+      // what makes it overdue.
+      await h.api.assurance.run({ requestedBy: 'ops@example.com' });
+      const open = await h.api.assurance.listFindings({ status: 'open' });
+      assert.ok(open.length > 0, 'the baseline assessment should raise at least one finding');
+      await h.api.assurance.updateFinding(
+        open[0]!.id,
+        { owner: 'ops@example.com', dueAt: new Date(Date.now() - 86_400_000).toISOString() },
+        'ops@example.com',
+      );
+
+      const first = await h.api.scheduler.tick();
+      assert.equal(first.overdueNotified, 1, 'the overdue finding is notified once');
+      assert.deepEqual(first.problems, []);
+
+      // Unrelated traffic, enough to bury that record past the page the check
+      // used to read.
+      for (let index = 0; index < 600; index += 1) {
+        await h.api.notifier.notify({
+          event: 'approval.requested',
+          subject: `filler-${String(index)}`,
+          summary: 'Unrelated traffic.',
+        });
+      }
+
+      // The premise of the test, asserted rather than assumed: the record of
+      // having notified is now outside the newest 500.
+      const recent = await h.api.notifier.deliveries(500);
+      assert.ok(
+        !recent.some((delivery) => delivery.event === 'finding.overdue'),
+        'the fixture failed to push the delivery record out of the window, so this test proves nothing',
+      );
+
+      const second = await h.api.scheduler.tick();
+      assert.equal(
+        second.overdueNotified,
+        0,
+        'the same finding was announced again once its delivery record fell out of the window',
+      );
+    } finally {
+      await h.close();
+    }
+  });
+
+  /**
    * The notifier object always exists, so the "no channel configured" case is
    * easy to lose: the route would return `configured: false` with no
    * explanation and the console would render an empty table that reads as
