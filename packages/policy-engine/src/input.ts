@@ -1,4 +1,4 @@
-import type { Action, AgentPrincipal, PolicyInput, Tool } from '@arc-control/schemas';
+import type { Action, ActionRiskAssessment, AgentPrincipal, PolicyInput, Tool } from '@arc-control/schemas';
 
 /**
  * Builds the evaluation input from the objects the gateway already has. The
@@ -12,6 +12,14 @@ export function buildPolicyInput(args: {
   readonly action: Action;
   readonly requestedAt?: Date;
   readonly source?: string;
+  /**
+   * Deterministic risk classification, exposed to rules as `$.action.risk.*`.
+   *
+   * Optional, and a rule referencing an absent value does not match — which
+   * fails closed for an ALLOW rule and is therefore the safe way for it to be
+   * missing.
+   */
+  readonly risk?: ActionRiskAssessment;
 }): PolicyInput {
   const at = args.requestedAt ?? new Date(args.action.requestedAt);
 
@@ -35,6 +43,15 @@ export function buildPolicyInput(args: {
     action: {
       id: args.action.id,
       parameters: args.action.parameters,
+      ...(args.risk
+        ? {
+            risk: {
+              class: args.risk.class,
+              reversibility: args.risk.reversibility,
+              sensitive: args.risk.sensitive,
+            },
+          }
+        : {}),
     },
     context: {
       environment: args.principal.environment,

@@ -6,6 +6,10 @@ export type ArcErrorCode =
   | 'unauthenticated'
   | 'agent_suspended'
   | 'unknown_tool'
+  /** The tool exists but its kill switch is on. */
+  | 'tool_disabled'
+  /** The agent exceeded a configured action rate limit. */
+  | 'rate_limited'
   | 'invalid_parameters'
   | 'policy_denied'
   | 'approval_required'
@@ -48,6 +52,11 @@ const HTTP_STATUS_BY_CODE: Record<ArcErrorCode, number> = {
   unauthenticated: 401,
   agent_suspended: 403,
   unknown_tool: 404,
+  // The tool is there; ARC is refusing to run it. 403 rather than 404 so an
+  // agent can tell "you may not" from "no such thing", which matters when
+  // the operator has just hit the kill switch mid-incident.
+  tool_disabled: 403,
+  rate_limited: 429,
   invalid_parameters: 400,
   policy_denied: 403,
   // A conflict, not an acceptance. This code is raised when a caller tries to

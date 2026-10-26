@@ -39,6 +39,11 @@ describe('ArcError status mapping', () => {
       unauthenticated: 401,
       agent_suspended: 403,
       unknown_tool: 404,
+      // 403 rather than 404: the tool exists and ARC is refusing to run it.
+      // An agent needs to tell "you may not" from "no such thing", not least
+      // because the first usually means an operator has just hit a switch.
+      tool_disabled: 403,
+      rate_limited: 429,
       invalid_parameters: 400,
       policy_denied: 403,
       approval_required: 409,

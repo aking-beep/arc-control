@@ -1,3 +1,5 @@
+import type { ActionRiskAssessment } from './classification.js';
+
 /**
  * Evidence is the durable answer to "what did this agent try to do, who or
  * what authorized it, and what actually happened?". One evidence record per
@@ -70,6 +72,17 @@ export interface EvidenceRecord {
     readonly resultDigest?: string;
     readonly error?: { readonly code: string; readonly message: string };
   };
+
+  /**
+   * How ARC classified the action's risk at decision time.
+   *
+   * Recorded so an auditor can see why an action was treated as sensitive
+   * without re-deriving it from a tool definition that may since have
+   * changed. Optional because records written before 2.0 have none, and
+   * because the classification is advisory: it informed policy, it did not
+   * decide.
+   */
+  readonly risk?: ActionRiskAssessment;
 
   readonly outcome: string;
   readonly obligations: readonly string[];
