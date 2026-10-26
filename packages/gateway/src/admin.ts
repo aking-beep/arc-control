@@ -131,7 +131,7 @@ export class Administration {
    */
   async publishPolicy(policy: Policy, actor: Actor): Promise<Policy> {
     const previous = await this.#deps.policies.get(policy.id);
-    const stored = await this.#deps.policies.publish(policy);
+    const stored = await this.#deps.policies.publish(policy, { identifier: actor.identifier, via: actor.via ?? 'api' });
 
     await this.#deps.audit.append({
       type: previous ? 'policy.updated' : 'policy.created',
@@ -156,7 +156,10 @@ export class Administration {
   }
 
   async setPolicyEnabled(policyId: string, enabled: boolean, actor: Actor): Promise<Policy> {
-    const policy = await this.#deps.policies.setEnabled(policyId, enabled);
+    const policy = await this.#deps.policies.setEnabled(policyId, enabled, {
+      identifier: actor.identifier,
+      via: actor.via ?? 'api',
+    });
     await this.#deps.audit.append({
       type: enabled ? 'policy.updated' : 'policy.disabled',
       organizationId: 'default',
