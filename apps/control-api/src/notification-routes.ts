@@ -26,15 +26,15 @@ export function addNotificationRoutes(router: Router, options: NotificationRoute
   router.get('/v1/notifications', async (context) => {
     await operators.authenticate(context);
 
+    // Only reachable when something builds these routes without a notifier,
+    // which the server never does. Kept so the shape is the same either way.
     if (notifier === undefined) {
       return {
         configured: false,
         channels: [],
         deliveries: [],
         failures: 0,
-        notice:
-          'No notification channel is configured, so ARC surfaces approvals and deadlines in this console and ' +
-          'tells nobody. Add a channel to change that.',
+        notice: 'Notification delivery is not enabled on this deployment, so ARC tells nobody.',
       };
     }
 
@@ -44,19 +44,31 @@ export function addNotificationRoutes(router: Router, options: NotificationRoute
       notifier.failures(),
     ]);
 
+    const enabled = channels.filter((channel) => channel.enabled);
+
+    /**
+     * Said plainly in both directions.
+     *
+     * The first case is easy to lose: the notifier object always exists now,
+     * so a deployment with no channel configured would otherwise return
+     * `configured: false` and no explanation, and the console would render an
+     * empty table that reads as "nothing to report" rather than "nobody is
+     * being told". The second is the failure mode that looks like success.
+     */
+    const notice =
+      enabled.length === 0
+        ? 'No notification channel is enabled, so ARC surfaces approvals and deadlines in this console and tells ' +
+          'nobody. An approval nobody hears about waits until somebody looks.'
+        : failures.length === 0
+          ? null
+          : `${String(failures.length)} notification(s) were not delivered. Anyone relying on them was not told.`;
+
     return {
-      configured: channels.some((channel) => channel.enabled),
+      configured: enabled.length > 0,
       channels,
       deliveries,
       failures: failures.length,
-      /**
-       * Stated rather than left for a reader to count, because an undelivered
-       * notification is the failure mode that looks like success.
-       */
-      notice:
-        failures.length === 0
-          ? null
-          : `${String(failures.length)} notification(s) were not delivered. Anyone relying on them was not told.`,
+      notice,
     };
   });
 

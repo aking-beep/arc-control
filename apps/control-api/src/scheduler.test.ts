@@ -100,6 +100,42 @@ describe('the scheduler', () => {
     return result.approvalId!;
   }
 
+  /**
+   * The notifier object always exists, so the "no channel configured" case is
+   * easy to lose: the route would return `configured: false` with no
+   * explanation and the console would render an empty table that reads as
+   * "nothing to report" rather than "nobody is being told". Found by running
+   * the real binary.
+   */
+  it('says plainly that nobody is being told when no channel is enabled', async () => {
+    const h = await harness();
+    try {
+      const address = await h.api.listen(0);
+      const base = `http://${address.host}:${address.port}`;
+      const headers = { authorization: 'Bearer token', 'x-arc-operator': 'ops@example.com' };
+
+      const empty = (await (await fetch(`${base}/v1/notifications`, { headers })).json()) as {
+        configured: boolean;
+        notice: string | null;
+      };
+      assert.equal(empty.configured, false);
+      assert.match(String(empty.notice), /tells\s+nobody/);
+
+      await h.api.notifier.addChannel({ name: 'ops', url: hookUrl });
+
+      const configured = (await (await fetch(`${base}/v1/notifications`, { headers })).json()) as {
+        configured: boolean;
+        notice: string | null;
+      };
+      assert.equal(configured.configured, true);
+      assert.equal(configured.notice, null, 'and the warning goes away once a channel exists');
+
+      await h.api.close();
+    } finally {
+      await h.close();
+    }
+  });
+
   it('reports a clean tick with no problems', async () => {
     const h = await harness();
     try {
