@@ -209,6 +209,8 @@ export interface AssessmentWindow {
 
 export interface HumanAttestation {
   readonly id: string;
+  /** The control attested. On the record itself so an exported attestation stands alone. */
+  readonly controlId: string;
   readonly attestedBy: string;
   readonly attestedAt: string;
   readonly statement: string;

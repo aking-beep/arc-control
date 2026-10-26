@@ -48,6 +48,18 @@ export class PolicyEngine {
     this.#now = options.now ?? (() => new Date());
   }
 
+  /**
+   * The effect applied when no policy matches.
+   *
+   * Exposed because assurance reporting needs it: "this high-impact tool has
+   * no policy covering it" means something very different depending on whether
+   * the answer to an uncovered action is DENY or ALLOW. A control that reported
+   * the gap without reporting that setting would be describing half the risk.
+   */
+  get defaultEffect(): PolicyEffect {
+    return this.#defaultEffect;
+  }
+
   evaluate(policies: readonly Policy[], input: PolicyInput): Decision {
     const startedAt = process.hrtime.bigint();
 
