@@ -357,8 +357,13 @@ export class ArcControlClient {
 
   // --- findings ------------------------------------------------------------
 
+  /**
+   * Findings. `overdue: true` narrows to open findings past their deadline,
+   * whatever `status` says — a resolved finding that missed its date is
+   * history rather than work.
+   */
   async listFindings(
-    filter: { status?: string; controlId?: string } = {},
+    filter: { status?: string; controlId?: string; overdue?: boolean } = {},
   ): Promise<{ findings: readonly Record<string, unknown>[] }> {
     return this.#request('GET', `/v1/findings${query(filter)}`, undefined, 'operator');
   }

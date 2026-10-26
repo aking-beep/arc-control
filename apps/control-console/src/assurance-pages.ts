@@ -14,6 +14,7 @@
  * plausible numbers is worse than no dashboard, because somebody will
  * screenshot it.
  */
+import { daysUntil, dueState } from '@arc-control/schemas';
 import { count, shortId, timestamp } from './format.js';
 import {
   backLink,
@@ -61,6 +62,55 @@ function mono(text: unknown): Trusted {
 
 function when(iso: unknown): Trusted {
   return raw(html`<span class="tnum">${timestamp(iso)}</span>`);
+}
+
+/**
+ * A remediation deadline, read as an operator reads it.
+ *
+ * The date alone makes a reader do arithmetic against today to find out
+ * whether it matters, which they will not do for thirty rows. So the cell
+ * leads with the state — overdue, due soon, or none set — and keeps the date
+ * beside it.
+ *
+ * "No deadline" is deliberately not blank. An unscheduled finding is a
+ * different gap from a late one, and a blank cell reads as "fine".
+ */
+function dueCell(dueAt: unknown, now: number): Trusted {
+  const value = typeof dueAt === 'string' ? dueAt : undefined;
+
+  // Classified by `dueState`, which the engine also uses, so this cell cannot
+  // disagree with the count above it or with the filter that selected the row.
+  // The day figures below are for reading only; they never decide the state.
+  switch (dueState(value, now)) {
+    case 'unscheduled':
+      return raw(html`<span class="badge muted">none set</span>`);
+
+    case 'unreadable':
+      return muted(String(dueAt));
+
+    case 'overdue': {
+      // Truncating gives 0 for anything less than a full day late, which would
+      // read as "not late at all", so under a day says only that it is late.
+      const late = Math.abs(daysUntil(value!, now));
+      const label = late >= 1 ? `${String(late)}d overdue` : 'overdue';
+      return raw(
+        html`<span class="badge deny">${label}</span>
+          <span class="tnum muted">${timestamp(value!)}</span>`,
+      );
+    }
+
+    case 'due_soon': {
+      const days = daysUntil(value!, now);
+      const label = days >= 1 ? `due in ${String(days)}d` : 'due today';
+      return raw(
+        html`<span class="badge approval">${label}</span>
+          <span class="tnum muted">${timestamp(value!)}</span>`,
+      );
+    }
+
+    default:
+      return raw(html`<span class="tnum muted">${timestamp(value!)}</span>`);
+  }
 }
 
 function links(ids: readonly string[], href: (id: string) => string, separator = ' '): Trusted {
@@ -591,12 +641,19 @@ export async function riskDetailPage(context: PageContext, riskId: string): Prom
 /** The remediation queue, ranked by severity then recency. */
 export async function findingsPage(context: PageContext): Promise<string> {
   const status = context.query.get('status') ?? 'open';
-  const [shell, findings] = await Promise.all([
+  const overdueOnly = status === 'overdue';
+
+  const [shell, findings, summary] = await Promise.all([
     chrome(context),
-    context.client.listFindings(status === 'all' ? {} : { status }).catch(() => ({ findings: [] })),
+    context.client
+      .listFindings(overdueOnly ? { overdue: true } : status === 'all' ? {} : { status })
+      .catch(() => ({ findings: [] })),
+    context.client.assuranceSummary().catch(() => ({})),
   ]);
 
   const queue = list(findings.findings);
+  const remediation = rec(rec(summary).remediation);
+  const now = Date.now();
 
   const rows = queue.map((finding) =>
     row(
@@ -605,7 +662,8 @@ export async function findingsPage(context: PageContext): Promise<string> {
       raw(html`<a href="/findings/${String(finding.id)}">${raw(mono(shortId(finding.subject, 22)).value)}</a>`),
       raw(html`${String(finding.detail ?? '')}`),
       raw(html`<span class="tnum">${count(finding.occurrences)}×</span> ${raw(when(finding.lastSeenAt).value)}`),
-      finding.owner ? raw(html`${String(finding.owner)}`) : muted('unassigned'),
+      finding.owner ? raw(html`${String(finding.owner)}`) : raw(html`<span class="badge muted">unassigned</span>`),
+      dueCell(finding.dueAt, now),
       badge(
         finding.status === 'open' ? 'deny' : finding.status === 'in_progress' ? 'approval' : 'muted',
         String(finding.status ?? ''),
@@ -619,10 +677,34 @@ export async function findingsPage(context: PageContext): Promise<string> {
       'Raised by control assessments and reconciled across runs: a repeat increments its occurrence count rather than creating a duplicate, and a subject that stops failing is resolved with the assessment that cleared it named.',
   })}
 
+  ${
+    // The remediation state, above the queue. A deadline nothing surfaces is
+    // not a deadline, and an operator should not have to read thirty rows and
+    // do arithmetic to find out whether anything is late.
+    Object.keys(remediation).length === 0
+      ? NOTHING
+      : raw(html`${countLine([
+          { value: remediation.open, label: 'open', href: '/findings?status=open' },
+          { value: remediation.overdue, label: 'overdue', href: '/findings?status=overdue' },
+          { value: remediation.dueSoon, label: 'due within 7 days' },
+          { value: remediation.noDeadline, label: 'no deadline set' },
+          { value: remediation.unassigned, label: 'unassigned' },
+        ])}
+        ${
+          Number(remediation.overdue ?? 0) > 0
+            ? raw(html`<p class="note">
+                <strong>${count(remediation.overdue)} finding(s) are past their deadline.</strong> ARC surfaces the
+                date and the lateness; it does not notify anyone, so this page is the notification.
+              </p>`)
+            : NOTHING
+        }`)
+  }
+
   ${filterLinks(
     'Status',
     [
       { value: 'open', label: 'Open' },
+      { value: 'overdue', label: 'Overdue' },
       { value: 'in_progress', label: 'In progress' },
       { value: 'resolved', label: 'Resolved' },
       { value: 'accepted', label: 'Accepted' },
@@ -636,13 +718,15 @@ export async function findingsPage(context: PageContext): Promise<string> {
   ${
     queue.length === 0
       ? emptyState(
-          status === 'open'
-            ? 'No open findings. That means the last assessment raised none — check Assurance for when it ran and what it could not assess.'
-            : `No findings with status "${status}".`,
+          overdueOnly
+            ? 'No finding is past its deadline. Findings with no deadline set are not counted as overdue — they are counted separately above, because unscheduled work is a different gap from late work.'
+            : status === 'open'
+              ? 'No open findings. That means the last assessment raised none — check Assurance for when it ran and what it could not assess.'
+              : `No findings with status "${status}".`,
         )
       : table(
           'Findings',
-          ['Severity', 'Control', 'Subject', 'What was observed', 'Seen', 'Owner', 'Status'],
+          ['Severity', 'Control', 'Subject', 'What was observed', 'Seen', 'Owner', 'Due', 'Status'],
           rows,
         )
   }`;
@@ -679,7 +763,7 @@ export async function findingDetailPage(context: PageContext, findingId: string)
     ],
     ['Subject', raw(html`${raw(mono(record.subject).value)} ${raw(muted(`(${String(record.subjectKind ?? '')})`).value)}`)],
     ['Owner', record.owner ? raw(html`${String(record.owner)}`) : muted('unassigned')],
-    ['Due', record.dueAt ? when(record.dueAt) : muted('no deadline set')],
+    ['Due', dueCell(record.dueAt, Date.now())],
     ['First seen', when(record.firstSeenAt)],
     ['Last seen', when(record.lastSeenAt)],
     ['Occurrences', raw(html`<span class="tnum">${count(record.occurrences)}</span>`)],

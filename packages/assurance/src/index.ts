@@ -24,6 +24,8 @@ export {
 } from './evaluate.js';
 export {
   AssuranceEngine,
+  isOpen,
+  isOverdue,
   type AssuranceAuditEvent,
   type AssuranceOptions,
   type AssuranceSummary,

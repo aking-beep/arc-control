@@ -402,6 +402,45 @@ export default {
       },
     },
     {
+      name: 'a finding with no deadline is not reported as overdue',
+      async run() {
+        const { gateway } = await buildHarness();
+        const engine = engineFor(gateway);
+        await engine.seedBaseline();
+
+        // Only the identity control, so the finding keys on the agent and the
+        // harness agent (which carries no governance record) raises exactly
+        // one.
+        for (const id of ['ARC-AI-002', 'ARC-AI-003', 'ARC-AI-004', 'ARC-AI-005', 'ARC-AI-006', 'ARC-AI-007', 'ARC-AI-008', 'ARC-AI-009']) {
+          await engine.setControlEnabled(id, false, 'evals');
+        }
+        await engine.run({ requestedBy: 'evals' });
+
+        const before = await engine.summary();
+        expect.equal(before.remediation.open, 1, 'the harness agent has no governance record, so one finding is open');
+        expect.equal(
+          before.remediation.overdue,
+          0,
+          'a finding nobody scheduled is not late: counting it as overdue would make the figure useless, and counting it as fine would let work be hidden by never setting a date',
+        );
+        expect.equal(before.remediation.noDeadline, 1, 'it is reported as unscheduled instead');
+
+        // Now give it a deadline that has passed.
+        const [finding] = await engine.listFindings({ status: 'open' });
+        await engine.updateFinding(finding.id, { dueAt: new Date(Date.now() - 86_400_000).toISOString() }, 'evals');
+
+        const after = await engine.summary();
+        expect.equal(after.remediation.overdue, 1, 'and once a date is set and passed, it is overdue');
+        expect.equal(after.remediation.noDeadline, 0);
+
+        // Closing it takes it out of the queue: resolved late is history.
+        await engine.resolveFinding(finding.id, { status: 'resolved', by: 'evals', note: 'Governance recorded.' });
+        const closed = await engine.summary();
+        expect.equal(closed.remediation.overdue, 0, 'a closed finding leaves the overdue queue even if it missed its date');
+        expect.equal(closed.remediation.open, 0);
+      },
+    },
+    {
       name: 'coverage reports gaps by name and never as a proportion',
       async run() {
         const { gateway } = await buildHarness();

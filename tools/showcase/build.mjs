@@ -346,12 +346,30 @@ async function main() {
     process.stdout.write('  registered        2 risks, one residual reviewed and one not\n');
 
     const run = await operatorPost('/v1/assurance/runs', {});
+
+    // Assign the open finding an owner and a deadline that has already
+    // passed, so the capture shows the remediation surface doing its job.
+    //
+    // This is operator-set data, exactly like the governance record above —
+    // not a claim about ARC's behaviour. A finding first raised three days
+    // ago against a two-day remediation target really is overdue, and a
+    // findings page that cannot show that is a to-do list without dates.
     const totals = Object.entries(run.run.totals)
       .filter(([, count]) => count > 0)
       .map(([status, count]) => `${count} ${status.replace('_', ' ')}`)
       .join(', ');
     process.stdout.write(`  assessed          ${totals}\n`);
 
+    const open = (await (await fetch(`${apiBase}/v1/findings?status=open`, { headers: operatorHeaders })).json())
+      .findings;
+
+    if (open.length > 0) {
+      await operatorPost(`/v1/findings/${open[0].id}`, {
+        owner: 'risk@arctransformationgroup.com',
+        dueAt: new Date(Date.now() - 2 * 86_400_000).toISOString(),
+      });
+      process.stdout.write('  assigned          1 finding, with a deadline that has passed\n');
+    }
     // -- crawl ------------------------------------------------------------
     process.stdout.write('\nCapturing pages\n');
 
