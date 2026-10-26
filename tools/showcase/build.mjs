@@ -75,9 +75,20 @@ function flag(name) {
   return index === -1 ? undefined : argv[index + 1];
 }
 
+/**
+ * The revision each page was rendered from.
+ *
+ * Suffixed `-dirty` when the working tree has uncommitted changes, because
+ * the point of recording a revision is that a published page can be traced
+ * back to the code that produced it — and a bare commit hash from a modified
+ * tree cannot. It is a small lie that would be very hard to notice later,
+ * which is the kind worth preventing.
+ */
 function commit() {
   try {
-    return execFileSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+    const head = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+    const dirty = execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim().length > 0;
+    return dirty ? `${head}-dirty` : head;
   } catch {
     return 'unknown';
   }
@@ -240,6 +251,106 @@ async function main() {
         process.stdout.write(`  ${'approved'.padEnd(17)} by ${OPERATOR_IDENTITY}, then released\n`);
       }
     }
+
+    // -- give the governance sections something real to show --------------
+    //
+    // Without this the capture showed "No assessment has been run" on every
+    // governance page: honest, and a waste of the half of the product those
+    // sections exist to demonstrate.
+    //
+    // The state below is chosen to show the *honest spread* rather than a
+    // clean sweep. Governance is recorded for the finance agent and
+    // deliberately not for the engineering one, so ARC-AI-001 fails against a
+    // named subject and the findings register has a real open finding — a
+    // showcase with an empty findings page teaches nothing. A partially
+    // governed deployment is also what a real pilot looks like in week two.
+    process.stdout.write('\nRecording governance, one attestation, and a risk\n');
+
+    const operatorPost = async (path, body) => {
+      const response = await fetch(`${apiBase}${path}`, {
+        method: 'POST',
+        headers: { ...operatorHeaders, 'content-type': 'application/json' },
+        body: JSON.stringify(body ?? {}),
+      });
+      if (!response.ok) {
+        throw new Error(`${path} answered HTTP ${response.status}: ${await response.text()}`);
+      }
+      return response.json();
+    };
+
+    const agents = (await (await fetch(`${apiBase}/v1/agents`, { headers: operatorHeaders })).json()).agents;
+    const finance = agents.find((agent) => agent.name === 'finance-agent');
+
+    if (finance) {
+      await operatorPost(`/v1/agents/${finance.id}/governance`, {
+        purpose: 'Issues customer refunds within the autonomous ceiling, and requests approval above it.',
+        department: 'finance-operations',
+        criticality: 'business_critical',
+        deploymentRef: 'github.com/arc/finance-agent',
+        dataClassification: ['payment-data'],
+        reviewIntervalDays: 90,
+        lastReviewedAt: new Date().toISOString(),
+        lastReviewedBy: 'risk@arctransformationgroup.com',
+        reviewNote: 'Tool grants checked against the refund runbook. No change since last review.',
+      });
+      process.stdout.write('  governed          finance-agent\n');
+    }
+
+    // The control ARC cannot decide from its own records. Attesting it is the
+    // only way it reports anything but not assessable, and the capture should
+    // show what an attestation looks like — including that it expires.
+    await operatorPost('/v1/assurance/controls/ARC-AI-009/attest', {
+      statement:
+        'Reviewed network routes and connector credential scopes for Stripe and GitHub: no credential reachable by an agent permits direct API access outside ARC Control.',
+      validForDays: 90,
+      reference: 'SECOPS-1184',
+    });
+    process.stdout.write('  attested          ARC-AI-009, the one ARC cannot test itself\n');
+
+    const risk = await operatorPost('/v1/risks', {
+      reference: 'RISK-AI-001',
+      title: 'An agent issues a refund outside policy',
+      description:
+        'A finance agent refunds a charge above its autonomous ceiling without the approval the policy requires, or repeats a refund already issued.',
+      category: 'unauthorized-action',
+      impact: 4,
+      likelihood: 3,
+      treatment: 'mitigate',
+      owner: 'cfo@arctransformationgroup.com',
+      controlIds: ['ARC-AI-003', 'ARC-AI-004'],
+      scope: ['stripe.refund'],
+    });
+    await operatorPost(`/v1/risks/${risk.id}/residual`, {
+      impact: 4,
+      likelihood: 1,
+      rationale:
+        'The approval gate is verified operating by ARC-AI-004 over the current window, and the hard ceiling cannot be lifted by an approval.',
+    });
+
+    // A second risk left unreviewed on purpose, so the register shows both the
+    // reviewed and the not-reviewed case side by side. Repeating the inherent
+    // figure as a residual would read as "controls reduced this to the same
+    // number"; leaving it blank reads as "nobody has looked", which is true.
+    await operatorPost('/v1/risks', {
+      reference: 'RISK-AI-002',
+      title: 'The audit log is truncated without detection',
+      description:
+        'Records are removed from the end of the hash chain. What remains is internally valid, so walking the records cannot detect it.',
+      category: 'evidence-integrity',
+      impact: 5,
+      likelihood: 2,
+      treatment: 'mitigate',
+      owner: 'secops@arctransformationgroup.com',
+      controlIds: ['ARC-AI-006'],
+    });
+    process.stdout.write('  registered        2 risks, one residual reviewed and one not\n');
+
+    const run = await operatorPost('/v1/assurance/runs', {});
+    const totals = Object.entries(run.run.totals)
+      .filter(([, count]) => count > 0)
+      .map(([status, count]) => `${count} ${status.replace('_', ' ')}`)
+      .join(', ');
+    process.stdout.write(`  assessed          ${totals}\n`);
 
     // -- crawl ------------------------------------------------------------
     process.stdout.write('\nCapturing pages\n');
