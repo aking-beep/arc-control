@@ -71,6 +71,70 @@ jobs:
       - name: Static showcase builds with no dead links
         run: node tools/showcase/build.mjs --out "$RUNNER_TEMP/showcase"
 
+      # The CLI is a user-facing binary: argument parsing, output and exit
+      # codes are not covered by the unit tests, so a broken command would
+      # ship silently. This drives the real binary against a real data
+      # directory and checks the exit codes mean what the help text says.
+      - name: CLI commands work against a real store
+        env:
+          ARC_OPERATOR_TOKEN: ci-operator-token
+        run: |
+          set -euo pipefail
+          DATA="$RUNNER_TEMP/arc-data"
+
+          ARC_PORT=8899 ARC_DATA_DIR="$DATA" ARC_SEED_DEMO=true \
+            node apps/control-api/dist/main.js > "$RUNNER_TEMP/api.log" 2>&1 &
+          API=$!
+          trap 'kill $API 2>/dev/null || true' EXIT
+
+          for _ in $(seq 1 60); do
+            curl -sf -m 2 http://127.0.0.1:8899/health > /dev/null 2>&1 && break
+            sleep 0.5
+          done
+
+          OP=(-H "authorization: Bearer $ARC_OPERATOR_TOKEN" -H 'x-arc-operator: ci@example.com' -H 'content-type: application/json')
+          AGENT=$(awk '/finance-agent/ {print $2}' "$RUNNER_TEMP/api.log")
+
+          # Real traffic: one allowed, one denied.
+          curl -sf -XPOST http://127.0.0.1:8899/v1/actions \
+            -H "authorization: Bearer $AGENT" -H 'content-type: application/json' \
+            -d '{"tool":"stripe.refund","parameters":{"customer":"cus_ci","amount":120}}' > /dev/null
+          curl -sf -XPOST http://127.0.0.1:8899/v1/actions \
+            -H "authorization: Bearer $AGENT" -H 'content-type: application/json' \
+            -d '{"tool":"stripe.refund","parameters":{"customer":"cus_ci","amount":99999}}' > /dev/null
+
+          curl -sf -XPOST http://127.0.0.1:8899/v1/evidence/bundles "${OP[@]}" \
+            -d '{"scope":{"kind":"window"}}' > "$RUNNER_TEMP/bundle.json"
+
+          kill $API; wait $API 2>/dev/null || true
+
+          node packages/cli/dist/bin.js assurance controls
+          node packages/cli/dist/bin.js audit verify --data "$DATA"
+          node packages/cli/dist/bin.js bundle verify "$RUNNER_TEMP/bundle.json"
+
+          # The demo seed records no governance, so ARC-AI-001 fails and the
+          # command must exit 1. An exit 0 here would mean the gate is inert.
+          if node packages/cli/dist/bin.js assurance evaluate --data "$DATA"; then
+            echo "::error::arc assurance evaluate exited 0 with a failing control"
+            exit 1
+          fi
+
+          # Coverage reports gaps without failing: a gap is not a defect.
+          node packages/cli/dist/bin.js assurance coverage --data "$DATA"
+
+          # And a tampered bundle must exit 1.
+          node -e '
+            const fs = require("node:fs");
+            const path = process.env.RUNNER_TEMP + "/bundle.json";
+            const bundle = JSON.parse(fs.readFileSync(path, "utf8"));
+            bundle.evidence[0].record.outcome = "rewritten";
+            fs.writeFileSync(process.env.RUNNER_TEMP + "/tampered.json", JSON.stringify(bundle));
+          '
+          if node packages/cli/dist/bin.js bundle verify "$RUNNER_TEMP/tampered.json"; then
+            echo "::error::arc bundle verify exited 0 on a tampered bundle"
+            exit 1
+          fi
+
   no-runtime-dependencies:
     name: No runtime dependencies
     runs-on: ubuntu-latest
