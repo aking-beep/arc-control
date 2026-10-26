@@ -239,6 +239,58 @@ export class ApprovalEngine {
     return request;
   }
 
+  /**
+   * Expires every pending request whose window has closed.
+   *
+   * Until 2.1 a lapsed request only became `expired` when something happened
+   * to touch it, so an abandoned approval sat in the store reading `pending`
+   * indefinitely — and the console's queue showed it as live work. The
+   * scheduler calls this so the state of the queue is a fact rather than an
+   * artefact of who last looked at it.
+   *
+   * Each transition goes through the approvals lock via `transact`, and the
+   * request is re-read inside it. The previous implementation wrote through
+   * `#expireIfDue` without the lock, which is the same defect a review caught
+   * in the release path: a stale `pending` snapshot could overwrite a grant a
+   * concurrent `vote` had just approved, destroying a human decision. Reading
+   * outside a lock is fine; writing what you read is not.
+   */
+  async expireDue(): Promise<readonly ApprovalRequest[]> {
+    const now = this.#now().getTime();
+    const candidates = await this.#store.approvals.filter(
+      (request) => request.status === 'pending' && Date.parse(request.expiresAt) <= now,
+    );
+
+    const expired: ApprovalRequest[] = [];
+    for (const candidate of candidates) {
+      const result = await this.#store.approvals.transact(async () => {
+        // Re-read inside the lock: a vote may have resolved it since the scan.
+        const current = await this.#store.approvals.get(candidate.id);
+        if (!current || current.status !== 'pending') return undefined;
+        if (Date.parse(current.expiresAt) > this.#now().getTime()) return undefined;
+        return this.#expireIfDue(current);
+      });
+
+      if (result !== undefined && result.status === 'expired') expired.push(result);
+    }
+
+    return expired;
+  }
+
+  /**
+   * Pending requests whose window closes within `withinMs`.
+   *
+   * For warning somebody before the decision is lost rather than after.
+   */
+  async expiringSoon(withinMs: number): Promise<readonly ApprovalRequest[]> {
+    const now = this.#now().getTime();
+    return this.#store.approvals.filter((request) => {
+      if (request.status !== 'pending') return false;
+      const expiresAt = Date.parse(request.expiresAt);
+      return expiresAt > now && expiresAt <= now + withinMs;
+    });
+  }
+
   async cancel(approvalId: string, reason: string): Promise<ApprovalRequest> {
     return this.#store.approvals.transact(async () => {
       const request = await this.require(approvalId);
@@ -254,17 +306,6 @@ export class ApprovalEngine {
       await this.#store.approvals.put(cancelled.id, cancelled);
       return cancelled;
     });
-  }
-
-  /** Expires every pending request past its window. Safe to call repeatedly. */
-  async expireDue(): Promise<number> {
-    const pending = await this.#store.approvals.filter((request) => request.status === 'pending');
-    let expired = 0;
-    for (const request of pending) {
-      const updated = await this.#expireIfDue(request);
-      if (updated.status === 'expired') expired += 1;
-    }
-    return expired;
   }
 
   /**

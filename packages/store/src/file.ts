@@ -16,6 +16,8 @@ import type {
   ExecutionAttempt,
   Finding,
   HumanAttestation,
+  NotificationChannel,
+  NotificationDelivery,
   OperatorSession,
   Policy,
   PolicyVersionRecord,
@@ -54,6 +56,8 @@ export class FileStore implements ControlStore {
   readonly attestations: Collection<HumanAttestation>;
   readonly policyVersions: Collection<PolicyVersionRecord>;
   readonly operatorSessions: Collection<OperatorSession>;
+  readonly notificationChannels: Collection<NotificationChannel>;
+  readonly notificationDeliveries: Collection<NotificationDelivery>;
 
   private constructor(
     private readonly directory: string,
@@ -75,6 +79,8 @@ export class FileStore implements ControlStore {
       attestations: Collection<HumanAttestation>;
       policyVersions: Collection<PolicyVersionRecord>;
       operatorSessions: Collection<OperatorSession>;
+      notificationChannels: Collection<NotificationChannel>;
+      notificationDeliveries: Collection<NotificationDelivery>;
     },
     audit: AuditLogStore,
   ) {
@@ -95,6 +101,8 @@ export class FileStore implements ControlStore {
     this.attestations = collections.attestations;
     this.policyVersions = collections.policyVersions;
     this.operatorSessions = collections.operatorSessions;
+    this.notificationChannels = collections.notificationChannels;
+    this.notificationDeliveries = collections.notificationDeliveries;
     this.audit = audit;
   }
 
@@ -136,6 +144,8 @@ export class FileStore implements ControlStore {
       attestations: await openCollection<HumanAttestation>(directory, 'attestations'),
       policyVersions: await openCollection<PolicyVersionRecord>(directory, 'policy-versions'),
       operatorSessions: await openCollection<OperatorSession>(directory, 'operator-sessions'),
+      notificationChannels: await openCollection<NotificationChannel>(directory, 'notification-channels'),
+      notificationDeliveries: await openCollection<NotificationDelivery>(directory, 'notification-deliveries'),
     };
 
     // Stamp the directory with the model version. A 1.x directory has no

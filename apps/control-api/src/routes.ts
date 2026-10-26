@@ -4,6 +4,7 @@ import type { AssuranceEngine } from '@arc-control/assurance';
 import { scanManifest, type McpServerManifest } from '@arc-control/mcp-security';
 import { Router, withStatus, type RequestContext } from './http.js';
 import type { OperatorAuth } from './operator.js';
+import type { Notifier } from '@arc-control/notify';
 
 export interface RouteOptions {
   readonly gateway: Gateway;
@@ -12,6 +13,9 @@ export interface RouteOptions {
   readonly version: string;
   /** Reported on `/health` so the console can label a demonstration as one. */
   readonly demoSeed?: boolean;
+  /** Tells somebody when an action is held for a human. Absent in tests that do not care. */
+  readonly notifier?: Notifier;
+  readonly defaultOrganizationId?: string;
 }
 
 /**
@@ -176,6 +180,48 @@ export function buildRoutes(options: RouteOptions): Router {
       },
       { source: 'api' },
     );
+
+    // Somebody is now waiting on a human. Telling them is the whole reason
+    // the notifier exists, and it happens here rather than inside the gateway
+    // so that enforcement keeps no dependency on an outbound network call.
+    //
+    // Deliberately not awaited for its success: a broken webhook must not turn
+    // a correctly held action into an error for the agent. The delivery record
+    // carries the failure, and the scheduler retries it.
+    if (result.outcome === 'pending_approval' && options.notifier !== undefined && result.approvalId !== undefined) {
+      try {
+        const request = await gateway.approvals.require(result.approvalId);
+        await options.notifier.notify({
+          event: 'approval.requested',
+          subject: request.id,
+          summary:
+            `${request.tool} needs a human: ${String(request.requirement.minApprovals)} approval(s) from ` +
+            `${request.requirement.approvers.join(', ')}. Requested by ${request.agentName}.`,
+          path: `/approvals/${request.id}`,
+          details: {
+            tool: request.tool,
+            agent: request.agentName,
+            reason: request.reason,
+            expiresAt: request.expiresAt,
+          },
+          // Already redacted on the request. Sent only to channels that asked.
+          parameters: request.parameters,
+        });
+      } catch (cause) {
+        // Recorded, never raised. The action is held correctly whether or not
+        // anyone could be told about it.
+        await gateway.audit
+          .append({
+            type: 'action.requested',
+            organizationId: options.defaultOrganizationId ?? 'default',
+            actor: 'system',
+            subject: String(result.approvalId),
+            summary: `an approval was raised but could not be notified: ${describeCause(cause)}`,
+            data: { approvalId: result.approvalId },
+          })
+          .catch(() => undefined);
+      }
+    }
 
     // A held action is accepted but incomplete; a denial is a successful
     // decision that happens to be "no", and is reported as 200 with the
@@ -636,3 +682,8 @@ function positiveInt(value: string | null, fallback: number): number {
 }
 
 export type { RequestContext };
+
+function describeCause(cause: unknown): string {
+  if (cause instanceof Error) return cause.message;
+  return String(cause);
+}

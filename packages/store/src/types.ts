@@ -14,6 +14,8 @@ import type {
   ExecutionAttempt,
   Finding,
   HumanAttestation,
+  NotificationChannel,
+  NotificationDelivery,
   OperatorSession,
   Policy,
   PolicyVersionRecord,
@@ -94,6 +96,15 @@ export interface ControlStore {
   // expires, which is not an answer to "we removed someone this morning".
 
   readonly operatorSessions: Collection<OperatorSession>;
+
+  // --- 2.1: notification delivery ---------------------------------------
+  //
+  // Durable because "was anyone actually told about this approval" has to be
+  // answerable later, and because a broken webhook should be findable in the
+  // console rather than in application logs.
+
+  readonly notificationChannels: Collection<NotificationChannel>;
+  readonly notificationDeliveries: Collection<NotificationDelivery>;
 
   /**
    * The head of the audit chain as this store recorded it, when the

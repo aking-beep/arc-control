@@ -6,6 +6,9 @@ import { addAssuranceRoutes } from './assurance-routes.js';
 import { buildRoutes } from './routes.js';
 import { OperatorAuth, type TrustedProxyOptions } from './operator.js';
 import { addAuthRoutes } from './auth-routes.js';
+import { addNotificationRoutes } from './notification-routes.js';
+import { Scheduler } from './scheduler.js';
+import { Notifier } from '@arc-control/notify';
 import { ArcError } from '@arc-control/schemas';
 import {
   OidcClient,
@@ -59,11 +62,28 @@ export interface ControlApiOptions {
   readonly allowSharedToken?: boolean;
   /** Set false only for local HTTP development; session cookies are Secure otherwise. */
   readonly secureCookies?: boolean;
+
+  // --- 2.1: notification and the scheduler ------------------------------
+
+  /** Base URL of the console, so a notification can say where to act. */
+  readonly consoleUrl?: string;
+  /** Signs generic webhook payloads so a receiver can verify them. */
+  readonly webhookSigningSecret?: string;
+  /**
+   * Runs assessments, lapses approvals and retries notifications unattended.
+   *
+   * On by default. A governance product that only works while someone is
+   * looking at it does not govern anything: agents act on their own schedule.
+   * Off for tests and for a second replica, which must not also be ticking.
+   */
+  readonly schedule?: boolean | { readonly intervalMs?: number; readonly assessmentIntervalMs?: number };
 }
 
 export interface ControlApi {
   readonly gateway: Gateway;
   readonly assurance: AssuranceEngine;
+  readonly notifier: Notifier;
+  readonly scheduler: Scheduler;
   readonly server: Server;
   listen(port: number, host?: string): Promise<{ port: number; host: string }>;
   close(): Promise<void>;
@@ -141,15 +161,37 @@ export function createControlApi(options: ControlApiOptions): ControlApi {
     ...(options.allowSharedToken !== undefined ? { allowSharedToken: options.allowSharedToken } : {}),
   });
 
+  const notifier = new Notifier({
+    store: options.store,
+    organizationId: options.defaultOrganizationId ?? 'default',
+    ...(options.consoleUrl ? { consoleUrl: options.consoleUrl } : {}),
+    ...(options.webhookSigningSecret ? { signingSecret: options.webhookSigningSecret } : {}),
+  });
+
   const router = buildRoutes({
     gateway,
     assurance,
     operators,
+    notifier,
     version: API_VERSION,
     demoSeed: options.demoSeed === true,
+    ...(options.defaultOrganizationId ? { defaultOrganizationId: options.defaultOrganizationId } : {}),
+  });
+
+  const schedule = options.schedule ?? true;
+  const scheduler = new Scheduler({
+    gateway,
+    assurance,
+    notifier,
+    ...(sessions ? { sessions } : {}),
+    ...(typeof schedule === 'object' && schedule.intervalMs !== undefined ? { intervalMs: schedule.intervalMs } : {}),
+    ...(typeof schedule === 'object' && schedule.assessmentIntervalMs !== undefined
+      ? { assessmentIntervalMs: schedule.assessmentIntervalMs }
+      : {}),
   });
 
   addAssuranceRoutes(router, { gateway, assurance, operators, version: API_VERSION });
+  addNotificationRoutes(router, { gateway, operators, notifier, scheduler });
   addAuthRoutes(router, {
     gateway,
     operators,
@@ -172,11 +214,18 @@ export function createControlApi(options: ControlApiOptions): ControlApi {
   return {
     gateway,
     assurance,
+    notifier,
+    scheduler,
     server,
     listen: (port, host = '127.0.0.1') =>
       new Promise((resolve, reject) => {
         server.once('error', reject);
         server.listen(port, host, () => {
+          // Ticking starts with the listener, not with construction: a test or
+          // a tool that builds the API without serving should not acquire a
+          // background timer it never asked for.
+          if (schedule !== false) scheduler.start();
+
           const address = server.address();
           const actual = typeof address === 'object' && address ? address.port : port;
           resolve({ port: actual, host });
@@ -184,6 +233,7 @@ export function createControlApi(options: ControlApiOptions): ControlApi {
       }),
     close: () =>
       new Promise((resolve, reject) => {
+        scheduler.stop();
         server.close((cause) => (cause ? reject(cause) : resolve()));
       }),
   };

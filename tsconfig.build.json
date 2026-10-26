@@ -5,6 +5,7 @@
     { "path": "packages/store" },
     { "path": "packages/agent-identity" },
     { "path": "packages/operator-identity" },
+    { "path": "packages/notify" },
     { "path": "packages/policy-engine" },
     { "path": "packages/approvals" },
     { "path": "packages/evidence" },

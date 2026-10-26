@@ -27,6 +27,8 @@ export const ID_PREFIXES = {
   policyVersion: 'arc_pv',
   // 2.1 — operator identity and delivery.
   session: 'arc_ses',
+  channel: 'arc_ch',
+  delivery: 'arc_dlv',
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

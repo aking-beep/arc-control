@@ -24,6 +24,9 @@
       "path": "../../packages/operator-identity"
     },
     {
+      "path": "../../packages/notify"
+    },
+    {
       "path": "../../packages/assurance"
     },
     {
