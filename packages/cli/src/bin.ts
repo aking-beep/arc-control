@@ -6,8 +6,14 @@ import { lintPolicy, testPolicy } from './commands/policy.js';
 import { diffMcp, scanMcp } from './commands/mcp.js';
 import { verifyAudit, verifyEvidenceFile } from './commands/audit.js';
 import { runDemo } from './commands/demo.js';
+import {
+  evaluateControls,
+  listControls,
+  showCoverage,
+  verifyBundleFile,
+} from './commands/assurance.js';
 
-const VERSION = '0.1.0';
+const VERSION = '2.0.0';
 
 /**
  * The command table.
@@ -27,6 +33,10 @@ const COMMANDS: Readonly<Record<string, Command>> = {
   'mcp diff': { words: 2, run: diffMcp },
   'audit verify': { words: 2, run: verifyAudit },
   'evidence verify': { words: 2, run: verifyEvidenceFile },
+  'bundle verify': { words: 2, run: verifyBundleFile },
+  'assurance controls': { words: 2, run: listControls },
+  'assurance evaluate': { words: 2, run: evaluateControls },
+  'assurance coverage': { words: 2, run: showCoverage },
   demo: { words: 1, run: runDemo },
 };
 
@@ -48,20 +58,34 @@ ${style.bold('MCP SECURITY')}
       --json                                   Emit the raw report
   arc mcp diff --pinned <f> --endpoint <url>  Detect drift from a pinned manifest
 
+${style.bold('ASSURANCE')}
+  arc assurance controls                      Print the control library
+  arc assurance evaluate --data <dir>         Run the controls over a local store
+      --from <iso> --to <iso>                  Window; defaults to the last 30 days
+      --control <id>                           Evaluate one control
+  arc assurance coverage --data <dir>         List what is not governed at all
+
 ${style.bold('VERIFICATION')}
   arc audit verify --data <dir>               Verify a store's audit chain
   arc audit verify --file <audit.jsonl>       Verify an exported chain
       --expect-head <digest>                   Head digest recorded from an anchor
       --expect-records <count>                 Sequence the chain should reach
   arc evidence verify <evidence.json>         Verify exported evidence records
+  arc bundle verify <bundle.json>             Verify an exported evidence bundle
 
 ${style.bold('DEMONSTRATION')}
   arc demo                                    Run the refund workflow end to end
 
 ${style.bold('EXIT CODES')}
   0  success, or nothing to report
-  1  a check failed: invalid policy, a security finding, a broken chain
+  1  a check failed: invalid policy, a security finding, a broken chain,
+     a failing control, an altered bundle
   2  the command was used incorrectly
+
+${style.dim('A control reporting not_assessable does not fail a command. It is a')}
+${style.dim('question ARC could not answer, which is a different thing from a')}
+${style.dim('control that did not hold — and gating CI on it would make the gate')}
+${style.dim('either useless or permanently red.')}
 
 ${style.dim('The verification commands need no running server and no credentials: they')}
 ${style.dim('work on exports, so an auditor can check them with a tool they control.')}

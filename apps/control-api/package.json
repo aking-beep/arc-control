@@ -34,6 +34,7 @@
     "@arc-control/mcp-security": "0.1.0",
     "@arc-control/connector-simulation": "0.1.0",
     "@arc-control/connector-generic-http": "0.1.0",
-    "@arc-control/connector-mcp": "0.1.0"
+    "@arc-control/connector-mcp": "0.1.0",
+    "@arc-control/assurance": "0.1.0"
   }
 }

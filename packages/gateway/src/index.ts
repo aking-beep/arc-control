@@ -1,6 +1,18 @@
-export { Gateway, type GatewayOptions, type SubmitOptions, type ActionSource } from './gateway.js';
+export {
+  Gateway,
+  type ActionSource,
+  type ClassificationOptions,
+  type GatewayOptions,
+  type SubmitOptions,
+} from './gateway.js';
 export { PolicyStore, type PolicyStoreOptions, type Publisher } from './policies.js';
 export { Administration, type Actor, type AdminDependencies } from './admin.js';
+export {
+  RateLimiter,
+  type RateLimitOptions,
+  type RateLimitRule,
+  type RateLimitVerdict,
+} from './rate-limit.js';
 export {
   diffPolicies,
   policyHistory,

@@ -36,6 +36,7 @@
     "@arc-control/sdk-typescript": "0.1.0",
     "@arc-control/connector-simulation": "0.1.0",
     "@arc-control/connector-mcp": "0.1.0",
-    "@arc-control/evidence": "0.1.0"
+    "@arc-control/evidence": "0.1.0",
+    "@arc-control/assurance": "0.1.0"
   }
 }

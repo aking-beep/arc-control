@@ -224,6 +224,279 @@ export class ArcControlClient {
    *   is the case this exists for: it answers 409 with a full verification
    *   report when the chain is broken.
    */
+  // --- the assurance surface ----------------------------------------------
+  //
+  // Operator-only, every one of them. An agent integration constructing this
+  // client with `apiKey` alone cannot reach any of it, and the API refuses the
+  // credential even if it tries.
+
+  async assuranceSummary(): Promise<Record<string, unknown>> {
+    return this.#request('GET', '/v1/assurance/summary', undefined, 'operator');
+  }
+
+  async coverage(window: { from?: string; to?: string } = {}): Promise<Record<string, unknown>> {
+    return this.#request('GET', `/v1/assurance/coverage${query(window)}`, undefined, 'operator');
+  }
+
+  async listControls(): Promise<{ controls: readonly Record<string, unknown>[] }> {
+    return this.#request('GET', '/v1/assurance/controls', undefined, 'operator');
+  }
+
+  async getControl(controlId: string): Promise<Record<string, unknown>> {
+    return this.#request('GET', `/v1/assurance/controls/${encodeURIComponent(controlId)}`, undefined, 'operator');
+  }
+
+  async setControlEnabled(controlId: string, enabled: boolean): Promise<Record<string, unknown>> {
+    return this.#request(
+      'POST',
+      `/v1/assurance/controls/${encodeURIComponent(controlId)}/${enabled ? 'enable' : 'disable'}`,
+      undefined,
+      'operator',
+    );
+  }
+
+  /**
+   * Records a human attestation for a control ARC cannot decide itself.
+   *
+   * `statement` is what the attester claims to have checked, and it is
+   * required: the value of an attestation is the sentence an auditor reads,
+   * not the fact that a box was ticked.
+   */
+  async attestControl(
+    controlId: string,
+    attestation: { statement: string; validForDays?: number; reference?: string },
+  ): Promise<Record<string, unknown>> {
+    return this.#request(
+      'POST',
+      `/v1/assurance/controls/${encodeURIComponent(controlId)}/attest`,
+      attestation,
+      'operator',
+    );
+  }
+
+  /** Runs the control library over a window and persists the result. */
+  async runAssessment(
+    options: { from?: string; to?: string; controlIds?: readonly string[] } = {},
+  ): Promise<{ run: Record<string, unknown>; assessments: readonly Record<string, unknown>[] }> {
+    return this.#request('POST', '/v1/assurance/runs', options, 'operator');
+  }
+
+  async listAssessmentRuns(limit?: number): Promise<{ runs: readonly Record<string, unknown>[] }> {
+    return this.#request('GET', `/v1/assurance/runs${query({ limit })}`, undefined, 'operator');
+  }
+
+  async getAssessmentRun(
+    runId: string,
+  ): Promise<{ run: Record<string, unknown>; assessments: readonly Record<string, unknown>[] }> {
+    return this.#request('GET', `/v1/assurance/runs/${encodeURIComponent(runId)}`, undefined, 'operator');
+  }
+
+  async getAssessment(assessmentId: string): Promise<Record<string, unknown>> {
+    return this.#request('GET', `/v1/assurance/assessments/${encodeURIComponent(assessmentId)}`, undefined, 'operator');
+  }
+
+  async listFrameworks(): Promise<{ frameworks: readonly Record<string, unknown>[] }> {
+    return this.#request('GET', '/v1/assurance/frameworks', undefined, 'operator');
+  }
+
+  async getFramework(frameworkId: string): Promise<Record<string, unknown>> {
+    return this.#request('GET', `/v1/assurance/frameworks/${encodeURIComponent(frameworkId)}`, undefined, 'operator');
+  }
+
+  // --- risks ---------------------------------------------------------------
+
+  async listRisks(): Promise<{ risks: readonly Record<string, unknown>[] }> {
+    return this.#request('GET', '/v1/risks', undefined, 'operator');
+  }
+
+  async getRisk(riskId: string): Promise<Record<string, unknown>> {
+    return this.#request('GET', `/v1/risks/${encodeURIComponent(riskId)}`, undefined, 'operator');
+  }
+
+  async createRisk(risk: {
+    reference: string;
+    title: string;
+    description: string;
+    category: string;
+    impact: 1 | 2 | 3 | 4 | 5;
+    likelihood: 1 | 2 | 3 | 4 | 5;
+    treatment: 'mitigate' | 'transfer' | 'avoid' | 'accept';
+    owner: string;
+    controlIds?: readonly string[];
+    scope?: readonly string[];
+    reviewDueAt?: string;
+  }): Promise<Record<string, unknown>> {
+    return this.#request('POST', '/v1/risks', risk, 'operator');
+  }
+
+  /**
+   * Records a reviewed residual rating.
+   *
+   * Separate from `createRisk` on purpose. Residual risk is the number that
+   * reaches a board, and ARC will not compute it from the existence of
+   * controls — it takes a named reviewer and their rationale or it does not
+   * exist.
+   */
+  async reviewResidualRisk(
+    riskId: string,
+    review: { impact: 1 | 2 | 3 | 4 | 5; likelihood: 1 | 2 | 3 | 4 | 5; rationale: string },
+  ): Promise<Record<string, unknown>> {
+    return this.#request('POST', `/v1/risks/${encodeURIComponent(riskId)}/residual`, review, 'operator');
+  }
+
+  async acceptRisk(
+    riskId: string,
+    acceptance: { rationale: string; validForDays?: number },
+  ): Promise<Record<string, unknown>> {
+    return this.#request('POST', `/v1/risks/${encodeURIComponent(riskId)}/accept`, acceptance, 'operator');
+  }
+
+  async linkRiskControls(riskId: string, controlIds: readonly string[]): Promise<Record<string, unknown>> {
+    return this.#request('POST', `/v1/risks/${encodeURIComponent(riskId)}/controls`, { controlIds }, 'operator');
+  }
+
+  // --- findings ------------------------------------------------------------
+
+  async listFindings(
+    filter: { status?: string; controlId?: string } = {},
+  ): Promise<{ findings: readonly Record<string, unknown>[] }> {
+    return this.#request('GET', `/v1/findings${query(filter)}`, undefined, 'operator');
+  }
+
+  async getFinding(findingId: string): Promise<Record<string, unknown>> {
+    return this.#request('GET', `/v1/findings/${encodeURIComponent(findingId)}`, undefined, 'operator');
+  }
+
+  async updateFinding(
+    findingId: string,
+    patch: { owner?: string; dueAt?: string; severity?: string; status?: string },
+  ): Promise<Record<string, unknown>> {
+    return this.#request('POST', `/v1/findings/${encodeURIComponent(findingId)}`, patch, 'operator');
+  }
+
+  async resolveFinding(
+    findingId: string,
+    resolution: { status: 'resolved' | 'accepted' | 'false_positive'; note: string },
+  ): Promise<Record<string, unknown>> {
+    return this.#request('POST', `/v1/findings/${encodeURIComponent(findingId)}/resolve`, resolution, 'operator');
+  }
+
+  // --- evidence bundles ----------------------------------------------------
+
+  /**
+   * Exports an evidence bundle.
+   *
+   * Supplying `anchor` — an audit head the operator recorded outside ARC — is
+   * what turns the bundle from internally consistent into genuinely anchored.
+   * Without it the bundle still exports and states in its own limitations what
+   * it therefore cannot establish.
+   */
+  async exportBundle(options: {
+    scope?:
+      | { kind: 'window' }
+      | { kind: 'run'; runId: string }
+      | { kind: 'control'; controlId: string }
+      | { kind: 'evidence'; evidenceIds: readonly string[] };
+    from?: string;
+    to?: string;
+    anchor?: { headDigest: string; headSequence: number; recordedAt: string; recordedBy: string };
+  } = {}): Promise<Record<string, unknown>> {
+    return this.#request('POST', '/v1/evidence/bundles', options, 'operator');
+  }
+
+  // --- policy history and simulation ---------------------------------------
+
+  async policyHistory(policyId: string): Promise<{ versions: readonly Record<string, unknown>[] }> {
+    return this.#request('GET', `/v1/policies/${encodeURIComponent(policyId)}/history`, undefined, 'operator');
+  }
+
+  /**
+   * Simulates a candidate policy. Writes nothing and executes nothing.
+   *
+   * With `subject`, one hypothetical action is decided under both the current
+   * and candidate policy sets. Without it, recorded traffic in the window is
+   * re-decided and only the differences come back.
+   */
+  async simulatePolicy(options: {
+    candidate: Record<string, unknown>;
+    subject?: { agentName: string; tool: string; parameters?: Record<string, unknown> };
+    from?: string;
+    to?: string;
+    limit?: number;
+  }): Promise<Record<string, unknown>> {
+    return this.#request('POST', '/v1/policies/simulate', options, 'operator');
+  }
+
+  // --- agent governance, credentials and kill switches ---------------------
+
+  async setAgentGovernance(
+    agentId: string,
+    governance: {
+      purpose: string;
+      criticality: 'low' | 'medium' | 'high' | 'business_critical';
+      department?: string;
+      deploymentRef?: string;
+      dataClassification?: readonly string[];
+      reviewIntervalDays?: number;
+      lastReviewedAt?: string;
+      lastReviewedBy?: string;
+      reviewDueAt?: string;
+      reviewNote?: string;
+    },
+  ): Promise<Record<string, unknown>> {
+    return this.#request('POST', `/v1/agents/${encodeURIComponent(agentId)}/governance`, governance, 'operator');
+  }
+
+  async activateAgent(agentId: string): Promise<Record<string, unknown>> {
+    return this.#request('POST', `/v1/agents/${encodeURIComponent(agentId)}/activate`, undefined, 'operator');
+  }
+
+  /** Retires an agent and revokes its credentials. Not reversible. */
+  async retireAgent(agentId: string): Promise<Record<string, unknown>> {
+    return this.#request('POST', `/v1/agents/${encodeURIComponent(agentId)}/retire`, undefined, 'operator');
+  }
+
+  async credentialInventory(
+    options: { expiringWithinDays?: number } = {},
+  ): Promise<{ credentials: readonly Record<string, unknown>[] }> {
+    return this.#request('GET', `/v1/credentials${query(options)}`, undefined, 'operator');
+  }
+
+  /** Issues a replacement credential and revokes the old one. The key is returned once. */
+  async rotateCredential(
+    credentialId: string,
+    options: { expiresAt?: string } = {},
+  ): Promise<{ credential: Record<string, unknown>; apiKey: string; notice: string }> {
+    return this.#request('POST', `/v1/credentials/${encodeURIComponent(credentialId)}/rotate`, options, 'operator');
+  }
+
+  async setToolDisabled(toolId: string, disabled: boolean, reason?: string): Promise<Record<string, unknown>> {
+    return this.#request(
+      'POST',
+      `/v1/tools/${encodeURIComponent(toolId)}/${disabled ? 'disable' : 'enable'}`,
+      disabled && reason ? { reason } : undefined,
+      'operator',
+    );
+  }
+
+  async setConnectorDisabled(
+    connector: string,
+    disabled: boolean,
+    reason?: string,
+  ): Promise<Record<string, unknown>> {
+    return this.#request(
+      'POST',
+      `/v1/connectors/${encodeURIComponent(connector)}/${disabled ? 'disable' : 'enable'}`,
+      disabled && reason ? { reason } : undefined,
+      'operator',
+    );
+  }
+
+  /** Enforcement health alone, with nothing read from the assurance layer. */
+  async enforcementHealth(): Promise<Record<string, unknown>> {
+    return this.#request('GET', '/health/enforcement', undefined, 'none', [503]);
+  }
+
   async #request<T>(
     method: string,
     path: string,
@@ -310,4 +583,15 @@ function fromErrorBody(payload: unknown, status: number): ArcError {
 
 function describe(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
+}
+
+/** Builds a query string from defined values only, or an empty string. */
+function query(values: Readonly<Record<string, unknown>>): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(values)) {
+    if (value === undefined || value === null || value === '') continue;
+    params.set(key, String(value));
+  }
+  const text = params.toString();
+  return text ? `?${text}` : '';
 }

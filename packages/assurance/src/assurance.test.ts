@@ -532,6 +532,44 @@ describe('findings reconciliation', () => {
     assert.match(resolved[0]!.resolution!.note, /No longer observed failing by assessment arc_asm_/);
   });
 
+  /**
+   * Regression, found by running the real API rather than a fixture.
+   *
+   * A finding's subject has to be a stable name for the thing observed, not
+   * the value observed. ARC-AI-006 keyed on the chain head digest, which moves
+   * every time a record is appended, so each run saw a new subject: it opened
+   * a fresh finding and resolved the previous one, every run, forever.
+   */
+  it('does not churn findings when the observed value moves but the condition does not', async () => {
+    const store = new MemoryStore();
+    let appended = 0;
+    const engine = new AssuranceEngine({
+      store,
+      audit: noAudit,
+      now: () => NOW,
+      // A head digest that changes on every run, as a growing log's does.
+      verifyChain: async () => {
+        appended += 1;
+        return {
+          verification: validChain({ headDigest: `sha256:head-${appended}`, headSequence: appended }),
+          externallyAnchored: false,
+        };
+      },
+    });
+    await engine.seedBaseline();
+
+    for (let run = 0; run < 4; run += 1) {
+      await engine.run({ requestedBy: 'ops', controlIds: ['ARC-AI-006'] });
+    }
+
+    const all = await engine.listFindings({ controlId: 'ARC-AI-006' });
+    assert.equal(all.length, 1, `expected one finding across four runs, got ${all.length}`);
+    assert.equal(all[0]!.occurrences, 4);
+    assert.equal(all[0]!.status, 'open');
+    // The moving value still has to be visible somewhere.
+    assert.match(all[0]!.detail, /sha256:head-4/);
+  });
+
   it('keeps accepted and false_positive distinct from resolved', async () => {
     const { engine } = await storeWithUngovernedAgent();
     await engine.run({ requestedBy: 'ops' });

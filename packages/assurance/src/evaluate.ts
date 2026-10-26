@@ -443,13 +443,18 @@ export const evaluateAuditIntegrity: ControlEvaluator = (context) => {
     };
   }
 
+  // The subject is a stable name for the thing being observed, not the value
+  // observed. Keying this on the head digest meant every run saw a "new"
+  // subject as soon as one more record was appended, so each run opened a
+  // fresh finding and resolved the previous one — 720 findings a month for a
+  // single unchanged condition. The digest belongs in the detail.
   const observation: ControlObservation = {
-    subject: chain.headDigest ?? 'head',
+    subject: 'audit-chain',
     subjectKind: 'audit',
     ok: context.externallyAnchored,
     detail: context.externallyAnchored
-      ? `${chain.recordsChecked} records verified against an externally recorded head at sequence ${chain.headSequence ?? '?'}`
-      : `${chain.recordsChecked} records are internally consistent, but the head was not checked against an external anchor, so truncation cannot be ruled out`,
+      ? `${chain.recordsChecked} records verified against an externally recorded head at sequence ${chain.headSequence ?? '?'} (${chain.headDigest ?? 'no head digest'})`
+      : `${chain.recordsChecked} records are internally consistent, but the head (${chain.headDigest ?? 'none'}) was not checked against an external anchor, so truncation cannot be ruled out`,
   };
 
   // The deliberate decision in this module: an internally valid but unanchored
