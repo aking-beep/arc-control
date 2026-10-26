@@ -184,7 +184,7 @@ export class ApprovalEngine {
   async consume(approvalId: string): Promise<ApprovalRequest> {
     return this.#store.approvals.transact(async () => {
       const request = await this.#expireIfDue(await this.require(approvalId));
-      assertReleasable(request);
+      assertReleasable(request, this.#now().getTime());
 
       const consumed: ApprovalRequest = { ...request, consumedAt: this.#now().toISOString() };
       await this.#store.approvals.put(consumed.id, consumed);
@@ -203,10 +203,18 @@ export class ApprovalEngine {
    * `assertReleasable` with `consume` rather than restating the rules, and
    * `consume` still re-checks inside the transaction, so this is an early
    * answer rather than a second authority.
+   *
+   * Reads only, and deliberately. `#expireIfDue` persists a pending-to-expired
+   * transition, and it is safe only inside the `transact` lock that `vote`,
+   * `cancel` and `consume` hold: `put` does not take that mutex, so writing
+   * from here could overwrite a grant a concurrent `vote` had just approved —
+   * destroying a human decision and leaving the action unreleasable. So the
+   * expiry is *judged* here from `expiresAt` and *recorded* only on the
+   * serialized path.
    */
   async requireReleasable(approvalId: string): Promise<ApprovalRequest> {
-    const request = await this.#expireIfDue(await this.require(approvalId));
-    assertReleasable(request);
+    const request = await this.require(approvalId);
+    assertReleasable(request, this.#now().getTime());
     return request;
   }
 
@@ -282,14 +290,21 @@ export class ApprovalEngine {
  * would eventually disagree, and the disagreement would be a grant released
  * on a status that should have refused it.
  */
-function assertReleasable(request: ApprovalRequest): void {
+function assertReleasable(request: ApprovalRequest, now: number): void {
   if (request.consumedAt) {
     throw new ArcError('conflict', 'this approval has already authorized an execution', {
       details: { approvalId: request.id, consumedAt: request.consumedAt },
     });
   }
 
-  switch (request.status) {
+  // A grant whose window has closed is expired whether or not anything has
+  // written that down yet, so the judgement comes from `expiresAt` rather than
+  // from the stored status. That lets a caller refuse one without persisting
+  // the transition, which only the serialized path may do.
+  const effective: ApprovalStatus =
+    request.status === 'pending' && Date.parse(request.expiresAt) <= now ? 'expired' : request.status;
+
+  switch (effective) {
     case 'approved':
       return;
     case 'pending':

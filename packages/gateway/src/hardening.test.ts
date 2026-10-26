@@ -534,6 +534,135 @@ describe('a grant that was never approved is refused on its own terms', () => {
   });
 });
 
+/**
+ * `requireReleasable` exists so the release gates can run before the grant is
+ * spent. It must not *write* while doing that.
+ *
+ * `#expireIfDue` persists a pending-to-expired transition, and `put` does not
+ * take the approvals mutex. Called from a read path it could therefore
+ * overwrite a grant that a concurrent `vote` had just approved — turning a
+ * human's approval into `expired` and leaving the action permanently
+ * unreleasable. Which is the precise harm the release-gate ordering above was
+ * written to avoid, reintroduced one layer down.
+ *
+ * So expiry is judged from `expiresAt` on the read path and recorded only on
+ * the serialized one.
+ */
+describe('judging a closed approval window does not write', () => {
+  const HOLD: Policy = {
+    id: 'HOLD-003',
+    version: 1,
+    name: 'Hold refunds for a human',
+    enabled: true,
+    match: {},
+    rules: [
+      {
+        id: 'hold',
+        when: { always: true },
+        effect: 'REQUIRE_APPROVAL',
+        reason: 'needs a human',
+        approval: { approvers: ['role:finance-manager'], minApprovals: 1 },
+      },
+    ],
+    fallback: { effect: 'DENY', reason: 'no rule matched' },
+  };
+
+  /**
+   * Raises a held action and closes its window by rewriting `expiresAt`,
+   * leaving the stored status `pending` exactly as a real lapse would.
+   */
+  async function lapsed(gateway: Gateway, store: MemoryStore, apiKey: string): Promise<string> {
+    const result = await gateway.handle(apiKey, { tool: 'stripe.refund', parameters: { amount: 100 } });
+    assert.equal(result.outcome, 'pending_approval');
+
+    const approvalId = result.approvalId!;
+    const request = await store.approvals.get(approvalId);
+    assert.ok(request, 'the request was stored');
+    await store.approvals.put(approvalId, {
+      ...request,
+      expiresAt: new Date(Date.now() - 60_000).toISOString(),
+    });
+
+    return approvalId;
+  }
+
+  it('reports a lapsed window as expired', async () => {
+    const { gateway, store, apiKey } = await setup({}, HOLD);
+    const approvalId = await lapsed(gateway, store, apiKey);
+
+    await assert.rejects(
+      () => gateway.approvals.requireReleasable(approvalId),
+      (error: ArcError) => error.code === 'approval_expired',
+    );
+  });
+
+  it('leaves the stored request untouched, so a concurrent vote cannot be clobbered', async () => {
+    const { gateway, store, apiKey } = await setup({}, HOLD);
+    const approvalId = await lapsed(gateway, store, apiKey);
+
+    await assert.rejects(() => gateway.approvals.requireReleasable(approvalId));
+
+    const after = await store.approvals.get(approvalId);
+    assert.equal(after?.status, 'pending', 'the read path must not have written a status');
+    assert.equal(after?.resolvedAt, undefined, 'nor resolved it');
+  });
+
+  it('records the expiry on the serialized path, which holds the lock', async () => {
+    const { gateway, store, apiKey } = await setup({}, HOLD);
+    const approvalId = await lapsed(gateway, store, apiKey);
+
+    await assert.rejects(
+      () => gateway.approvals.consume(approvalId),
+      (error: ArcError) => error.code === 'approval_expired',
+    );
+    assert.equal((await store.approvals.get(approvalId))?.status, 'expired');
+  });
+
+  it('refuses to release it, without claiming an approved release was blocked', async () => {
+    const { gateway, store, apiKey, connector } = await setup({}, HOLD);
+    const approvalId = await lapsed(gateway, store, apiKey);
+
+    await assert.rejects(
+      () => gateway.resume(approvalId),
+      (error: ArcError) => error.code === 'approval_expired',
+    );
+    assert.equal(connector.callCount('stripe.refund'), 0);
+
+    const audit = await gateway.audit.read({ limit: 50 });
+    assert.equal(
+      audit.filter((record) => /approved action was refused at release/.test(record.summary)).length,
+      0,
+    );
+  });
+
+  /**
+   * A grant that a human approved *before* the window closed is still
+   * releasable. Only a `pending` request lapses — otherwise a slow operator
+   * would silently lose a decision that had already been made, which is the
+   * behaviour the engine had before and worth keeping deliberate.
+   */
+  it('still releases a grant approved before its window closed', async () => {
+    const { gateway, store, apiKey, connector } = await setup({}, HOLD);
+    const result = await gateway.handle(apiKey, { tool: 'stripe.refund', parameters: { amount: 100 } });
+    const approvalId = result.approvalId!;
+
+    await gateway.approvals.vote({
+      approvalId,
+      approver: { identifier: 'cfo@example.com', roles: ['finance-manager'] },
+      vote: 'approve',
+    });
+
+    const approved = await store.approvals.get(approvalId);
+    await store.approvals.put(approvalId, {
+      ...approved!,
+      expiresAt: new Date(Date.now() - 60_000).toISOString(),
+    });
+
+    assert.equal((await gateway.resume(approvalId)).outcome, 'executed');
+    assert.equal(connector.callCount('stripe.refund'), 1);
+  });
+});
+
 describe('retirement is final through every path', () => {
   it('refuses to reactivate a retired agent through setAgentStatus', async () => {
     const { gateway, agent } = await setup();
