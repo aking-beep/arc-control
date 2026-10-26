@@ -444,31 +444,35 @@ Identity is the first gate (authorization/identity)
 ## Status
 
 **2.0 — Control + Assurance.** The workflow above end to end, plus the
-governance layer that evidences it. 356 tests, 66 asserted properties, a
+governance layer that evidences it. 672 tests, 82 asserted properties, a
 14-step end-to-end demonstration.
 
 | | |
 |---|---|
 | Shipped | Gateway, policy engine, approvals, evidence, hash-chained audit, MCP security, agent lifecycle, credential inventory, kill switches, rate limits, risk classification, policy history and simulation, nine ARC-AI controls, risk register, findings, coverage analysis, NIST AI RMF mappings, offline-verifiable evidence bundles, a fifteen-section console, 35 assurance routes, SDK and CLI |
 | Added in 2.1 | OpenID Connect single sign-on with server-side sessions and roles from verified claims; the provenance of every recorded identity; outbound notification with durable delivery records; an unattended scheduler; an append-only store with flat per-write cost; configuration that refuses to start unsafely; verified backups; a readiness probe |
+| Added in 2.2 | An atomic idempotency claim, so concurrent callers sharing one key cause one effect; policy revalidation immediately before a held action is released, with the result recorded in evidence |
 | **Not** shipped | More than one writer — `transact` is an in-process mutex, so no HA and no multi-region; PostgreSQL; per-object RBAC; OpenTelemetry and SIEM export; external anchoring as a scheduled job; email or paging for notifications; penetration testing; a Python SDK |
 
 Two limitations worth knowing before you evaluate anything else:
 
 **One process may write.** `transact` is an in-process mutex, so two replicas
-would break the single-use approval guarantee and the audit chain's
-single-writer assumption. Run exactly one writer; a restart is a brief window
-in which enforcement denies rather than mis-authorizes. A Postgres-backed store
-is the upgrade path and is not built.
+would break the single-use approval guarantee, the atomic idempotency claim and
+the audit chain's single-writer assumption. Run exactly one writer; a restart
+is a brief window in which enforcement denies rather than mis-authorizes. A
+Postgres-backed store is the upgrade path and is not built — until it is, no
+claim about concurrency across processes should be read into anything here.
 
 **ARC-AI-006 does not pass by default.** The audit chain verifies internally,
 but walking records cannot detect truncation, and ARC checking its own log
 against its own copy of the head proves nothing to a reader who does not trust
 ARC. Anchor the head outside ARC and it passes. This is deliberate.
 
-[releases/2.1.md](./docs/releases/2.1.md) states the current release boundary —
-everything that shipped, and everything deferred with the reason;
-[releases/2.0.md](./docs/releases/2.0.md) has the previous one.
+[releases/2.2.md](./docs/releases/2.2.md) states the current release boundary:
+two authorization defects found by an independent harness, what was wrong, what
+changed, and the single-process bound on the idempotency guarantee.
+[releases/2.1.md](./docs/releases/2.1.md) and
+[releases/2.0.md](./docs/releases/2.0.md) have the previous ones.
 [ROADMAP.md](./docs/ROADMAP.md) has the longer phasing.
 
 ---
@@ -482,6 +486,7 @@ everything that shipped, and everything deferred with the reason;
 | [THREAT_MODEL.md](./docs/THREAT_MODEL.md) | 15 threats, the defence for each, and what is not defended |
 | [POLICY_MODEL.md](./docs/POLICY_MODEL.md) | The policy language and why it is shaped this way |
 | [EVIDENCE_MODEL.md](./docs/EVIDENCE_MODEL.md) | What a record contains and how to verify one |
+| [releases/2.2.md](./docs/releases/2.2.md) | **The current release boundary**: two authorization defects, their causes, and the limits of each fix |
 | [releases/2.0.md](./docs/releases/2.0.md) | **The 2.0 release boundary**: what shipped, what is deferred and why |
 | [CONTROL_CATALOGUE.md](./docs/CONTROL_CATALOGUE.md) | The nine ARC-AI controls, and what a pass does not tell you |
 | [ASSURANCE_MODEL.md](./docs/ASSURANCE_MODEL.md) | How assurance works, and the rules that keep it honest |

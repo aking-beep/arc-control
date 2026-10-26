@@ -10,6 +10,7 @@ import {
   type ApprovalRequest,
   type Decision,
   type EvidenceRecord,
+  type EvidenceRevalidation,
   type ExecutionAttempt,
   type Tool,
 } from '@arc-control/schemas';
@@ -22,6 +23,14 @@ export interface EvidenceInput {
   readonly outcome: ActionOutcome;
   readonly approval?: ApprovalRequest;
   readonly execution?: ExecutionAttempt;
+  /**
+   * The release-time revalidation, when there was one.
+   *
+   * Passed in rather than derived because it is a fact about a moment the
+   * builder is not present for: what current policy said, and what the agent
+   * and tool looked like, immediately before the connector was called.
+   */
+  readonly revalidation?: EvidenceRevalidation;
   /** Risk classification as of decision time, recorded for the auditor. */
   readonly risk?: ActionRiskAssessment;
   readonly now?: Date;
@@ -122,6 +131,7 @@ export function buildEvidence(input: EvidenceInput): EvidenceRecord {
         }
       : {}),
 
+    ...(input.revalidation ? { revalidation: input.revalidation } : {}),
     ...(input.risk ? { risk: input.risk } : {}),
     outcome: input.outcome,
     obligations: decision.obligations,

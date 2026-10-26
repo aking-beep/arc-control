@@ -10,10 +10,12 @@ import {
   type ActionRequest,
   type ActionResult,
   type ActionRiskAssessment,
+  type Agent,
   type AgentPrincipal,
   type ApprovalRequest,
   type Decision,
   type EvidenceRecord,
+  type EvidenceRevalidation,
   type ExecutionAttempt,
   type Policy,
   type Tool,
@@ -28,6 +30,8 @@ import { buildPolicyInput, PolicyEngine } from '@arc-control/policy-engine';
 import { PolicyStore } from './policies.js';
 import { RateLimiter, type RateLimitOptions } from './rate-limit.js';
 import { Administration } from './admin.js';
+import { IdempotencyLedger, type KeyClaim } from './idempotency.js';
+import { heldApprovalSatisfies, reapprovalReason, type Revalidation } from './revalidation.js';
 
 export interface ClassificationOptions {
   /**
@@ -92,6 +96,7 @@ export class Gateway {
   readonly rateLimiter: RateLimiter;
 
   readonly #store: ControlStore;
+  readonly #idempotency: IdempotencyLedger;
   readonly #policyEngine: PolicyEngine;
   readonly #executor: Executor;
   readonly #organizationId: string;
@@ -101,6 +106,7 @@ export class Gateway {
 
   constructor(options: GatewayOptions) {
     this.#store = options.store;
+    this.#idempotency = new IdempotencyLedger(this.#store);
     this.#organizationId = options.defaultOrganizationId ?? 'default';
     this.#environment = options.defaultEnvironment ?? 'production';
     this.#now = options.now ?? (() => new Date());
@@ -235,13 +241,36 @@ export class Gateway {
       }
     }
 
-    const action = await this.#recordAction(principal, request, tool, source);
+    const action = this.#buildAction(principal, request, tool, source);
 
-    // An idempotent repeat returns the original outcome rather than acting twice.
-    const replay = await this.#findReplay(action);
-    if (replay) return replay;
+    // Without a key there is nothing to be idempotent about: record and run.
+    if (action.idempotencyKey === undefined) {
+      await this.#store.actions.put(action.id, action);
+      await this.#announceAction(action, tool);
+      return this.#pipeline(principal, tool, action);
+    }
 
-    const decision = await this.#decide(principal, tool, action, source);
+    // With one, the key is claimed and the action recorded in a single
+    // critical section. A caller that loses the claim never reaches policy
+    // evaluation or a connector; see `IdempotencyLedger` for why the two
+    // steps cannot be separate, and for the single-process bound on this.
+    const claim = await this.#idempotency.claim(action);
+    if (claim.kind !== 'claimed') return this.#resolveRepeat(action, claim);
+
+    await this.#announceAction(action, tool);
+    try {
+      const result = await this.#pipeline(principal, tool, action);
+      this.#idempotency.settle(claim.scope, result);
+      return result;
+    } catch (cause) {
+      this.#idempotency.abandon(claim.scope, cause);
+      throw cause;
+    }
+  }
+
+  /** Decide, then act on the decision. One path, whatever the caller was. */
+  async #pipeline(principal: AgentPrincipal, tool: Tool, action: Action): Promise<ActionResult> {
+    const decision = await this.#decide(principal, tool, action);
 
     switch (decision.effect) {
       case 'DENY':
@@ -256,9 +285,30 @@ export class Gateway {
   /**
    * Executes an action whose approval has been granted.
    *
-   * The approval is consumed first, under the approvals store's lock, so a
-   * single grant can authorize exactly one execution even if two callers race
-   * to resume it.
+   * The approval is consumed under the approvals store's lock, so a single
+   * grant can authorize exactly one execution even if two callers race to
+   * resume it.
+   *
+   * An approval is a statement about the past, and until 2.2 ARC acted on it
+   * as a statement about the present: the decision recorded at submission
+   * time was executed unchanged, so a deny policy published while the request
+   * sat in the queue never reached it. A $1,850 refund held for a manager
+   * still refunded the customer after `finance.refund` had been denied
+   * outright, while an identical new request was correctly refused.
+   * `#revalidate` closes that — current policy is evaluated again here,
+   * alongside the lifecycle, kill-switch and binding gates below, and the
+   * result goes into evidence whichever way it falls.
+   *
+   * **What is still not atomic.** Revalidation and the connector call are two
+   * steps. The policy snapshot is taken under the policy collection's lock,
+   * so a publish part-way through writing its document and version record
+   * cannot be observed; the lock is released before the connector runs,
+   * because holding it across a vendor API call would let one slow connector
+   * stall every policy change in the deployment. A deny published inside that
+   * window does not stop the call. ARC records the policy version it decided
+   * against, so the gap is visible rather than deniable, but closing it would
+   * need the connector to be transactional with the control plane — which is
+   * not something ARC can impose on a third-party API.
    */
   async resume(approvalId: string): Promise<ActionResult> {
     // The gates are re-checked here, and that is the whole point of this
@@ -322,9 +372,58 @@ export class Gateway {
       throw error;
     }
 
-    // Only now is the grant spent.
-    const approval = await this.approvals.consume(approvalId);
+    // The grant must name *this* action and the decision it was granted
+    // against. Nothing in the product routes an approval to a different
+    // action, so a mismatch means the store has been edited underneath ARC or
+    // an approval id was supplied for an action it never belonged to; either
+    // way the human's agreement was not agreement to this.
+    const binding = bindingFailure(pending, action, decision);
+    if (binding) {
+      const error = new ArcError('conflict', binding, {
+        details: { approvalId, actionId: action.id, decisionId: decision.id },
+      });
+      await this.audit.append({
+        type: 'action.denied',
+        organizationId: action.organizationId,
+        actor: 'system',
+        subject: action.id,
+        summary: `an approved action was refused at release: ${error.message}`,
+        data: { code: error.code, approvalId, details: error.details },
+      });
+      throw error;
+    }
+
     const principal = this.agents.toPrincipal(agent, 'approval-resumed');
+
+    // The last gate, and the one this release exists to add: what does policy
+    // say *now*? Evaluated before the grant is spent, so a release refused by
+    // a policy that is later corrected does not cost the operator the human
+    // decision they already have.
+    const revalidation = await this.#revalidate({ principal, agent, tool, action, decision, approval: pending });
+
+    await this.audit.append({
+      type: 'action.revalidated',
+      organizationId: action.organizationId,
+      actor: 'system',
+      subject: action.id,
+      summary: `${action.tool} revalidated against current policy before release: ${revalidation.record.verdict} — ${revalidation.record.reason}`,
+      data: { approvalId, ...revalidation.record },
+    });
+
+    if (revalidation.record.verdict === 'denied') {
+      return this.#refuseAtRelease(principal, tool, action, decision, pending, revalidation);
+    }
+
+    if (revalidation.record.verdict === 'reapproval_required') {
+      // The grant is spent even though nothing executed. It cannot authorize
+      // this action under current policy, so leaving it releasable would do
+      // nothing but mint a fresh superseding request on every retry.
+      const spent = await this.approvals.consume(approvalId);
+      return this.#finishSuperseded(principal, tool, action, decision, spent, revalidation);
+    }
+
+    // Only now is the grant spent for an execution.
+    const approval = await this.approvals.consume(approvalId);
 
     await this.audit.append({
       type: 'approval.approved',
@@ -335,7 +434,7 @@ export class Gateway {
       data: { approvalId: approval.id, policyId: decision.policyId, ruleId: decision.ruleId },
     });
 
-    return this.#executeAndFinish(principal, tool, action, decision, approval);
+    return this.#executeAndFinish(principal, tool, action, decision, approval, revalidation.record);
   }
 
   /**
@@ -414,13 +513,13 @@ export class Gateway {
 
   // --- stages -------------------------------------------------------------
 
-  async #recordAction(
-    principal: AgentPrincipal,
-    request: ActionRequest,
-    tool: Tool,
-    source: ActionSource,
-  ): Promise<Action> {
-    const action: Action = {
+  /**
+   * Builds the action record. Pure, and separate from writing it, because
+   * with an idempotency key the write happens inside the claim's critical
+   * section rather than on its own.
+   */
+  #buildAction(principal: AgentPrincipal, request: ActionRequest, tool: Tool, source: ActionSource): Action {
+    return {
       id: newId('action'),
       agentId: principal.agentId,
       agentName: principal.agentName,
@@ -433,10 +532,13 @@ export class Gateway {
       ...(request.idempotencyKey ? { idempotencyKey: request.idempotencyKey } : {}),
       ...(request.intent ? { intent: request.intent } : {}),
       ...(request.correlationId ? { correlationId: request.correlationId } : {}),
+      source,
       requestedAt: this.#now().toISOString(),
     };
+  }
 
-    await this.#store.actions.put(action.id, action);
+  /** Records the request in the chain, once the action row is committed. */
+  async #announceAction(action: Action, tool: Tool): Promise<void> {
     await this.audit.append({
       type: 'action.requested',
       organizationId: action.organizationId,
@@ -446,26 +548,436 @@ export class Gateway {
       data: {
         tool: action.tool,
         parameters: redactParameters(action.parameters, tool.parameters),
-        source,
+        source: action.source,
         ...(action.correlationId ? { correlationId: action.correlationId } : {}),
       },
     });
-
-    return action;
   }
 
-  async #decide(
-    principal: AgentPrincipal,
-    tool: Tool,
-    action: Action,
-    source: ActionSource,
-  ): Promise<Decision> {
+  /**
+   * Answers a request whose idempotency key is already held.
+   *
+   * Three cases, and none of them reaches a connector. Different parameters
+   * under the same key is a conflict and is refused. A key held by a request
+   * still running in this process joins it and returns what it returns, so
+   * eight parallel refunds produce one refund and eight identical answers. A
+   * key held by a request that has finished reads back the outcome recorded
+   * for it.
+   */
+  async #resolveRepeat(action: Action, claim: Exclude<KeyClaim, { kind: 'claimed' }>): Promise<ActionResult> {
+    const { original } = claim;
+
+    if (original.parametersDigest !== action.parametersDigest) {
+      const error = new ArcError('conflict', 'this idempotency key was already used for different parameters', {
+        details: { idempotencyKey: action.idempotencyKey, originalActionId: original.id },
+      });
+      await this.audit.append({
+        type: 'action.denied',
+        organizationId: action.organizationId,
+        actor: action.agentId,
+        subject: original.id,
+        summary: `refused before policy evaluation: ${error.message}`,
+        data: { code: error.code, details: error.details, source: action.source },
+      });
+      throw error;
+    }
+
+    await this.audit.append({
+      type: 'action.replayed',
+      organizationId: action.organizationId,
+      actor: action.agentId,
+      subject: original.id,
+      summary:
+        claim.kind === 'in_progress'
+          ? `${action.agentName} repeated ${action.tool} while the original was still running; joined it rather than acting again`
+          : `${action.agentName} repeated ${action.tool}; returned the recorded outcome rather than acting again`,
+      data: {
+        idempotencyKey: action.idempotencyKey,
+        originalActionId: original.id,
+        state: claim.kind,
+        source: action.source,
+      },
+    });
+
+    if (claim.kind === 'in_progress') return claim.outcome;
+    return this.#recordedOutcome(original);
+  }
+
+  /**
+   * Reads back the outcome recorded for an action, for a caller presenting
+   * its idempotency key.
+   *
+   * The *latest* evidence for the action, not the first: an action held for
+   * approval has a `pending_approval` record and, once released, an
+   * `executed` one, and a retry after release must not be told the action is
+   * still waiting on a human.
+   */
+  async #recordedOutcome(original: Action): Promise<ActionResult> {
+    const evidence = await this.#latestEvidence(original.id);
+
+    if (!evidence) {
+      // The key is held by a request whose outcome was never recorded: the
+      // process that claimed it died between the claim and the evidence
+      // write, or it is running in another process against a shared
+      // directory. ARC does not know whether the effect landed. Executing
+      // again is the one answer that can double an irreversible effect, so it
+      // refuses and says why.
+      throw new ArcError(
+        'conflict',
+        'an earlier request holds this idempotency key and no outcome was recorded for it; ARC will not execute a second time',
+        { details: { idempotencyKey: original.idempotencyKey, originalActionId: original.id } },
+      );
+    }
+
+    const execution = evidence.execution ? await this.#store.executions.get(evidence.execution.id) : undefined;
+
+    // Where a release-time revalidation changed the answer, it is the answer.
+    // Reading `evidence.decision` alone would pair `outcome: 'denied'` with
+    // the submission-time `REQUIRE_APPROVAL` that the human was asked about,
+    // report no error, and hand back an approval id that is still live — so a
+    // caller branching on `decision.effect` would go on waiting for an
+    // approval that cannot authorize anything. A retry has to be told what
+    // `resume` told the caller who released it.
+    const superseded = evidence.revalidation && evidence.revalidation.verdict !== 'proceeded'
+      ? evidence.revalidation
+      : undefined;
+
+    // Summarized from the stored decision, the way `resume` summarizes it, so
+    // the two agree on `reason` as well as on the citation. The revalidation
+    // block's own `reason` explains why the *grant* no longer carried — "the
+    // approval on file was granted under role:finance-manager" — which is the
+    // right text for the error and the wrong text for the decision, whose
+    // reason belongs to the rule. It stands in only if the decision row has
+    // aged out of the store.
+    const fresh = superseded?.decisionId ? await this.#store.decisions.get(superseded.decisionId) : undefined;
+
+    const decision = fresh
+      ? summarize(fresh)
+      : superseded
+      ? {
+          effect: superseded.effect,
+          ...(superseded.policyId ? { policyId: superseded.policyId } : {}),
+          ...(superseded.ruleId ? { ruleId: superseded.ruleId } : {}),
+          reason: superseded.reason,
+        }
+      : {
+          effect: evidence.decision.effect,
+          ...(evidence.decision.policyId ? { policyId: evidence.decision.policyId } : {}),
+          ...(evidence.decision.ruleId ? { ruleId: evidence.decision.ruleId } : {}),
+          reason: evidence.decision.reason,
+        };
+
+    const error = superseded
+      ? {
+          code: superseded.verdict === 'denied' ? 'policy_denied' : 'approval_required',
+          message: superseded.reason,
+        }
+      : execution?.error;
+
+    // A denial names no approval to wait on, on this path as on the live one:
+    // the grant on file is not what the caller should act against.
+    const approvalId = evidence.outcome === 'denied' ? undefined : evidence.approval?.id;
+
+    return {
+      actionId: original.id,
+      outcome: evidence.outcome as ActionResult['outcome'],
+      decision,
+      evidenceId: evidence.id,
+      ...(execution?.result !== undefined ? { result: execution.result } : {}),
+      ...(approvalId ? { approvalId } : {}),
+      ...(error ? { error } : {}),
+      completedAt: evidence.createdAt,
+    };
+  }
+
+  /** The most recently written evidence record for an action. */
+  async #latestEvidence(actionId: string): Promise<EvidenceRecord | undefined> {
+    const records = await this.#store.evidence.filter((record) => record.actionId === actionId);
+    return records.at(-1);
+  }
+
+  async #decide(principal: AgentPrincipal, tool: Tool, action: Action): Promise<Decision> {
     const policies: readonly Policy[] = await this.policies.list();
-    const input = buildPolicyInput({ principal, tool, action, source, risk: this.#classify(tool, action) });
+    const input = buildPolicyInput({
+      principal,
+      tool,
+      action,
+      ...(action.source ? { source: action.source } : {}),
+      risk: this.#classify(tool, action),
+    });
     const decision = this.#policyEngine.evaluate(policies, input);
 
     await this.#store.decisions.put(decision.id, decision);
     return decision;
+  }
+
+  /**
+   * Re-evaluates current policy for an action that is about to be released,
+   * and decides what the approval in hand is still good for.
+   *
+   * The lifecycle, kill-switch and binding gates have already run in
+   * `resume`; their results are carried into the record so an auditor can see
+   * they were checked rather than assume it.
+   */
+  async #revalidate(input: {
+    readonly principal: AgentPrincipal;
+    readonly agent: Agent;
+    readonly tool: Tool;
+    readonly action: Action;
+    readonly decision: Decision;
+    readonly approval: ApprovalRequest;
+  }): Promise<Revalidation> {
+    const { action, agent, approval, tool } = input;
+    const performedAt = this.#now().toISOString();
+
+    const base = {
+      performedAt,
+      agentStatus: agent.status,
+      toolDisabled: tool.disabled === true,
+      approvalBound: true,
+      approvalId: approval.id,
+    } as const;
+
+    // Read and evaluate inside the policy collection's lock, so a publish
+    // that is part-way through writing its document and version record
+    // cannot be observed in between. Released before the connector runs: see
+    // the note on `resume` for what that leaves open.
+    const fresh = await this.#store.policies.transact(async () => {
+      const policies: readonly Policy[] = await this.policies.list();
+      return this.#policyEngine.evaluate(
+        policies,
+        buildPolicyInput({
+          principal: input.principal,
+          tool,
+          action,
+          // Conditions are evaluated as they stand now rather than as they
+          // stood at submission. A rule confining an irreversible tool to
+          // business hours is a control over when the effect lands, and
+          // re-deciding it against yesterday's clock would void it.
+          requestedAt: new Date(performedAt),
+          ...(action.source ? { source: action.source } : {}),
+          risk: this.#classify(tool, action),
+        }),
+      );
+    });
+    await this.#store.decisions.put(fresh.id, fresh);
+
+    const cite = {
+      decisionId: fresh.id,
+      ...(fresh.policyId ? { policyId: fresh.policyId } : {}),
+      ...(fresh.policyVersion !== undefined ? { policyVersion: fresh.policyVersion } : {}),
+      ...(fresh.ruleId ? { ruleId: fresh.ruleId } : {}),
+      traceDigest: digest(fresh.trace),
+    };
+
+    switch (fresh.effect) {
+      case 'DENY':
+        return { record: { ...base, ...cite, effect: 'DENY', verdict: 'denied', reason: fresh.reason }, decision: fresh };
+
+      case 'ALLOW':
+        return { record: { ...base, ...cite, effect: 'ALLOW', verdict: 'proceeded', reason: fresh.reason }, decision: fresh };
+
+      case 'REQUIRE_APPROVAL': {
+        if (!fresh.approval || fresh.approval.approvers.length === 0) {
+          // A requirement naming nobody cannot be satisfied by anybody — the
+          // same reading `#finishPending` takes on submission. An empty
+          // approver list counts: `validatePolicy` refuses one, but a document
+          // written straight into the store does not pass through it, and a
+          // control that only holds for well-formed input is not a control.
+          return {
+            record: {
+              ...base,
+              ...cite,
+              effect: 'REQUIRE_APPROVAL',
+              verdict: 'denied',
+              reason: 'current policy requires approval but names no approvers, so nothing can authorize this',
+            },
+            decision: fresh,
+          };
+        }
+
+        if (heldApprovalSatisfies(fresh.approval, approval)) {
+          return {
+            record: {
+              ...base,
+              ...cite,
+              effect: 'REQUIRE_APPROVAL',
+              verdict: 'proceeded',
+              reason: `current policy still requires approval and the approval on file satisfies it: ${fresh.reason}`,
+            },
+            decision: fresh,
+          };
+        }
+
+        return {
+          record: {
+            ...base,
+            ...cite,
+            effect: 'REQUIRE_APPROVAL',
+            verdict: 'reapproval_required',
+            reason: reapprovalReason(fresh.approval, approval),
+          },
+          decision: fresh,
+        };
+      }
+    }
+  }
+
+  /**
+   * Refuses a release that current policy denies.
+   *
+   * Reported as an outcome rather than an error, the way a denial on
+   * submission is: policy said no, which is a successful decision. Evidence
+   * is written first, carrying the original decision and the approval history
+   * untouched alongside the revalidation that stopped it — so the record shows
+   * both what was agreed and why it did not happen.
+   *
+   * The grant is deliberately not consumed. An operator who publishes a deny
+   * by mistake, or publishes one and then narrows it, should still have the
+   * human decision they already obtained.
+   */
+  async #refuseAtRelease(
+    principal: AgentPrincipal,
+    tool: Tool,
+    action: Action,
+    decision: Decision,
+    approval: ApprovalRequest,
+    revalidation: Revalidation,
+  ): Promise<ActionResult> {
+    const record = revalidation.record;
+
+    // The denial is claimed under the approvals lock, and only while the grant
+    // is still unspent. A policy denial does not consume the grant, so without
+    // this a caller whose revalidation denied could write a `denied` record for
+    // an action that a concurrent caller had meanwhile released and executed —
+    // telling its own caller `denied` about a refund that happened, and leaving
+    // two records competing to describe one action. `ApprovalEngine.consume`
+    // takes the same lock, so the two are mutually exclusive: either this
+    // denial is recorded while the grant is unspent and any execution is
+    // evidenced after it, or the grant is already gone and this caller is told
+    // that instead of being told a falsehood.
+    //
+    // Today the executing path happens to write last in every interleaving we
+    // can construct, because it does strictly more work after the shared
+    // snapshot. That is an accident of await counts, not a property, and
+    // evidence integrity is not something to leave resting on one.
+    const evidence = await this.#store.approvals.transact(async () => {
+      const current = await this.#store.approvals.get(approval.id);
+      if (current?.consumedAt) return undefined;
+
+      return this.#recordEvidence({
+        principal,
+        tool,
+        action,
+        decision,
+        outcome: 'denied',
+        approval,
+        revalidation: record,
+      });
+    });
+
+    if (!evidence) {
+      throw new ArcError(
+        'conflict',
+        'this approval was released by another caller while current policy was being re-checked',
+        { details: { approvalId: approval.id, actionId: action.id } },
+      );
+    }
+
+    await this.audit.append({
+      type: 'action.denied',
+      organizationId: action.organizationId,
+      actor: action.agentId,
+      subject: action.id,
+      summary: `${action.tool} refused at release by current policy: ${record.reason}`,
+      data: {
+        approvalId: approval.id,
+        verdict: record.verdict,
+        reason: record.reason,
+        ...(record.policyId ? { policyId: record.policyId } : {}),
+        ...(record.ruleId ? { ruleId: record.ruleId } : {}),
+        evidenceId: evidence.id,
+      },
+    });
+
+    return {
+      actionId: action.id,
+      outcome: 'denied',
+      decision: summarize(revalidation.decision ?? decision),
+      evidenceId: evidence.id,
+      error: { code: 'policy_denied', message: record.reason },
+      completedAt: this.#now().toISOString(),
+    };
+  }
+
+  /**
+   * Opens a fresh approval because current policy asks for authority the
+   * granted one does not carry.
+   *
+   * The action goes back to `pending_approval` rather than executing or being
+   * denied: policy still permits it, but not on the strength of the approval
+   * on file. Whoever current policy names is asked instead.
+   */
+  async #finishSuperseded(
+    principal: AgentPrincipal,
+    tool: Tool,
+    action: Action,
+    decision: Decision,
+    spent: ApprovalRequest,
+    revalidation: Revalidation,
+  ): Promise<ActionResult> {
+    const fresh = revalidation.decision;
+    if (!fresh?.approval) {
+      throw new ArcError('internal', 'release-time revalidation asked for a new approval but named no approvers');
+    }
+
+    const approval = await this.approvals.request({
+      action,
+      decision: fresh,
+      requirement: fresh.approval,
+      parameters: redactParameters(action.parameters, tool.parameters),
+      agentOwner: principal.owner,
+    });
+
+    const record: EvidenceRevalidation = { ...revalidation.record, supersedingApprovalId: approval.id };
+    const evidence = await this.#recordEvidence({
+      principal,
+      tool,
+      action,
+      // The original decision stays the decision of record. The re-evaluation
+      // lives in `revalidation`, where it adds to history instead of
+      // overwriting it.
+      decision,
+      outcome: 'pending_approval',
+      approval,
+      revalidation: record,
+    });
+
+    await this.audit.append({
+      type: 'approval.requested',
+      organizationId: action.organizationId,
+      actor: action.agentId,
+      subject: action.id,
+      summary: `${action.tool} held again at release for ${fresh.approval.approvers.join(', ')}: ${record.reason}`,
+      data: {
+        approvalId: approval.id,
+        supersededApprovalId: spent.id,
+        policyId: fresh.policyId,
+        ruleId: fresh.ruleId,
+        expiresAt: approval.expiresAt,
+        evidenceId: evidence.id,
+      },
+    });
+
+    return {
+      actionId: action.id,
+      outcome: 'pending_approval',
+      decision: summarize(fresh),
+      evidenceId: evidence.id,
+      approvalId: approval.id,
+      error: { code: 'approval_required', message: record.reason },
+      completedAt: this.#now().toISOString(),
+    };
   }
 
   async #finishDenied(
@@ -562,6 +1074,7 @@ export class Gateway {
     action: Action,
     decision: Decision,
     approval?: ApprovalRequest,
+    revalidation?: EvidenceRevalidation,
   ): Promise<ActionResult> {
     const connector = this.tools.connector(tool.connector);
 
@@ -576,6 +1089,7 @@ export class Gateway {
         decision,
         outcome: 'failed',
         ...(approval ? { approval } : {}),
+        ...(revalidation ? { revalidation } : {}),
       });
       await this.audit.append({
         type: 'action.failed',
@@ -608,6 +1122,7 @@ export class Gateway {
       decision,
       outcome: succeeded ? 'executed' : 'failed',
       ...(approval ? { approval } : {}),
+      ...(revalidation ? { revalidation } : {}),
       execution: attempt,
     });
 
@@ -647,6 +1162,7 @@ export class Gateway {
     outcome: Parameters<typeof buildEvidence>[0]['outcome'];
     approval?: ApprovalRequest;
     execution?: ExecutionAttempt;
+    revalidation?: EvidenceRevalidation;
   }): Promise<EvidenceRecord> {
     const record = buildEvidence({
       ...input,
@@ -666,55 +1182,6 @@ export class Gateway {
 
     return record;
   }
-
-  /**
-   * Finds the outcome of an earlier action with the same idempotency key, so a
-   * retrying agent cannot cause a second effect. The key is scoped to the
-   * agent and tool: two agents may use the same key without colliding.
-   */
-  async #findReplay(action: Action): Promise<ActionResult | undefined> {
-    if (!action.idempotencyKey) return undefined;
-
-    const earlier = await this.#store.actions.find(
-      (candidate) =>
-        candidate.id !== action.id &&
-        candidate.idempotencyKey === action.idempotencyKey &&
-        candidate.agentId === action.agentId &&
-        candidate.tool === action.tool,
-    );
-    if (!earlier) return undefined;
-
-    const evidence = await this.#store.evidence.find((record) => record.actionId === earlier.id);
-    if (!evidence) return undefined;
-
-    if (evidence.request.parametersDigest !== action.parametersDigest) {
-      throw new ArcError(
-        'conflict',
-        'this idempotency key was already used for different parameters',
-        { details: { idempotencyKey: action.idempotencyKey, originalActionId: earlier.id } },
-      );
-    }
-
-    const execution = evidence.execution
-      ? await this.#store.executions.get(evidence.execution.id)
-      : undefined;
-
-    return {
-      actionId: earlier.id,
-      outcome: evidence.outcome as ActionResult['outcome'],
-      decision: {
-        effect: evidence.decision.effect,
-        ...(evidence.decision.policyId ? { policyId: evidence.decision.policyId } : {}),
-        ...(evidence.decision.ruleId ? { ruleId: evidence.decision.ruleId } : {}),
-        reason: evidence.decision.reason,
-      },
-      evidenceId: evidence.id,
-      ...(execution?.result !== undefined ? { result: execution.result } : {}),
-      ...(evidence.approval ? { approvalId: evidence.approval.id } : {}),
-      ...(execution?.error ? { error: execution.error } : {}),
-      completedAt: evidence.createdAt,
-    };
-  }
 }
 
 function summarize(decision: Decision): ActionResult['decision'] {
@@ -724,4 +1191,32 @@ function summarize(decision: Decision): ActionResult['decision'] {
     ...(decision.ruleId ? { ruleId: decision.ruleId } : {}),
     reason: decision.reason,
   };
+}
+
+/**
+ * Why a grant does not bind to the action being released, or `undefined` when
+ * it does.
+ *
+ * The approval, the action and the decision are three separate rows, and the
+ * action and decision are loaded *through* the approval — so comparing their
+ * ids back to the approval's own fields would be vacuous. What is checkable is
+ * whether the three rows agree about what was approved: that the decision was
+ * reached about this action, that the approval's own record of the agent and
+ * tool matches it, and that the parameters still hash to the digest the human
+ * was shown. A store edited underneath ARC fails at least one of them.
+ */
+function bindingFailure(approval: ApprovalRequest, action: Action, decision: Decision): string | undefined {
+  if (decision.actionId !== action.id) {
+    return 'this approval was granted against a decision that is not a decision about this action';
+  }
+  if (approval.agentId !== action.agentId) {
+    return 'this approval names a different agent than the action it would release';
+  }
+  if (approval.tool !== action.tool) {
+    return 'this approval names a different tool than the action it would release';
+  }
+  if (digest(action.parameters) !== action.parametersDigest) {
+    return "the recorded action's parameters no longer match the digest they were approved under";
+  }
+  return undefined;
 }

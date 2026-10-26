@@ -341,6 +341,7 @@ export function evidenceTimeline(record: unknown): Trusted {
   const evidence = rec(record);
   const decision = rec(evidence.decision);
   const approval = evidence.approval ? rec(evidence.approval) : undefined;
+  const revalidation = evidence.revalidation ? rec(evidence.revalidation) : undefined;
   const execution = evidence.execution ? rec(evidence.execution) : undefined;
   const request = rec(evidence.request);
   const agent = rec(evidence.agent);
@@ -349,7 +350,9 @@ export function evidenceTimeline(record: unknown): Trusted {
 
   const notExecuted =
     outcome === 'denied'
-      ? 'not executed: denied'
+      ? revalidation && revalidation.verdict !== 'proceeded'
+        ? 'not executed: refused when current policy was re-checked at release'
+        : 'not executed: denied'
       : outcome === 'pending_approval'
         ? 'not executed: waiting on approval'
         : outcome === 'rejected'
@@ -408,6 +411,37 @@ export function evidenceTimeline(record: unknown): Trusted {
           tone: 'plain',
           body: raw(html`<span class="muted">not required</span>`),
         },
+    // Only on the release path, and only since 2.2. An operator looking at a
+    // held action that did not execute needs to see that current policy was
+    // consulted and what it said; without this the timeline reads "approved,
+    // then nothing happened".
+    ...(revalidation
+      ? [
+          {
+            title: 'Revalidated',
+            filled: true,
+            tone:
+              revalidation.verdict === 'proceeded'
+                ? 'allow'
+                : revalidation.verdict === 'denied'
+                  ? 'deny'
+                  : 'approval',
+            ...(revalidation.performedAt ? { time: timeMs(revalidation.performedAt) } : {}),
+            body: raw(html`${effectBadge(String(revalidation.effect ?? ''))}
+            <span class="mono">${revalidation.verdict}</span>
+            ${revalidation.policyId
+              ? raw(html`<span class="mono">${revalidation.policyId} · ${revalidation.ruleId}</span>`)
+              : NOTHING}
+            <div class="muted">${revalidation.reason}</div>
+            ${revalidation.supersedingApprovalId
+              ? raw(html`<div class="muted">
+                  held again:
+                  <a href="/approvals/${revalidation.supersedingApprovalId}">the new approval request →</a>
+                </div>`)
+              : NOTHING}`),
+          } satisfies Stage,
+        ]
+      : []),
     execution
       ? {
           title: 'Executed',

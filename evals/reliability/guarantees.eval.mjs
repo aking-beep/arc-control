@@ -1,5 +1,5 @@
 import { expect } from '../harness.mjs';
-import { buildHarness, financeManager, refund } from '../fixtures.mjs';
+import { buildHarness, financeManager, FINANCE_004, refund, SEED_ACTOR } from '../fixtures.mjs';
 
 /**
  * Reliability guarantees.
@@ -226,6 +226,100 @@ export default {
           'an expired approval must not authorize anything',
         );
         expect.equal(connector.callCount(), 0, 'and nothing may have executed');
+      },
+    },
+    {
+      name: 'eight simultaneous actions sharing one idempotency key cause one effect',
+      async run() {
+        const { gateway, apiKey, connector } = await buildHarness();
+        const request = { ...refund(100), idempotencyKey: 'concurrent-1' };
+
+        const results = await Promise.all(Array.from({ length: 8 }, () => gateway.handle(apiKey, request)));
+
+        expect.equal(connector.callCount('stripe.refund'), 1, 'one key means one refund, however many callers');
+        expect.equal(
+          new Set(results.map((result) => result.actionId)).size,
+          1,
+          'and one logical action, so every caller is told about the same one',
+        );
+        expect.equal(
+          new Set(results.map((result) => result.evidenceId)).size,
+          1,
+          'with one evidence record behind it',
+        );
+      },
+    },
+    {
+      name: 'a repeat arriving mid-execution joins it rather than starting a second',
+      async run() {
+        const { Gateway } = await import('@arc-control/gateway');
+        const { MemoryStore } = await import('@arc-control/store');
+
+        // A connector that blocks, so the repeat demonstrably arrives while
+        // the original is inside the connector rather than merely after it.
+        let release;
+        const gate = new Promise((resolve) => {
+          release = resolve;
+        });
+        let calls = 0;
+        const connector = {
+          name: 'gated',
+          supports: (tool) => tool.connector === 'gated',
+          async execute() {
+            calls += 1;
+            await gate;
+            return { output: { refundId: 're_gated' } };
+          },
+        };
+
+        const gateway = new Gateway({ store: new MemoryStore() });
+        gateway.addConnector(connector);
+        await gateway.admin.registerTool(
+          {
+            name: 'stripe.refund',
+            description: 'Refund a charge. Irreversible.',
+            effect: 'irreversible',
+            riskTier: 'critical',
+            connector: 'gated',
+            parameters: [
+              { name: 'customer', type: 'string', required: true },
+              { name: 'amount', type: 'number', required: true, minimum: 0 },
+            ],
+          },
+          SEED_ACTOR,
+        );
+        await gateway.admin.publishPolicy(FINANCE_004, SEED_ACTOR);
+        const agent = await gateway.admin.registerAgent(
+          { name: 'finance-agent', owner: 'finance-ops@example.com', roles: ['finance'] },
+          SEED_ACTOR,
+        );
+        const { apiKey } = await gateway.admin.issueKey(agent.id, SEED_ACTOR);
+
+        const request = { ...refund(100), idempotencyKey: 'in-flight-1' };
+        const first = gateway.handle(apiKey, request);
+        while (calls === 0) await new Promise((resolve) => setTimeout(resolve, 1));
+
+        const second = gateway.handle(apiKey, request);
+        release();
+        const [a, b] = await Promise.all([first, second]);
+
+        expect.equal(calls, 1, 'a repeat must not reach a connector the original is still inside');
+        expect.equal(b.evidenceId, a.evidenceId, 'and it is answered with the original outcome');
+        expect.equal(b.outcome, 'executed', 'not with a hold or a conflict');
+      },
+    },
+    {
+      name: 'idempotency does not collapse genuinely distinct concurrent work',
+      async run() {
+        const { gateway, apiKey, connector } = await buildHarness();
+
+        await Promise.all(
+          Array.from({ length: 20 }, (_, index) =>
+            gateway.handle(apiKey, { ...refund(100), idempotencyKey: `distinct-${index}` }),
+          ),
+        );
+
+        expect.equal(connector.callCount('stripe.refund'), 20, 'twenty keys mean twenty refunds');
       },
     },
     {

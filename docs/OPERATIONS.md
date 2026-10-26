@@ -11,7 +11,7 @@ for.
 ### Local, reproducible
 
 ```bash
-npm install && npm run build && npm run verify     # 356 tests, 66 properties, 14 steps
+npm install && npm run build && npm run verify     # 672 tests, 82 properties, 14 steps
 
 export ARC_OPERATOR_TOKEN="$(openssl rand -hex 32)"
 ARC_DATA_DIR=./data ARC_SEED_DEMO=true npm run api  # terminal 1
@@ -430,13 +430,23 @@ open in 100ms.
 ### Where this stops
 
 **One process, not one node.** `transact` is an in-process mutex. Two replicas
-would each hold their own, which breaks the single-use approval guarantee and
-the audit chain's single-writer assumption. Run exactly one writer. For
+would each hold their own, which breaks the single-use approval guarantee, the
+atomic idempotency claim and the audit chain's single-writer assumption. Each
+of those three is a single-process guarantee for the same reason, and the
+idempotency one is worth spelling out because its failure is silent: two
+replicas would each accept the same idempotency key and each execute, so one
+retried refund becomes two refunds with no error anywhere. The second replica
+refuses only in the narrow case where it finds the key held with no recorded
+outcome. Run exactly one writer. For
 zero-downtime deploys, accept the restart: enforcement fails closed, so
 in-flight agent calls are denied rather than mis-authorized, and the window is
 the ~100ms of reopening plus process start.
 
 This is a deliberate architecture for this range rather than an oversight, and
 it is the first thing to replace if you outgrow it: a Postgres-backed store
-with a cross-process lock and the audit chain anchored externally. It is not
-built, and ARC does not pretend otherwise.
+with a cross-process lock, a unique constraint on
+`(organizationId, agentId, tool, idempotencyKey)` behind a conditional insert,
+and the audit chain anchored externally. It is not built, and ARC does not
+pretend otherwise — in particular, no claim about concurrency across processes
+should be read into this release until it has been tested against such a
+store.

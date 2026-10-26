@@ -53,8 +53,13 @@ row.
   deliberately unavailable to conditions. An agent's own account of what it is
   doing is not evidence of what it is doing.
 - **Cause two effects from one authorization.** An approval is consumed on use;
-  an idempotency key returns the original outcome; an irreversible action is
-  never retried automatically.
+  an idempotency key is claimed atomically, so concurrent callers sharing one
+  cause one effect and the rest are answered with its outcome; an irreversible
+  action is never retried automatically. The idempotency claim is serialized
+  **within one ARC Control process** — both shipped stores implement
+  `transact` with an in-process mutex, so two processes sharing a `FileStore`
+  directory can both claim one key. See
+  [releases/2.2.md](./releases/2.2.md).
 
 ---
 
@@ -71,6 +76,13 @@ action, and read everything.
 - **Execute an action that policy denied.** There is no override path. An
   operator who wants an action to be permitted must change the policy — which
   is itself an audited event carrying the new document's digest.
+- **Release a held action that current policy now denies.** An approval is a
+  statement about the past, so the release path re-evaluates the policies in
+  force at that moment, re-checks the agent's lifecycle and the tool's kill
+  switch, and confirms the grant still binds to this action. The result is
+  recorded in evidence either way. What this does not close is the window
+  between that check and the connector call; see
+  [releases/2.2.md](./releases/2.2.md).
 - **Approve an action they were not named for.** The approvals engine checks
   authority against the policy, not against the console.
 - **Approve their own agent's action** where the policy sets

@@ -11,6 +11,54 @@ import type { ActionRiskAssessment } from './classification.js';
  */
 import type { IdentityAssurance } from './operator.js';
 
+/**
+ * What ARC re-checked immediately before a released action reached its
+ * connector.
+ *
+ * An approval is a statement about the past: a human agreed to an action under
+ * the rules that were in force when they were asked. Between that moment and
+ * the connector call an operator can publish a deny policy, hit a tool's kill
+ * switch or retire the agent, and until 2.2 none of those reached a release
+ * that was already approved — the stored decision executed unchanged. This
+ * block is the record of the second look, written whether it let the action
+ * through or stopped it, so an auditor can see that current policy was
+ * consulted rather than take it on trust.
+ *
+ * Absent on records written before 2.2, and on the submit path, where the
+ * decision and the connector call sit microseconds apart inside one call.
+ */
+export interface EvidenceRevalidation {
+  readonly performedAt: string;
+  /** Effect the policies in force at release time produced. */
+  readonly effect: 'ALLOW' | 'REQUIRE_APPROVAL' | 'DENY';
+  /** What ARC did about it. */
+  readonly verdict: 'proceeded' | 'denied' | 'reapproval_required';
+  /** The fresh decision recorded at release time. The original is untouched. */
+  readonly decisionId?: string;
+  readonly policyId?: string;
+  readonly policyVersion?: number;
+  readonly ruleId?: string;
+  readonly reason: string;
+  /**
+   * Agent lifecycle status as read immediately before execution.
+   *
+   * Always `active` on a record that exists, because a release by an agent
+   * that is anything else is refused before policy is consulted. It is
+   * recorded rather than implied so a reader can see the check happened.
+   */
+  readonly agentStatus: string;
+  /** Whether the tool's kill switch was on at release time. Always false, for the same reason. */
+  readonly toolDisabled: boolean;
+  /** Whether the approval still named this action and the decision it was granted against. */
+  readonly approvalBound: boolean;
+  /** The approval that was consumed to authorize the release. */
+  readonly approvalId?: string;
+  /** Approval opened because current policy demands authority the held one did not carry. */
+  readonly supersedingApprovalId?: string;
+  /** Digest of the re-evaluation trace, so the rule-by-rule path is checkable. */
+  readonly traceDigest?: string;
+}
+
 export interface EvidenceRecord {
   /** `arc_ev_...` — the identifier quoted in a denial message or a compliance export. */
   readonly id: string;
@@ -98,6 +146,15 @@ export interface EvidenceRecord {
    * decide.
    */
   readonly risk?: ActionRiskAssessment;
+
+  /**
+   * The pre-execution revalidation, when the action took the release path.
+   *
+   * See `EvidenceRevalidation`. Optional because an action decided and
+   * executed in one call has no second look to report, and because records
+   * written before 2.2 have none.
+   */
+  readonly revalidation?: EvidenceRevalidation;
 
   readonly outcome: string;
   readonly obligations: readonly string[];
