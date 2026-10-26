@@ -512,8 +512,43 @@ describe('what a refused release leaves behind', () => {
     assert.equal(retried.outcome, 'pending_approval');
     assert.equal(retried.approvalId, released.approvalId, 'the new request, not the spent grant');
     assert.notEqual(retried.approvalId, held.approvalId);
+    // Field for field, which is the parity being claimed. Rebuilding the
+    // decision from the revalidation block alone got the citation right and
+    // the reason wrong: that block explains why the *grant* no longer
+    // carried, while a decision's reason belongs to the rule that decided.
+    assert.deepEqual(retried.decision, released.decision);
     assert.equal(retried.decision.ruleId, 'needs-cfo');
+    assert.equal(retried.decision.reason, 'only the CFO may approve this now');
+    assert.deepEqual(retried.error, released.error);
     assert.equal(retried.error?.code, 'approval_required');
+    assert.equal(connector.callCount('stripe.refund'), 0);
+  });
+
+  it('tells a retry the same thing as the release when policy names no approvers', async () => {
+    const { gateway, connector, apiKey, store } = await setup();
+
+    const request = { tool: 'stripe.refund', parameters: { amount: 1850 }, idempotencyKey: 'nobody-1' };
+    const held = await gateway.handle(apiKey, request);
+    await gateway.approvals.vote({
+      approvalId: held.approvalId!,
+      approver: { identifier: 'cfo@example.com', roles: ['finance-manager'] },
+      vote: 'approve',
+    });
+
+    await store.policies.put('FINANCE-004', {
+      ...FINANCE,
+      version: 7,
+      rules: [
+        { id: 'nobody', when: { always: true }, effect: 'REQUIRE_APPROVAL', reason: 'held', approval: { approvers: [] } },
+      ],
+    });
+
+    const released = await gateway.resume(held.approvalId!);
+    const retried = await gateway.handle(apiKey, request);
+
+    assert.equal(retried.outcome, 'denied');
+    assert.deepEqual(retried.decision, released.decision);
+    assert.deepEqual(retried.error, released.error);
     assert.equal(connector.callCount('stripe.refund'), 0);
   });
 

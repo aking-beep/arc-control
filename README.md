@@ -444,7 +444,7 @@ Identity is the first gate (authorization/identity)
 ## Status
 
 **2.0 — Control + Assurance.** The workflow above end to end, plus the
-governance layer that evidences it. 671 tests, 82 asserted properties, a
+governance layer that evidences it. 672 tests, 82 asserted properties, a
 14-step end-to-end demonstration.
 
 | | |

@@ -642,7 +642,18 @@ export class Gateway {
       ? evidence.revalidation
       : undefined;
 
-    const decision = superseded
+    // Summarized from the stored decision, the way `resume` summarizes it, so
+    // the two agree on `reason` as well as on the citation. The revalidation
+    // block's own `reason` explains why the *grant* no longer carried — "the
+    // approval on file was granted under role:finance-manager" — which is the
+    // right text for the error and the wrong text for the decision, whose
+    // reason belongs to the rule. It stands in only if the decision row has
+    // aged out of the store.
+    const fresh = superseded?.decisionId ? await this.#store.decisions.get(superseded.decisionId) : undefined;
+
+    const decision = fresh
+      ? summarize(fresh)
+      : superseded
       ? {
           effect: superseded.effect,
           ...(superseded.policyId ? { policyId: superseded.policyId } : {}),
