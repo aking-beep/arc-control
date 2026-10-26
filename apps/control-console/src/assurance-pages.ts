@@ -944,24 +944,20 @@ export async function settingsPage(context: PageContext): Promise<string> {
   })}
 
   ${sectionTitle('Identity and access')}
-  <p class="note">
-    <strong>Operator identity is not authenticated in this release.</strong> You are acting as
-    <strong>${context.operatorIdentity}</strong> because a request header says so, behind a single shared operator
-    token. Anyone holding that token can claim any identity, so an approval recorded here establishes that the
-    workflow ran — not who ran it. Single sign-on and role-based access control are the next release; until then put
-    this console behind an identity-aware proxy and treat the token as a production secret.
-  </p>
+  ${identityNotice(rec(report.operatorAuth), context.operatorIdentity)}
   ${definitions([
-    ['Acting as', raw(html`<strong>${context.operatorIdentity}</strong> ${raw(muted('(configured header)').value)}`)],
+    ['Acting as', raw(html`<strong>${context.operatorIdentity}</strong> ${assuranceBadge(rec(report.operatorAuth))}`)],
     [
-      'Roles claimed',
-      context.operatorRoles.length === 0 ? muted('none') : raw(html`${context.operatorRoles.join(', ')}`),
+      'Roles',
+      context.operatorRoles.length === 0
+        ? raw(html`${raw(muted('none').value)} — can read, and approve nothing`)
+        : raw(html`${context.operatorRoles.join(', ')}`),
     ],
     [
-      'Operator token',
+      'How operators sign in',
       report.operatorAuthConfigured === true
-        ? badge('allow', 'configured')
-        : badge('deny', 'not configured — operator endpoints refuse every request'),
+        ? raw(html`${modeSummary(rec(report.operatorAuth).modes)}`)
+        : badge('deny', 'nothing configured — operator endpoints refuse every request'),
     ],
     ['API', mono(context.apiBase)],
     ['Version', raw(html`<span class="tnum">${String(report.version ?? 'unknown')}</span>`)],
@@ -1100,4 +1096,72 @@ export async function frameworkPage(context: PageContext, frameworkId: string): 
   }`;
 
   return page(context, '/settings', String(framework.name ?? 'Framework'), raw(body), shell);
+}
+
+/**
+ * What each sign-in mode means, in words an operator can act on.
+ *
+ * Named rather than scored: "authenticated" and "claimed" are different kinds
+ * of fact, and a reader deciding whether to trust an approval record needs the
+ * difference rather than a rating.
+ */
+function describeMode(mode: string): string {
+  if (mode === 'authenticated') return 'single sign-on, verified by ARC against the identity provider';
+  if (mode === 'asserted_by_proxy') return 'an identity-aware proxy ARC is configured to trust';
+  if (mode === 'claimed') return 'a shared token, with the name taken from a request header';
+  return mode;
+}
+
+/** Every mode this deployment accepts, described in order of strength. */
+function modeSummary(modes: unknown): string {
+  if (!Array.isArray(modes) || modes.length === 0) return 'unknown';
+  return modes.map((mode) => describeMode(String(mode))).join('; ');
+}
+
+function assuranceBadge(auth: Record<string, unknown>): Trusted {
+  const strongest = typeof auth.strongest === 'string' ? auth.strongest : undefined;
+  if (strongest === 'authenticated') return raw(html`<span class="badge allow">authenticated</span>`);
+  if (strongest === 'asserted_by_proxy') return raw(html`<span class="badge approval">asserted by a proxy</span>`);
+  if (strongest === 'claimed') return raw(html`<span class="badge deny">claimed, not authenticated</span>`);
+  return raw(muted('unknown').value);
+}
+
+/**
+ * The paragraph that used to assert, unconditionally, that operator identity
+ * was not authenticated. It now reads the deployment, because the sentence is
+ * only true of some of them — and a console that keeps saying it after an
+ * administrator has configured single sign-on trains people to ignore it.
+ */
+function identityNotice(auth: Record<string, unknown>, identity: string): Trusted {
+  const strongest = typeof auth.strongest === 'string' ? auth.strongest : undefined;
+
+  if (strongest === 'authenticated') {
+    return raw(html`<p class="note">
+      You are acting as <strong>${identity}</strong>, verified by this deployment's identity provider when you signed
+      in. Approvals you cast are recorded as attributable to you individually. Your roles come from the provider's
+      claims and cannot be changed by a request header.
+    </p>`);
+  }
+
+  if (strongest === 'asserted_by_proxy') {
+    return raw(html`<p class="note">
+      You are acting as <strong>${identity}</strong>, as asserted by the identity-aware proxy in front of this
+      deployment. The attribution is sound for as long as nothing can reach the control API without passing through
+      that proxy — which is a property of the network, not something ARC can check from here.
+    </p>`);
+  }
+
+  if (strongest === 'claimed') {
+    return raw(html`<p class="note">
+      <strong>Operator identity is not authenticated in this deployment.</strong> You are acting as
+      <strong>${identity}</strong> because a request header says so, behind a single shared token. Anyone holding
+      that token can claim any identity, so an approval recorded here establishes that the workflow ran — not who
+      ran it. Set <span class="mono">ARC_OIDC_ISSUER</span> to sign operators in against your identity provider;
+      every approval cast after that is attributable to a person.
+    </p>`);
+  }
+
+  return raw(html`<p class="note">
+    No means of authenticating an operator is configured, so every operator endpoint refuses every request.
+  </p>`);
 }

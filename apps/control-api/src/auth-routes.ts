@@ -1,0 +1,268 @@
+import { ArcError } from '@arc-control/schemas';
+import { identifierFor, rolesFor, type OidcClient, type RoleResolutionOptions, type SessionManager } from '@arc-control/operator-identity';
+import type { Gateway } from '@arc-control/gateway';
+import { redirect, withStatus, type Router } from './http.js';
+import { SESSION_COOKIE, type OperatorAuth } from './operator.js';
+
+/**
+ * The sign-in flow.
+ *
+ * The only browser-facing routes in an otherwise JSON API, which is why the
+ * cookie handling is written out here rather than hidden in a helper: these
+ * four routes are where a reviewer looks first.
+ */
+
+/** Carries PKCE state across the redirect. Short-lived and signed. */
+const LOGIN_COOKIE = 'arc_login';
+
+/** A sign-in attempt must complete inside this window. */
+const LOGIN_WINDOW_MS = 10 * 60 * 1000;
+
+export interface AuthRouteOptions {
+  readonly gateway: Gateway;
+  readonly operators: OperatorAuth;
+  readonly sessions?: SessionManager;
+  readonly oidc?: OidcClient;
+  readonly roleOptions?: RoleResolutionOptions;
+  /**
+   * Whether cookies are marked `Secure`.
+   *
+   * On unless explicitly disabled for local HTTP development. A `Secure`
+   * cookie is simply not sent over plain HTTP, so getting this wrong in
+   * production means nobody can sign in — a loud failure, which is the right
+   * way round for a flag that otherwise sends session cookies in clear text.
+   */
+  readonly secureCookies?: boolean;
+}
+
+interface LoginState {
+  readonly state: string;
+  readonly codeVerifier: string;
+  readonly nonce: string;
+  readonly returnTo: string;
+  readonly startedAt: number;
+}
+
+function cookie(
+  name: string,
+  value: string,
+  options: { readonly maxAgeSeconds: number; readonly secure: boolean },
+): string {
+  const parts = [
+    `${name}=${encodeURIComponent(value)}`,
+    'Path=/',
+    'HttpOnly',
+    // Lax rather than Strict: the provider redirects the browser back to the
+    // callback as a top-level navigation, and Strict would withhold the cookie
+    // on exactly that request, so sign-in could never complete. Lax still
+    // withholds it from cross-site subrequests, which is the case that matters.
+    'SameSite=Lax',
+    `Max-Age=${String(options.maxAgeSeconds)}`,
+  ];
+  if (options.secure) parts.push('Secure');
+  return parts.join('; ');
+}
+
+function clearCookie(name: string, secure: boolean): string {
+  return cookie(name, '', { maxAgeSeconds: 0, secure });
+}
+
+/**
+ * Where to send the browser after sign-in.
+ *
+ * Only a path on this deployment is allowed. A `returnTo` taken from the query
+ * string and echoed into a redirect is an open redirect, and the sign-in page
+ * is the most useful place in the product to have one: an attacker sends a
+ * link that authenticates the victim and then bounces them somewhere that
+ * looks like ARC and asks for something.
+ *
+ * A protocol-relative `//evil.example.com` is a URL to a browser and a path to
+ * a naive check, so it is rejected explicitly.
+ */
+export function safeReturnTo(value: string | null): string {
+  if (value === null || value === '') return '/';
+  if (!value.startsWith('/')) return '/';
+  if (value.startsWith('//')) return '/';
+  if (value.includes('\\')) return '/';
+  return value;
+}
+
+export function addAuthRoutes(router: Router, options: AuthRouteOptions): Router {
+  const { gateway, operators, sessions, oidc } = options;
+  const secure = options.secureCookies !== false;
+
+  /** States how this deployment authenticates operators. Unauthenticated on purpose. */
+  router.get('/auth/mode', async () => {
+    return {
+      modes: operators.modes,
+      strongest: operators.strongestAssurance ?? null,
+      signInUrl: oidc === undefined ? null : '/auth/login',
+      issuer: oidc?.issuer ?? null,
+      /**
+       * Said plainly so the console never has to infer it, and so an operator
+       * reading an approval record knows what it can support.
+       */
+      notice:
+        operators.strongestAssurance === 'claimed'
+          ? 'This deployment authenticates operators with a shared token and takes their name from a request ' +
+            'header. Approvals record that the workflow ran, not who ran it. Configure ARC_OIDC_ISSUER to change that.'
+          : null,
+    };
+  });
+
+  if (sessions === undefined || oidc === undefined) return router;
+
+  router.get('/auth/login', async (context) => {
+    const started = await oidc.startLogin();
+    const state: LoginState = {
+      state: started.state,
+      codeVerifier: started.codeVerifier,
+      nonce: started.nonce,
+      returnTo: safeReturnTo(context.query.get('returnTo')),
+      startedAt: Date.now(),
+    };
+
+    return redirect(started.authorizationUrl, {
+      'set-cookie': cookie(LOGIN_COOKIE, sessions.sign(JSON.stringify(state)), {
+        maxAgeSeconds: LOGIN_WINDOW_MS / 1000,
+        secure,
+      }),
+    });
+  });
+
+  router.get('/auth/callback', async (context) => {
+    // The provider reports a refused sign-in here rather than at the token
+    // endpoint, so it has to be read before anything else is attempted.
+    const providerError = context.query.get('error');
+    if (providerError !== null) {
+      throw new ArcError('unauthenticated', `the identity provider refused the sign-in: ${providerError}`, {
+        details: { error: providerError, description: context.query.get('error_description') },
+      });
+    }
+
+    const signed = context.cookies[LOGIN_COOKIE];
+    if (signed === undefined) {
+      throw new ArcError(
+        'unauthenticated',
+        'this callback carries no sign-in cookie, so it did not start here; begin again at /auth/login',
+      );
+    }
+
+    const raw = sessions.unsign(signed);
+    if (raw === null || raw === undefined) {
+      throw new ArcError('unauthenticated', 'the sign-in cookie is not signed by this deployment');
+    }
+
+    let pending: LoginState;
+    try {
+      pending = JSON.parse(raw) as LoginState;
+    } catch {
+      throw new ArcError('unauthenticated', 'the sign-in cookie is malformed');
+    }
+
+    if (Date.now() - pending.startedAt > LOGIN_WINDOW_MS) {
+      throw new ArcError('unauthenticated', 'this sign-in took too long; begin again at /auth/login');
+    }
+
+    const code = context.query.get('code');
+    const state = context.query.get('state');
+    if (code === null || state === null) {
+      throw new ArcError('unauthenticated', 'the callback is missing its code or state');
+    }
+
+    const claims = await oidc.completeLogin({
+      code,
+      state,
+      expectedState: pending.state,
+      codeVerifier: pending.codeVerifier,
+      nonce: pending.nonce,
+    });
+
+    const identifier = identifierFor(claims);
+    const roles = rolesFor(claims, options.roleOptions ?? {});
+
+    const { session, cookie: sessionCookie } = await sessions.open({
+      identifier,
+      subject: claims.sub,
+      issuer: claims.iss,
+      roles,
+    });
+
+    // A sign-in is a governance event: it is how somebody came to be able to
+    // approve things, and an audit of an approval is incomplete without it.
+    await gateway.audit.append({
+      type: 'operator.signed_in',
+      organizationId: 'default',
+      actor: identifier,
+      subject: session.id,
+      summary:
+        roles.length === 0
+          ? `${identifier} signed in with no roles, so they can read but approve nothing`
+          : `${identifier} signed in with roles ${roles.join(', ')}`,
+      data: { sessionId: session.id, issuer: claims.iss, subject: claims.sub, roles, assurance: 'authenticated' },
+    });
+
+    return redirect(pending.returnTo, {
+      'set-cookie': [
+        cookie(SESSION_COOKIE, sessionCookie, { maxAgeSeconds: 12 * 60 * 60, secure }),
+        clearCookie(LOGIN_COOKIE, secure),
+      ],
+    });
+  });
+
+  router.post('/auth/logout', async (context) => {
+    const operator = await operators.authenticate(context);
+
+    if (operator.sessionId !== undefined) {
+      await sessions.revoke(operator.sessionId, operator.identifier, 'signed out');
+      await gateway.audit.append({
+        type: 'operator.signed_out',
+        organizationId: 'default',
+        actor: operator.identifier,
+        subject: operator.sessionId,
+        summary: `${operator.identifier} signed out`,
+        data: { sessionId: operator.sessionId },
+      });
+    }
+
+    return withStatus(200, { signedOut: true }, { 'set-cookie': clearCookie(SESSION_COOKIE, secure) });
+  });
+
+  /** Live sessions, so an administrator can see who is signed in. */
+  router.get('/v1/operator-sessions', async (context) => {
+    await operators.authenticate(context);
+    return { sessions: await sessions.live() };
+  });
+
+  /**
+   * Ends every session for a person.
+   *
+   * Keyed on the provider's subject rather than the email, because offboarding
+   * has to catch the person who left and not whoever is given their address
+   * next. The console shows the subject beside each session for this reason.
+   */
+  router.post('/v1/operator-sessions/revoke', async (context) => {
+    const operator = await operators.authenticate(context);
+    const body = await context.body<{ subject?: string; reason?: string }>();
+
+    if (typeof body.subject !== 'string' || body.subject.length === 0) {
+      throw new ArcError('invalid_request', 'subject is required: the provider subject whose sessions to end');
+    }
+
+    const reason = typeof body.reason === 'string' && body.reason ? body.reason : 'revoked by an administrator';
+    const ended = await sessions.revokeAllFor(body.subject, operator.identifier, reason);
+
+    await gateway.audit.append({
+      type: 'operator.sessions_revoked',
+      organizationId: 'default',
+      actor: operator.identifier,
+      subject: body.subject,
+      summary: `${operator.identifier} ended ${String(ended)} session(s) for subject ${body.subject}: ${reason}`,
+      data: { subject: body.subject, ended, reason },
+    });
+
+    return { subject: body.subject, ended, reason };
+  });
+
+  return router;
+}

@@ -16,6 +16,7 @@ import type {
   ExecutionAttempt,
   Finding,
   HumanAttestation,
+  OperatorSession,
   Policy,
   PolicyVersionRecord,
   Risk,
@@ -52,6 +53,7 @@ export class FileStore implements ControlStore {
   readonly findings: Collection<Finding>;
   readonly attestations: Collection<HumanAttestation>;
   readonly policyVersions: Collection<PolicyVersionRecord>;
+  readonly operatorSessions: Collection<OperatorSession>;
 
   private constructor(
     private readonly directory: string,
@@ -72,6 +74,7 @@ export class FileStore implements ControlStore {
       findings: Collection<Finding>;
       attestations: Collection<HumanAttestation>;
       policyVersions: Collection<PolicyVersionRecord>;
+      operatorSessions: Collection<OperatorSession>;
     },
     audit: AuditLogStore,
   ) {
@@ -91,6 +94,7 @@ export class FileStore implements ControlStore {
     this.findings = collections.findings;
     this.attestations = collections.attestations;
     this.policyVersions = collections.policyVersions;
+    this.operatorSessions = collections.operatorSessions;
     this.audit = audit;
   }
 
@@ -131,6 +135,7 @@ export class FileStore implements ControlStore {
       findings: await openCollection<Finding>(directory, 'findings'),
       attestations: await openCollection<HumanAttestation>(directory, 'attestations'),
       policyVersions: await openCollection<PolicyVersionRecord>(directory, 'policy-versions'),
+      operatorSessions: await openCollection<OperatorSession>(directory, 'operator-sessions'),
     };
 
     // Stamp the directory with the model version. A 1.x directory has no

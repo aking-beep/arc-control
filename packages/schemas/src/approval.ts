@@ -1,5 +1,7 @@
 import type { ApprovalRequirement } from './policy.js';
 
+import type { IdentityAssurance } from './operator.js';
+
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'expired' | 'cancelled';
 
 export interface ApprovalVote {
@@ -8,6 +10,19 @@ export interface ApprovalVote {
   readonly vote: 'approve' | 'reject';
   readonly comment?: string;
   readonly votedAt: string;
+  /**
+   * How that identity was established, recorded at the moment of the vote.
+   *
+   * Without this a reader cannot tell a verified approval from an asserted
+   * one, and the whole set is only worth its weakest member. Absent on records
+   * written before 2.1, which `assuranceOf` reads as `claimed` — the strongest
+   * claim those deployments could actually support.
+   */
+  readonly assurance?: IdentityAssurance;
+  /** The issuer that vouched for the approver. Present when authenticated. */
+  readonly issuer?: string;
+  /** The provider's stable subject for the approver, which survives an email change. */
+  readonly subject?: string;
 }
 
 /**

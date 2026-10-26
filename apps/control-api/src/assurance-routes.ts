@@ -36,12 +36,12 @@ export function addAssuranceRoutes(router: Router, options: AssuranceRouteOption
   // --- posture ------------------------------------------------------------
 
   router.get('/v1/assurance/summary', async (context) => {
-    operators.authenticate(context);
+    await operators.authenticate(context);
     return assurance.summary();
   });
 
   router.get('/v1/assurance/coverage', async (context) => {
-    operators.authenticate(context);
+    await operators.authenticate(context);
     return buildCoverageReport({
       store: gateway.store,
       ...windowFrom(context.query),
@@ -51,7 +51,7 @@ export function addAssuranceRoutes(router: Router, options: AssuranceRouteOption
   // --- the control library ------------------------------------------------
 
   router.get('/v1/assurance/controls', async (context) => {
-    operators.authenticate(context);
+    await operators.authenticate(context);
     const [controls, latest] = await Promise.all([assurance.listControls(), assurance.latestAssessments()]);
     const byControl = new Map(latest.map((assessment) => [assessment.controlId, assessment]));
 
@@ -64,7 +64,7 @@ export function addAssuranceRoutes(router: Router, options: AssuranceRouteOption
   });
 
   router.get('/v1/assurance/controls/:id', async (context) => {
-    operators.authenticate(context);
+    await operators.authenticate(context);
     const control = await assurance.getControl(context.params.id!);
     if (!control) throw new ArcError('not_found', `no control with id ${context.params.id}`);
 
@@ -76,12 +76,12 @@ export function addAssuranceRoutes(router: Router, options: AssuranceRouteOption
   });
 
   router.post('/v1/assurance/controls/:id/enable', async (context) => {
-    const operator = operators.authenticate(context);
+    const operator = await operators.authenticate(context);
     return assurance.setControlEnabled(context.params.id!, true, operator.identifier);
   });
 
   router.post('/v1/assurance/controls/:id/disable', async (context) => {
-    const operator = operators.authenticate(context);
+    const operator = await operators.authenticate(context);
     return assurance.setControlEnabled(context.params.id!, false, operator.identifier);
   });
 
@@ -93,7 +93,7 @@ export function addAssuranceRoutes(router: Router, options: AssuranceRouteOption
    * claims to have checked, and that is the sentence an auditor reads.
    */
   router.post('/v1/assurance/controls/:id/attest', async (context) => {
-    const operator = operators.authenticate(context);
+    const operator = await operators.authenticate(context);
     const body = await context.body<{ statement?: string; validForDays?: number; reference?: string }>();
     requireFields(body, ['statement']);
 
@@ -112,7 +112,7 @@ export function addAssuranceRoutes(router: Router, options: AssuranceRouteOption
   // --- assessment runs ----------------------------------------------------
 
   router.post('/v1/assurance/runs', async (context) => {
-    const operator = operators.authenticate(context);
+    const operator = await operators.authenticate(context);
     const body = await context
       .body<{ from?: string; to?: string; controlIds?: readonly string[] }>()
       .catch(() => ({}) as { from?: string; to?: string; controlIds?: readonly string[] });
@@ -132,19 +132,19 @@ export function addAssuranceRoutes(router: Router, options: AssuranceRouteOption
   });
 
   router.get('/v1/assurance/runs', async (context) => {
-    operators.authenticate(context);
+    await operators.authenticate(context);
     return { runs: await assurance.listRuns(positiveInt(context.query.get('limit'), 50)) };
   });
 
   router.get('/v1/assurance/runs/:id', async (context) => {
-    operators.authenticate(context);
+    await operators.authenticate(context);
     const run = await assurance.getRun(context.params.id!);
     if (!run) throw new ArcError('not_found', `no assessment run with id ${context.params.id}`);
     return { run, assessments: await assurance.assessmentsForRun(run.id) };
   });
 
   router.get('/v1/assurance/assessments/:id', async (context) => {
-    operators.authenticate(context);
+    await operators.authenticate(context);
     const assessment = await assurance.getAssessment(context.params.id!);
     if (!assessment) throw new ArcError('not_found', `no assessment with id ${context.params.id}`);
     return assessment;
@@ -153,7 +153,7 @@ export function addAssuranceRoutes(router: Router, options: AssuranceRouteOption
   // --- framework mappings -------------------------------------------------
 
   router.get('/v1/assurance/frameworks', async (context) => {
-    operators.authenticate(context);
+    await operators.authenticate(context);
     // Built with a loop rather than filter().map(): a `filter` does not narrow
     // the value type, and the `!` that silences it would hide a real undefined
     // the day a framework id is listed without a definition.
@@ -174,7 +174,7 @@ export function addAssuranceRoutes(router: Router, options: AssuranceRouteOption
   });
 
   router.get('/v1/assurance/frameworks/:id', async (context) => {
-    operators.authenticate(context);
+    await operators.authenticate(context);
     const framework = FRAMEWORKS[context.params.id! as keyof typeof FRAMEWORKS];
     if (!framework) {
       throw new ArcError('not_found', `no framework mapping for "${context.params.id}" is shipped in this release`);
@@ -195,12 +195,12 @@ export function addAssuranceRoutes(router: Router, options: AssuranceRouteOption
   // --- the risk register --------------------------------------------------
 
   router.get('/v1/risks', async (context) => {
-    operators.authenticate(context);
+    await operators.authenticate(context);
     return { risks: await assurance.listRisks() };
   });
 
   router.post('/v1/risks', async (context) => {
-    const operator = operators.authenticate(context);
+    const operator = await operators.authenticate(context);
     const body = await context.body<Record<string, unknown>>();
     requireFields(body, ['reference', 'title', 'description', 'category', 'impact', 'likelihood', 'treatment', 'owner']);
 
@@ -226,7 +226,7 @@ export function addAssuranceRoutes(router: Router, options: AssuranceRouteOption
   });
 
   router.get('/v1/risks/:id', async (context) => {
-    operators.authenticate(context);
+    await operators.authenticate(context);
     const risk = await assurance.getRisk(context.params.id!);
     if (!risk) throw new ArcError('not_found', `no risk with id ${context.params.id}`);
     return risk;
@@ -240,7 +240,7 @@ export function addAssuranceRoutes(router: Router, options: AssuranceRouteOption
    * ARC must never do is compute it from the mere existence of controls.
    */
   router.post('/v1/risks/:id/residual', async (context) => {
-    const operator = operators.authenticate(context);
+    const operator = await operators.authenticate(context);
     const body = await context.body<Record<string, unknown>>();
     requireFields(body, ['impact', 'likelihood', 'rationale']);
 
@@ -253,7 +253,7 @@ export function addAssuranceRoutes(router: Router, options: AssuranceRouteOption
   });
 
   router.post('/v1/risks/:id/accept', async (context) => {
-    const operator = operators.authenticate(context);
+    const operator = await operators.authenticate(context);
     const body = await context.body<{ rationale?: string; validForDays?: number }>();
     requireFields(body, ['rationale']);
 
@@ -265,7 +265,7 @@ export function addAssuranceRoutes(router: Router, options: AssuranceRouteOption
   });
 
   router.post('/v1/risks/:id/controls', async (context) => {
-    const operator = operators.authenticate(context);
+    const operator = await operators.authenticate(context);
     const body = await context.body<{ controlIds?: readonly unknown[] }>();
     if (!Array.isArray(body.controlIds)) {
       throw new ArcError('invalid_request', 'controlIds must be an array of control ids');
@@ -282,7 +282,7 @@ export function addAssuranceRoutes(router: Router, options: AssuranceRouteOption
    * finding that happened to miss its date is history, not work.
    */
   router.get('/v1/findings', async (context) => {
-    operators.authenticate(context);
+    await operators.authenticate(context);
     const status = context.query.get('status');
     const controlId = context.query.get('controlId');
     const overdue = context.query.get('overdue') === 'true';
@@ -297,14 +297,14 @@ export function addAssuranceRoutes(router: Router, options: AssuranceRouteOption
   });
 
   router.get('/v1/findings/:id', async (context) => {
-    operators.authenticate(context);
+    await operators.authenticate(context);
     const finding = await assurance.getFinding(context.params.id!);
     if (!finding) throw new ArcError('not_found', `no finding with id ${context.params.id}`);
     return finding;
   });
 
   router.post('/v1/findings/:id', async (context) => {
-    const operator = operators.authenticate(context);
+    const operator = await operators.authenticate(context);
     const body = await context.body<Record<string, unknown>>();
 
     return assurance.updateFinding(
@@ -328,7 +328,7 @@ export function addAssuranceRoutes(router: Router, options: AssuranceRouteOption
    * useless for arguing about any of the three.
    */
   router.post('/v1/findings/:id/resolve', async (context) => {
-    const operator = operators.authenticate(context);
+    const operator = await operators.authenticate(context);
     const body = await context.body<{ status?: string; note?: string }>();
     requireFields(body, ['status', 'note']);
 
@@ -355,7 +355,7 @@ export function addAssuranceRoutes(router: Router, options: AssuranceRouteOption
    * own limitations what it therefore cannot establish.
    */
   router.post('/v1/evidence/bundles', async (context) => {
-    const operator = operators.authenticate(context);
+    const operator = await operators.authenticate(context);
     const body = await context.body<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
 
     const bundle = await buildBundle({
@@ -388,7 +388,7 @@ export function addAssuranceRoutes(router: Router, options: AssuranceRouteOption
   // --- policy history and simulation --------------------------------------
 
   router.get('/v1/policies/:id/history', async (context) => {
-    operators.authenticate(context);
+    await operators.authenticate(context);
     await gateway.policies.require(context.params.id!);
     return { versions: await gateway.policies.history(context.params.id!) };
   });
@@ -402,7 +402,7 @@ export function addAssuranceRoutes(router: Router, options: AssuranceRouteOption
    * the question an operator actually has before changing a policy.
    */
   router.post('/v1/policies/simulate', async (context) => {
-    operators.authenticate(context);
+    await operators.authenticate(context);
     const body = await context.body<Record<string, unknown>>();
     requireFields(body, ['candidate']);
 

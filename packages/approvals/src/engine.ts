@@ -1,5 +1,6 @@
 import {
   ArcError,
+  assuranceOf,
   newId,
   type Action,
   type ApprovalRequest,
@@ -7,6 +8,7 @@ import {
   type ApprovalStatus,
   type ApprovalVote,
   type Decision,
+  type IdentityAssurance,
 } from '@arc-control/schemas';
 import type { ControlStore } from '@arc-control/store';
 
@@ -20,6 +22,19 @@ export interface ApprovalEngineOptions {
 export interface Approver {
   readonly identifier: string;
   readonly roles: readonly string[];
+  /**
+   * How this approver's identity was established.
+   *
+   * Carried onto the vote so the record states what it can support. Optional
+   * so a caller that has not been updated still compiles — and such a caller
+   * is recorded as `claimed`, which is the truth about a call site that cannot
+   * say where its name came from.
+   */
+  readonly assurance?: IdentityAssurance;
+  /** The issuer that vouched for them, when authenticated. */
+  readonly issuer?: string;
+  /** The provider's stable subject, which survives an email change. */
+  readonly subject?: string;
 }
 
 /**
@@ -153,6 +168,12 @@ export class ApprovalEngine {
         vote: args.vote,
         ...(args.comment ? { comment: args.comment } : {}),
         votedAt: this.#now().toISOString(),
+        // Recorded at the moment of the vote, because it is a fact about this
+        // request and cannot be reconstructed later: the deployment's auth
+        // configuration may have changed by the time anyone reads the record.
+        assurance: assuranceOf(args.approver),
+        ...(args.approver.issuer ? { issuer: args.approver.issuer } : {}),
+        ...(args.approver.subject ? { subject: args.approver.subject } : {}),
       };
 
       const votes = [...request.votes, vote];

@@ -15,6 +15,7 @@ import type {
   ExecutionAttempt,
   Finding,
   HumanAttestation,
+  OperatorSession,
   Policy,
   PolicyVersionRecord,
   Risk,
@@ -243,6 +244,8 @@ export class MemoryStore implements ControlStore {
   readonly findings = new MemoryCollection<Finding>();
   readonly attestations = new MemoryCollection<HumanAttestation>();
   readonly policyVersions = new MemoryCollection<PolicyVersionRecord>();
+
+  readonly operatorSessions = new MemoryCollection<OperatorSession>();
 
   async close(): Promise<void> {
     /* nothing to release */

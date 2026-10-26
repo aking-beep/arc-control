@@ -21,6 +21,9 @@
       "path": "../../packages/agent-identity"
     },
     {
+      "path": "../../packages/operator-identity"
+    },
+    {
       "path": "../../packages/assurance"
     },
     {

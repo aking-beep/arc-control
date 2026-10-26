@@ -228,13 +228,113 @@ describe('ARC-AI-004 approvals actually happened', () => {
         status: request.status,
         approvers: request.requirement.approvers,
         minApprovals: request.requirement.minApprovals,
-        votes: request.votes.map((vote) => ({ approver: vote.approver, vote: vote.vote, votedAt: vote.votedAt })),
+        votes: request.votes.map((vote) => ({
+          approver: vote.approver,
+          vote: vote.vote,
+          votedAt: vote.votedAt,
+          ...(vote.assurance ? { assurance: vote.assurance } : {}),
+          ...(vote.issuer ? { issuer: vote.issuer } : {}),
+        })),
         ...(request.resolvedAt ? { resolvedAt: request.resolvedAt } : {}),
       },
       execution: execution(startedAt),
     });
     return context({ evidence: [record], approvals: [request] });
   }
+
+  /**
+   * The control answers "did a human approve it". Whether that human can be
+   * *identified* depends on how the deployment authenticated them, which can
+   * differ between two approvals in the same window — so the report states the
+   * attribution of the votes it examined rather than the catalogue asserting
+   * one answer for every installation.
+   *
+   * This is the gap that made the 2.0 release unsellable to anyone who needed
+   * the attribution, and these are the assertions that say it is closed.
+   */
+  describe('attribution', () => {
+    const authenticated = {
+      approver: 'cfo@example.com',
+      vote: 'approve' as const,
+      votedAt: '2026-10-20T11:00:00.000Z',
+      assurance: 'authenticated' as const,
+      issuer: 'https://login.example.com',
+    };
+
+    it('reports approvals as attributable when every approver was authenticated', () => {
+      const result = evaluateApprovalIntegrity(heldAndExecuted({ votes: [authenticated] }));
+
+      assert.equal(result.status, 'pass');
+      assert.ok(
+        result.limitations?.some((line) => /attributable to individuals/.test(line)),
+        'a deployment on single sign-on earns a clean report',
+      );
+      assert.ok(
+        result.limitations?.some((line) => line.includes('https://login.example.com')),
+        'and the report names the issuer that vouched for them',
+      );
+    });
+
+    /**
+     * The 2.0 behaviour, now stated per-run instead of as a blanket caveat.
+     */
+    it('states that a claimed identity proves the workflow ran, not who ran it', () => {
+      const result = evaluateApprovalIntegrity(
+        heldAndExecuted({ votes: [{ ...authenticated, assurance: 'claimed', issuer: undefined }] }),
+      );
+
+      assert.equal(result.status, 'pass', 'the approval workflow itself was sound');
+      assert.ok(
+        result.limitations?.some((line) => /not who ran it/.test(line)),
+        'but the record cannot say who',
+      );
+      assert.ok(!result.limitations?.some((line) => /attributable to individuals/.test(line)));
+    });
+
+    /**
+     * A record written before assurance was recorded cannot acquire one now.
+     * It reads as claimed, which is what the deployment that wrote it could
+     * support — not as a gap to fill in with a better answer than the evidence
+     * allows.
+     */
+    it('treats a vote recorded before 2.1 as claimed rather than assuming the best', () => {
+      const result = evaluateApprovalIntegrity(
+        heldAndExecuted({ votes: [{ approver: 'cfo@example.com', vote: 'approve', votedAt: '2026-10-20T11:00:00.000Z' }] }),
+      );
+
+      assert.ok(result.limitations?.some((line) => /claimed identity/.test(line)));
+    });
+
+    it('distinguishes a proxy assertion from a verification ARC performed', () => {
+      const result = evaluateApprovalIntegrity(
+        heldAndExecuted({ votes: [{ ...authenticated, assurance: 'asserted_by_proxy', issuer: undefined }] }),
+      );
+
+      assert.ok(
+        result.limitations?.some((line) => /only while the network path to that proxy is/.test(line)),
+        'a proxy assertion is sound only while the path to the proxy is',
+      );
+    });
+
+    /**
+     * A mixed window is the realistic one during a migration, and it must not
+     * be reported as though it were uniformly strong.
+     */
+    it('counts a mixed window honestly rather than rounding up', () => {
+      const result = evaluateApprovalIntegrity(
+        heldAndExecuted({
+          votes: [
+            authenticated,
+            { ...authenticated, approver: 'ops@example.com', assurance: 'claimed', issuer: undefined },
+          ],
+          requirement: { approvers: ['role:finance-manager'], minApprovals: 2 },
+        }),
+      );
+
+      assert.ok(result.limitations?.some((line) => /1 of 2 recorded votes were cast with a claimed identity/.test(line)));
+      assert.ok(!result.limitations?.some((line) => /attributable to individuals/.test(line)), 'not rounded up');
+    });
+  });
 
   it('passes a properly approved execution', () => {
     const result = evaluateApprovalIntegrity(heldAndExecuted());

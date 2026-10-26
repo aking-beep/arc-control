@@ -55,7 +55,14 @@ export type AuditEventType =
   | 'finding.opened'
   | 'finding.updated'
   | 'finding.resolved'
-  | 'bundle.exported';
+  | 'bundle.exported'
+  // 2.1 — operator identity. A sign-in is how somebody came to be able to
+  // approve anything, so an audit of an approval is incomplete without it;
+  // and ending a session is the action an offboarding checklist has to be
+  // able to show it performed.
+  | 'operator.signed_in'
+  | 'operator.signed_out'
+  | 'operator.sessions_revoked';
 
 export interface AuditRecord {
   readonly id: string;

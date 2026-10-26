@@ -13,6 +13,8 @@ export interface RequestContext {
   body<T>(): Promise<T>;
   /** The presented agent credential, if the request carried one. */
   readonly bearer: string | undefined;
+  /** Parsed request cookies. Empty when the request sent none. */
+  readonly cookies: Readonly<Record<string, string>>;
 }
 
 export type Handler = (context: RequestContext) => Promise<unknown>;
@@ -74,6 +76,7 @@ export class Router {
         requestId,
         body: <T>() => readJsonBody<T>(request),
         bearer: readBearer(request),
+        cookies: readCookies(request),
       };
 
       try {
@@ -81,7 +84,7 @@ export class Router {
         if (result === undefined) {
           send(response, 204, undefined);
         } else if (isSentinel(result)) {
-          send(response, result.status, result.payload);
+          send(response, result.status, result.payload, result.headers ?? {});
         } else {
           send(response, 200, result);
         }
@@ -100,11 +103,32 @@ interface Sentinel {
   readonly __arcStatus: true;
   readonly status: number;
   readonly payload: unknown;
+  /** Extra response headers, for the sign-in flow's cookies and redirects. */
+  readonly headers?: Readonly<Record<string, string | readonly string[]>>;
 }
 
 /** Wraps a payload to be sent with a specific status code. */
-export function withStatus(status: number, payload: unknown): Sentinel {
-  return { __arcStatus: true, status, payload };
+export function withStatus(
+  status: number,
+  payload: unknown,
+  headers?: Readonly<Record<string, string | readonly string[]>>,
+): Sentinel {
+  return { __arcStatus: true, status, payload, ...(headers ? { headers } : {}) };
+}
+
+/**
+ * A redirect, which the browser-facing sign-in flow needs and the JSON API
+ * otherwise never uses.
+ *
+ * `location` must be checked by the caller before it gets here: a value taken
+ * from a query parameter and echoed into this header is an open redirect, and
+ * a sign-in page is the most valuable place in the application to have one.
+ */
+export function redirect(
+  location: string,
+  headers: Readonly<Record<string, string | readonly string[]>> = {},
+): Sentinel {
+  return { __arcStatus: true, status: 302, payload: undefined, headers: { ...headers, location } };
 }
 
 function isSentinel(value: unknown): value is Sentinel {
@@ -160,7 +184,16 @@ function readBearer(request: IncomingMessage): string | undefined {
   return token;
 }
 
-function send(response: ServerResponse, status: number, payload: unknown): void {
+function send(
+  response: ServerResponse,
+  status: number,
+  payload: unknown,
+  headers: Readonly<Record<string, string | readonly string[]>> = {},
+): void {
+  for (const [name, value] of Object.entries(headers)) {
+    response.setHeader(name, value as string | string[]);
+  }
+
   if (payload === undefined) {
     response.writeHead(status);
     response.end();
@@ -173,4 +206,33 @@ function send(response: ServerResponse, status: number, payload: unknown): void 
     'content-length': Buffer.byteLength(body),
   });
   response.end(body);
+}
+
+/**
+ * Parses a Cookie header.
+ *
+ * A duplicated name keeps the first value. A client that sends two cookies of
+ * the same name is either confused or probing, and taking the last one lets an
+ * attacker who can append a header shadow a legitimate session cookie.
+ */
+function readCookies(request: IncomingMessage): Readonly<Record<string, string>> {
+  const header = request.headers.cookie;
+  if (typeof header !== 'string' || header.length === 0) return {};
+
+  const cookies: Record<string, string> = {};
+  for (const pair of header.split(';')) {
+    const index = pair.indexOf('=');
+    if (index <= 0) continue;
+
+    const name = pair.slice(0, index).trim();
+    if (!name || Object.hasOwn(cookies, name)) continue;
+
+    try {
+      cookies[name] = decodeURIComponent(pair.slice(index + 1).trim());
+    } catch {
+      // A cookie with invalid percent-encoding is skipped rather than
+      // crashing the request: the browser sent it, not the caller.
+    }
+  }
+  return cookies;
 }

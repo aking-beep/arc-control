@@ -25,6 +25,8 @@ export const ID_PREFIXES = {
   attestation: 'arc_att',
   bundle: 'arc_bnd',
   policyVersion: 'arc_pv',
+  // 2.1 — operator identity and delivery.
+  session: 'arc_ses',
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

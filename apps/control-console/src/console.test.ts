@@ -87,13 +87,17 @@ function stubFetch(routes: Record<string, Json | { status: number; body: Json }>
 function contextFor(
   routes: Record<string, Json | { status: number; body: Json }>,
   query = '',
+  overrides: { readonly operatorIdentity?: string; readonly operatorRoles?: readonly string[] } = {},
 ): { context: PageContext; calls: string[] } {
+  const identity = overrides.operatorIdentity ?? 'operator@example.com';
+  const roles = overrides.operatorRoles ?? ['finance-manager'];
+
   const { fetch, calls } = stubFetch(routes);
   const client = new ArcControlClient({
     baseUrl: 'http://api.test',
     operatorToken: 'token',
-    operatorIdentity: 'operator@example.com',
-    operatorRoles: ['finance-manager'],
+    operatorIdentity: identity,
+    operatorRoles: [...roles],
     fetch,
   });
 
@@ -101,8 +105,8 @@ function contextFor(
     context: {
       client,
       apiBase: 'http://api.test',
-      operatorIdentity: 'operator@example.com',
-      operatorRoles: ['finance-manager'],
+      operatorIdentity: identity,
+      operatorRoles: [...roles],
       query: new URLSearchParams(query),
     },
     calls,
@@ -115,6 +119,7 @@ const HEALTH: Json = {
   status: 'ok',
   version: '2.0.0',
   operatorAuthConfigured: true,
+  operatorAuth: { modes: ['claimed'], strongest: 'claimed', attributable: false },
   demoSeed: false,
   counts: { agents: 1, tools: 1, policies: 1, auditRecords: 4 },
   connectors: [{ name: 'simulation', healthy: true, detail: '1 simulated tool(s)' }],
@@ -847,14 +852,77 @@ describe('The governance sections never invent a figure', () => {
     assert.ok(page.includes('none set'), 'a blank cell would read as fine');
   });
 
-  it('states on the settings page that operator identity is not authenticated', async () => {
-    const { context } = contextFor(routes());
-    const page = await settingsPage(context);
+  /**
+   * The settings page used to assert, unconditionally, that operator identity
+   * was not authenticated. That sentence was true of every 2.0 deployment and
+   * is true of only some 2.1 ones, so it now reads the deployment.
+   *
+   * Both directions are tested, because each failure is bad in its own way:
+   * saying "not authenticated" to a deployment that has configured single
+   * sign-on trains operators to ignore the warning, and failing to say it to a
+   * deployment on the shared token is the dishonesty this product exists not
+   * to commit.
+   */
+  describe('the settings page states how operators are actually authenticated', () => {
+    async function settingsWith(operatorAuth: Record<string, unknown>): Promise<string> {
+      const { context } = contextFor(routes({ '/health': { ...HEALTH, operatorAuth } }));
+      return settingsPage(context);
+    }
 
-    const text = prose(page);
-    assert.ok(text.includes('Operator identity is not authenticated in this release'));
-    assert.ok(text.includes('can claim any identity'));
-    assert.ok(text.includes('not who ran it'));
+    it('warns plainly when identity is only claimed', async () => {
+      const text = prose(await settingsWith({ modes: ['claimed'], strongest: 'claimed', attributable: false }));
+
+      assert.ok(text.includes('Operator identity is not authenticated in this deployment'));
+      assert.ok(text.includes('can claim any identity'));
+      assert.ok(text.includes('not who ran it'));
+      assert.ok(text.includes('ARC_OIDC_ISSUER'), 'and says how to fix it');
+    });
+
+    it('stops warning once single sign-on is configured', async () => {
+      const page = await settingsWith({
+        modes: ['authenticated'],
+        strongest: 'authenticated',
+        attributable: true,
+      });
+      const text = prose(page);
+
+      assert.ok(text.includes('verified by this deployment'), 'it states the identity was verified');
+      assert.ok(text.includes('attributable to you individually'));
+      assert.ok(!text.includes('not who ran it'), 'the old caveat must not survive a real sign-in');
+      assert.ok(!text.includes('is not authenticated in this deployment'));
+      assert.ok(page.includes('badge allow">authenticated'), 'and the badge agrees');
+    });
+
+    it('describes a proxy assertion as exactly that, not as authentication', async () => {
+      const text = prose(
+        await settingsWith({ modes: ['asserted_by_proxy'], strongest: 'asserted_by_proxy', attributable: true }),
+      );
+
+      assert.ok(text.includes('asserted by the identity-aware proxy'));
+      assert.ok(
+        text.includes('a property of the network'),
+        'the limit of a proxy assertion is stated rather than left implied',
+      );
+      assert.ok(!text.includes('attributable to you individually'), 'it is not the same claim as a verified sign-in');
+    });
+
+    it('says operator endpoints refuse everything when nothing is configured', async () => {
+      const text = prose(
+        await settingsWith({ modes: [], strongest: null, attributable: false }),
+      );
+      assert.ok(text.includes('refuses every request'));
+    });
+
+    /**
+     * A signed-in operator with no roles can read and approve nothing. The
+     * page has to say so, or they will try to approve something and read the
+     * refusal as a bug.
+     */
+    it('explains an operator who has no roles', async () => {
+      const { context } = contextFor(routes(), '', { operatorRoles: [] });
+      const text = prose(await settingsPage(context));
+      assert.ok(text.includes('can read, and approve nothing'));
+    });
   });
 
   it('states on the settings page that enforcement does not depend on assurance', async () => {

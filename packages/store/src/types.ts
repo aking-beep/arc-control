@@ -14,6 +14,7 @@ import type {
   ExecutionAttempt,
   Finding,
   HumanAttestation,
+  OperatorSession,
   Policy,
   PolicyVersionRecord,
   Risk,
@@ -85,6 +86,14 @@ export interface ControlStore {
   readonly attestations: Collection<HumanAttestation>;
   /** Append-only history of every policy document ever published. */
   readonly policyVersions: Collection<PolicyVersionRecord>;
+
+  // --- 2.1: operator identity -------------------------------------------
+  //
+  // Sessions are durable so that signing out and revoking access are real
+  // rather than advisory. A purely stateless token stays valid until it
+  // expires, which is not an answer to "we removed someone this morning".
+
+  readonly operatorSessions: Collection<OperatorSession>;
 
   /**
    * The head of the audit chain as this store recorded it, when the

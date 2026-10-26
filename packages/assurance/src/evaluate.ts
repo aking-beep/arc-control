@@ -27,11 +27,13 @@ import type {
   EvidenceRecord,
   FindingSeverity,
   HumanAttestation,
+  IdentityAssurance,
   Policy,
   PolicyEffect,
   Tool,
 } from '@arc-control/schemas';
 import { matchSelectors } from '@arc-control/policy-engine';
+import { assuranceOf } from '@arc-control/schemas';
 import { DEFAULT_REVIEW_INTERVAL_DAYS } from './catalogue.js';
 
 /** Everything an evaluator is allowed to look at. */
@@ -71,6 +73,18 @@ export interface EvaluationResult {
    * gap; behind an ALLOW fallback it is an open door.
    */
   readonly severity?: FindingSeverity;
+  /**
+   * Limitations this particular run discovered, added to the control
+   * definition's standing ones.
+   *
+   * Some limits are properties of the control and never change. Others are
+   * properties of the deployment at the moment of assessment — whether the
+   * approvers who voted were authenticated, for instance — and stating those
+   * statically means either understating a good deployment or overstating a
+   * weak one. Computing them keeps the report true of the system in front of
+   * the reader.
+   */
+  readonly limitations?: readonly string[];
 }
 
 export type ControlEvaluator = (context: EvaluationContext) => EvaluationResult;
@@ -374,12 +388,68 @@ export const evaluateApprovalIntegrity: ControlEvaluator = (context) => {
     });
   }
 
-  return fromObservations(observations, (failed, total) =>
+  const result = fromObservations(observations, (failed, total) =>
     failed === 0
       ? `All ${total} approval-gated executions had a valid human approval recorded before they ran.`
       : `${failed} of ${total} approval-gated executions had a defective approval.`,
   );
+
+  return { ...result, limitations: attributionLimitations(held) };
 };
+
+/**
+ * What the approvals in this window can be attributed to.
+ *
+ * This control answers "did a human approve it". Whether that human can be
+ * *identified* is a separate question, and it depends on how the deployment
+ * authenticated them at the time — so it is computed from the records rather
+ * than asserted once in the catalogue. A deployment on single sign-on earns a
+ * clean report here; one still on the shared token is told exactly what its
+ * records do and do not establish, and by how much.
+ */
+function attributionLimitations(
+  held: readonly EvaluationContext['evidence'][number][],
+): readonly string[] {
+  const votes = held.flatMap((record) => record.approval?.votes ?? []);
+  if (votes.length === 0) return [];
+
+  const counts = new Map<IdentityAssurance, number>();
+  const issuers = new Set<string>();
+  for (const vote of votes) {
+    const assurance = assuranceOf(vote);
+    counts.set(assurance, (counts.get(assurance) ?? 0) + 1);
+    if (vote.issuer) issuers.add(vote.issuer);
+  }
+
+  const claimed = counts.get('claimed') ?? 0;
+  const proxied = counts.get('asserted_by_proxy') ?? 0;
+  const limitations: string[] = [];
+
+  if (claimed > 0) {
+    limitations.push(
+      `${String(claimed)} of ${String(votes.length)} recorded votes were cast with a claimed identity — a name ` +
+        'supplied alongside a shared token, which anyone holding that token could have supplied. For those ' +
+        'approvals this control establishes that the workflow ran, not who ran it.',
+    );
+  }
+
+  if (proxied > 0) {
+    limitations.push(
+      `${String(proxied)} of ${String(votes.length)} recorded votes were asserted by a trusted proxy rather than ` +
+        'verified by ARC. The attribution is sound only while the network path to that proxy is.',
+    );
+  }
+
+  if (claimed === 0 && proxied === 0) {
+    limitations.push(
+      `Every recorded vote was cast by an operator ARC authenticated against ${
+        issuers.size === 1 ? [...issuers][0]! : `${String(issuers.size)} configured issuers`
+      }, so these approvals are attributable to individuals.`,
+    );
+  }
+
+  return limitations;
+}
 
 // --- ARC-AI-005: evidence exists for every action --------------------------
 

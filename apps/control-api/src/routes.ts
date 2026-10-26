@@ -92,6 +92,19 @@ export function buildRoutes(options: RouteOptions): Router {
       status: enforcementOk ? 'ok' : 'degraded',
       version: options.version,
       operatorAuthConfigured: operators.configured,
+      /**
+       * How operators are authenticated, stated rather than implied.
+       *
+       * The console renders this verbatim on its settings page and in its
+       * masthead. A deployment whose strongest mode is `claimed` must say so
+       * where an operator will see it, because every approval it records is
+       * worth less than it looks.
+       */
+      operatorAuth: {
+        modes: operators.modes,
+        strongest: operators.strongestAssurance ?? null,
+        attributable: operators.strongestAssurance !== undefined && operators.strongestAssurance !== 'claimed',
+      },
       demoSeed: options.demoSeed === true,
 
       enforcement: {
@@ -195,12 +208,12 @@ export function buildRoutes(options: RouteOptions): Router {
   // --- agents -------------------------------------------------------------
 
   router.get('/v1/agents', async (context) => {
-    operators.authenticate(context);
+    await operators.authenticate(context);
     return { agents: await gateway.agents.list() };
   });
 
   router.post('/v1/agents', async (context) => {
-    const operator = operators.authenticate(context);
+    const operator = await operators.authenticate(context);
     const body = await context.body<{ name?: string; owner?: string }>();
     requireFields(body, ['name', 'owner']);
 
@@ -212,12 +225,12 @@ export function buildRoutes(options: RouteOptions): Router {
   });
 
   router.get('/v1/agents/:id', async (context) => {
-    operators.authenticate(context);
+    await operators.authenticate(context);
     return gateway.agents.require(context.params.id!);
   });
 
   router.post('/v1/agents/:id/suspend', async (context) => {
-    const operator = operators.authenticate(context);
+    const operator = await operators.authenticate(context);
     return gateway.admin.setAgentStatus(context.params.id!, 'suspended', {
       identifier: operator.identifier,
       via: 'api',
@@ -225,7 +238,7 @@ export function buildRoutes(options: RouteOptions): Router {
   });
 
   router.post('/v1/agents/:id/resume', async (context) => {
-    const operator = operators.authenticate(context);
+    const operator = await operators.authenticate(context);
     return gateway.admin.setAgentStatus(context.params.id!, 'active', {
       identifier: operator.identifier,
       via: 'api',
@@ -234,7 +247,7 @@ export function buildRoutes(options: RouteOptions): Router {
 
   /** Issues an agent key. The plaintext is in this response and nowhere else, ever. */
   router.post('/v1/agents/:id/keys', async (context) => {
-    const operator = operators.authenticate(context);
+    const operator = await operators.authenticate(context);
     const body = await context.body<{ expiresAt?: string }>();
 
     const issued = await gateway.admin.issueKey(
@@ -251,13 +264,13 @@ export function buildRoutes(options: RouteOptions): Router {
   });
 
   router.get('/v1/agents/:id/keys', async (context) => {
-    operators.authenticate(context);
+    await operators.authenticate(context);
     return { credentials: await gateway.agents.listKeys(context.params.id!) };
   });
 
   /** Records an agent's governance record, or a completed permission review. */
   router.post('/v1/agents/:id/governance', async (context) => {
-    const operator = operators.authenticate(context);
+    const operator = await operators.authenticate(context);
     const body = await context.body<Record<string, unknown>>();
     requireFields(body, ['purpose', 'criticality']);
 
@@ -289,7 +302,7 @@ export function buildRoutes(options: RouteOptions): Router {
 
   /** Clears a draft agent to act, or brings a suspended one back. */
   router.post('/v1/agents/:id/activate', async (context) => {
-    const operator = operators.authenticate(context);
+    const operator = await operators.authenticate(context);
     return gateway.admin.setAgentStatus(context.params.id!, 'active', {
       identifier: operator.identifier,
       via: 'api',
@@ -303,14 +316,14 @@ export function buildRoutes(options: RouteOptions): Router {
    * operator who wants it back registers a new one and is seen doing so.
    */
   router.post('/v1/agents/:id/retire', async (context) => {
-    const operator = operators.authenticate(context);
+    const operator = await operators.authenticate(context);
     return gateway.admin.retireAgent(context.params.id!, { identifier: operator.identifier, via: 'api' });
   });
 
   // --- credential inventory -----------------------------------------------
 
   router.get('/v1/credentials', async (context) => {
-    operators.authenticate(context);
+    await operators.authenticate(context);
     return {
       credentials: await gateway.agents.credentialInventory({
         expiringWithinDays: positiveInt(context.query.get('expiringWithinDays'), 14),
@@ -320,7 +333,7 @@ export function buildRoutes(options: RouteOptions): Router {
 
   /** Issues a replacement credential and revokes the old one, in that order. */
   router.post('/v1/credentials/:id/rotate', async (context) => {
-    const operator = operators.authenticate(context);
+    const operator = await operators.authenticate(context);
     const body = await context.body<{ expiresAt?: string }>().catch(() => ({}) as { expiresAt?: string });
 
     const issued = await gateway.admin.rotateKey(
@@ -339,12 +352,12 @@ export function buildRoutes(options: RouteOptions): Router {
   // --- tools --------------------------------------------------------------
 
   router.get('/v1/tools', async (context) => {
-    operators.authenticate(context);
+    await operators.authenticate(context);
     return { tools: await gateway.tools.list() };
   });
 
   router.post('/v1/tools', async (context) => {
-    const operator = operators.authenticate(context);
+    const operator = await operators.authenticate(context);
     const body = await context.body<{ name?: string; description?: string; effect?: string; connector?: string }>();
     requireFields(body, ['name', 'description', 'effect', 'connector']);
 
@@ -362,7 +375,7 @@ export function buildRoutes(options: RouteOptions): Router {
    * is why and the second is who. Both are audited.
    */
   router.post('/v1/tools/:id/disable', async (context) => {
-    const operator = operators.authenticate(context);
+    const operator = await operators.authenticate(context);
     const body = await context.body<{ reason?: string }>().catch(() => ({}) as { reason?: string });
     return gateway.admin.setToolDisabled(
       context.params.id!,
@@ -373,7 +386,7 @@ export function buildRoutes(options: RouteOptions): Router {
   });
 
   router.post('/v1/tools/:id/enable', async (context) => {
-    const operator = operators.authenticate(context);
+    const operator = await operators.authenticate(context);
     return gateway.admin.setToolDisabled(context.params.id!, false, {
       identifier: operator.identifier,
       via: 'api',
@@ -382,7 +395,7 @@ export function buildRoutes(options: RouteOptions): Router {
 
   /** The connector-level kill switch: disables every tool that connector runs. */
   router.post('/v1/connectors/:name/disable', async (context) => {
-    const operator = operators.authenticate(context);
+    const operator = await operators.authenticate(context);
     const body = await context.body<{ reason?: string }>().catch(() => ({}) as { reason?: string });
     const affected = await gateway.admin.setConnectorDisabled(
       context.params.name!,
@@ -400,7 +413,7 @@ export function buildRoutes(options: RouteOptions): Router {
   });
 
   router.post('/v1/connectors/:name/enable', async (context) => {
-    const operator = operators.authenticate(context);
+    const operator = await operators.authenticate(context);
     const affected = await gateway.admin.setConnectorDisabled(context.params.name!, false, {
       identifier: operator.identifier,
       via: 'api',
@@ -411,17 +424,17 @@ export function buildRoutes(options: RouteOptions): Router {
   // --- policies -----------------------------------------------------------
 
   router.get('/v1/policies', async (context) => {
-    operators.authenticate(context);
+    await operators.authenticate(context);
     return { policies: await gateway.policies.list() };
   });
 
   router.get('/v1/policies/:id', async (context) => {
-    operators.authenticate(context);
+    await operators.authenticate(context);
     return gateway.policies.require(context.params.id!);
   });
 
   router.post('/v1/policies', async (context) => {
-    const operator = operators.authenticate(context);
+    const operator = await operators.authenticate(context);
     const policy = await context.body<Policy>();
     requireFields(policy, ['id', 'version', 'name', 'rules']);
 
@@ -436,7 +449,7 @@ export function buildRoutes(options: RouteOptions): Router {
   });
 
   router.post('/v1/policies/:id/enable', async (context) => {
-    const operator = operators.authenticate(context);
+    const operator = await operators.authenticate(context);
     return gateway.admin.setPolicyEnabled(context.params.id!, true, {
       identifier: operator.identifier,
       via: 'api',
@@ -444,7 +457,7 @@ export function buildRoutes(options: RouteOptions): Router {
   });
 
   router.post('/v1/policies/:id/disable', async (context) => {
-    const operator = operators.authenticate(context);
+    const operator = await operators.authenticate(context);
     return gateway.admin.setPolicyEnabled(context.params.id!, false, {
       identifier: operator.identifier,
       via: 'api',
@@ -454,7 +467,7 @@ export function buildRoutes(options: RouteOptions): Router {
   // --- approvals ----------------------------------------------------------
 
   router.get('/v1/approvals', async (context) => {
-    const operator = operators.authenticate(context);
+    const operator = await operators.authenticate(context);
     await gateway.approvals.expireDue();
 
     const mine = context.query.get('mine') === 'true';
@@ -464,12 +477,12 @@ export function buildRoutes(options: RouteOptions): Router {
   });
 
   router.get('/v1/approvals/:id', async (context) => {
-    operators.authenticate(context);
+    await operators.authenticate(context);
     return gateway.approvals.require(context.params.id!);
   });
 
   router.post('/v1/approvals/:id/vote', async (context) => {
-    const operator = operators.authenticate(context);
+    const operator = await operators.authenticate(context);
     const body = await context.body<{ vote?: string; comment?: string }>();
 
     if (body.vote !== 'approve' && body.vote !== 'reject') {
@@ -497,14 +510,14 @@ export function buildRoutes(options: RouteOptions): Router {
 
   /** Executes an approved action. Separate from voting, so approving is never itself an act. */
   router.post('/v1/approvals/:id/execute', async (context) => {
-    operators.authenticate(context);
+    await operators.authenticate(context);
     return gateway.resume(context.params.id!);
   });
 
   // --- evidence, decisions and audit --------------------------------------
 
   router.get('/v1/evidence', async (context) => {
-    operators.authenticate(context);
+    await operators.authenticate(context);
     return {
       evidence: await gateway.listEvidence({
         ...(context.query.get('agentId') ? { agentId: context.query.get('agentId')! } : {}),
@@ -515,7 +528,7 @@ export function buildRoutes(options: RouteOptions): Router {
   });
 
   router.get('/v1/evidence/:id', async (context) => {
-    operators.authenticate(context);
+    await operators.authenticate(context);
     const record = await gateway.evidence(context.params.id!);
     if (!record) throw new ArcError('not_found', `no evidence record with id ${context.params.id}`);
     return record;
@@ -523,14 +536,14 @@ export function buildRoutes(options: RouteOptions): Router {
 
   /** The full rule-by-rule trace behind a decision. */
   router.get('/v1/decisions/:id', async (context) => {
-    operators.authenticate(context);
+    await operators.authenticate(context);
     const decision = await gateway.decision(context.params.id!);
     if (!decision) throw new ArcError('not_found', `no decision with id ${context.params.id}`);
     return decision;
   });
 
   router.get('/v1/audit', async (context) => {
-    operators.authenticate(context);
+    await operators.authenticate(context);
     return {
       records: await gateway.audit.read({
         ...(context.query.get('afterSequence')
@@ -553,7 +566,7 @@ export function buildRoutes(options: RouteOptions): Router {
    * instead, which is the stronger test.
    */
   router.get('/v1/audit/verify', async (context) => {
-    operators.authenticate(context);
+    await operators.authenticate(context);
 
     const expectation = await resolveExpectation(gateway, context);
     const verification = await gateway.audit.verify(expectation);
@@ -573,7 +586,7 @@ export function buildRoutes(options: RouteOptions): Router {
 
   /** Scans an MCP server manifest without registering anything from it. */
   router.post('/v1/mcp/scan', async (context) => {
-    operators.authenticate(context);
+    await operators.authenticate(context);
     const manifest = await context.body<McpServerManifest>();
     requireFields(manifest, ['name', 'endpoint']);
 

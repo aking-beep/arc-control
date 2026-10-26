@@ -35,6 +35,7 @@
     "@arc-control/connector-simulation": "2.0.0",
     "@arc-control/connector-generic-http": "2.0.0",
     "@arc-control/connector-mcp": "2.0.0",
-    "@arc-control/assurance": "2.0.0"
+    "@arc-control/assurance": "2.0.0",
+    "@arc-control/operator-identity": "2.1.0"
   }
 }

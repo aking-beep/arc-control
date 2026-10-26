@@ -513,10 +513,14 @@ async function main() {
       'and reports no percentage: a single coverage figure invites a target, and a target invites gaming it',
     );
 
+    // This walkthrough runs with the shared token and no identity provider,
+    // so the page must give the blunt version. A deployment with single
+    // sign-on configured gets the other wording, and the console test covers
+    // both directions.
     const settings = await page('/settings');
     check(
-      settings.html.replace(/\s+/g, ' ').includes('Operator identity is not authenticated in this release'),
-      'and Settings states plainly that the operator identity is a configured header, not an authenticated user',
+      settings.html.replace(/\s+/g, ' ').includes('Operator identity is not authenticated in this deployment'),
+      'and Settings states plainly that this deployment does not authenticate the operator identity',
     );
 
     const risks = await page('/risks');
