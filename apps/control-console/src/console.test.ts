@@ -32,6 +32,7 @@ import {
   frameworkPage,
   riskDetailPage,
   risksPage,
+  notificationsPage,
   settingsPage,
 } from './assurance-pages.js';
 import { cellScope } from './components.js';
@@ -514,6 +515,35 @@ const BASE_ROUTES: Record<string, Json | { status: number; body: Json }> = {
   '/v1/risks/arc_rsk_1111': RISK_REVIEWED,
   '/v1/risks/arc_rsk_2222': RISK_UNREVIEWED,
   '/v1/findings?status=open': { findings: [FINDING] },
+  '/v1/notifications': {
+    configured: true,
+    channels: [
+      {
+        id: 'arc_ch_1',
+        name: 'ops-alerts',
+        url: 'https://hooks.example.com/services/T000/B000/xxx',
+        format: 'slack',
+        events: ['approval.requested'],
+        enabled: true,
+        createdAt: '2026-10-20T06:00:00.000Z',
+      },
+    ],
+    deliveries: [
+      {
+        id: 'arc_dlv_1',
+        event: 'approval.requested',
+        channelId: 'arc_ch_1',
+        channelName: 'ops-alerts',
+        subject: 'arc_apr_1111',
+        summary: 'stripe.refund needs a human',
+        status: 'abandoned',
+        attempts: [{ at: '2026-10-20T06:00:00.000Z', error: 'the channel returned HTTP 500', durationMs: 12 }],
+        createdAt: '2026-10-20T06:00:00.000Z',
+      },
+    ],
+    failures: 1,
+    notice: '1 notification(s) were not delivered. Anyone relying on them was not told.',
+  },
   '/v1/findings?overdue=true': { findings: [FINDING] },
   '/v1/findings': { findings: [FINDING] },
   '/v1/findings/arc_fnd_1111': FINDING,
@@ -546,6 +576,7 @@ describe('Every section renders from the API', () => {
     ['Risks', risksPage],
     ['Findings', findingsPage],
     ['Activity', activityPage],
+    ['Notifications', notificationsPage],
     ['Settings', settingsPage],
   ];
 
@@ -587,6 +618,7 @@ describe('Every section renders from the API', () => {
       '/security',
       '/evidence',
       '/audit',
+      '/notifications',
       '/reports',
       '/settings',
     ]);
@@ -922,6 +954,62 @@ describe('The governance sections never invent a figure', () => {
       const { context } = contextFor(routes(), '', { operatorRoles: [] });
       const text = prose(await settingsPage(context));
       assert.ok(text.includes('can read, and approve nothing'));
+    });
+  });
+
+  /**
+   * The section exists for one rule: a delivery that failed is not a
+   * notification. Fire-and-forget is worse than no webhook, because it
+   * creates the belief that somebody was told — so an undelivered one has to
+   * read as such, and a webhook URL has to stay a credential.
+   */
+  describe('the notifications page', () => {
+    it('leads with the notifications nobody received', async () => {
+      const { context } = contextFor(routes());
+      const page = await notificationsPage(context);
+      const text = prose(page);
+
+      assert.ok(text.includes('1 not delivered'));
+      assert.ok(text.includes('Anyone relying on them was not told'));
+      assert.ok(page.includes('badge deny">never delivered'), 'and the row says so, not just the header');
+      assert.ok(text.includes('the channel returned HTTP 500'), 'with the reason attached');
+    });
+
+    it('shows a destination by host, because a webhook URL is a credential', async () => {
+      const page = await notificationsPage(contextFor(routes()).context);
+
+      assert.ok(page.includes('hooks.example.com'), 'the host is useful');
+      assert.ok(
+        !page.includes('T000/B000/xxx'),
+        'the path is the secret part of an incoming webhook and must not be rendered',
+      );
+    });
+
+    it('says plainly when no channel is configured, rather than showing an empty table', async () => {
+      const { context } = contextFor(
+        routes({
+          '/v1/notifications': {
+            configured: false,
+            channels: [],
+            deliveries: [],
+            failures: 0,
+            notice: 'No notification channel is enabled, so ARC surfaces approvals and deadlines in this console and tells nobody.',
+          },
+        }),
+      );
+      const text = prose(await notificationsPage(context));
+
+      assert.ok(text.includes('tells nobody'));
+      assert.ok(
+        text.includes('somebody has to be watching this page'),
+        'an empty table would read as "nothing to report"',
+      );
+    });
+
+    it('states that parameters are withheld by default', async () => {
+      const text = prose(await notificationsPage(contextFor(routes()).context));
+      assert.ok(text.includes('withheld'));
+      assert.ok(text.includes('redacted is not the same as safe to post in a chat workspace'));
     });
   });
 

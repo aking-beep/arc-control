@@ -1165,3 +1165,145 @@ function identityNotice(auth: Record<string, unknown>, identity: string): Truste
     No means of authenticating an operator is configured, so every operator endpoint refuses every request.
   </p>`);
 }
+
+// --- Notifications ---------------------------------------------------------
+
+/** How a delivery status should read at a glance. */
+function deliveryBadge(status: unknown): Trusted {
+  const value = String(status);
+  if (value === 'delivered') return raw(html`<span class="badge allow">delivered</span>`);
+  if (value === 'pending') return raw(html`<span class="badge approval">pending</span>`);
+  if (value === 'failed') return raw(html`<span class="badge approval">failed, will retry</span>`);
+  if (value === 'abandoned') return raw(html`<span class="badge deny">never delivered</span>`);
+  return raw(muted(value).value);
+}
+
+/**
+ * Who was told, and who was not.
+ *
+ * This section exists because of one rule: a delivery that failed is not a
+ * notification. Fire-and-forget to a webhook is worse than no webhook, since
+ * it creates the belief that somebody was told — so the page leads with the
+ * count of notifications nobody received, and says plainly when no channel is
+ * configured at all rather than showing an empty table that reads as "nothing
+ * to report".
+ */
+export async function notificationsPage(context: PageContext): Promise<string> {
+  const [shell, report] = await Promise.all([
+    chrome(context),
+    context.client.notifications().catch(() => ({}) as Record<string, unknown>),
+  ]);
+
+  const channels = list(report.channels);
+  const deliveries = list(report.deliveries);
+  const failures = Number(report.failures ?? 0);
+
+  const body = html`${pageHeader({
+    title: 'Notifications',
+    lede:
+      'Where ARC sends an approval that needs a human, a deadline that has passed and a control that started ' +
+      'failing — and a record of every attempt, because a delivery that failed is not a notification.',
+  })}
+
+  ${
+    typeof report.notice === 'string' && report.notice
+      ? raw(html`<p class="note"><strong>${report.notice}</strong></p>`)
+      : raw('')
+  }
+
+  ${
+    failures > 0
+      ? raw(html`<p class="count-line">
+          <span class="badge deny">${count(failures)} not delivered</span>
+          <span class="sep" aria-hidden="true">·</span>
+          <span>${count(deliveries.length)} recent attempt(s)</span>
+        </p>`)
+      : raw(html`<p class="count-line">${count(deliveries.length)} recent attempt(s)</p>`)
+  }
+
+  ${sectionTitle('Channels')}
+  ${
+    channels.length === 0
+      ? emptyState(
+          'No channel is configured. ARC will surface an approval here and tell nobody, so somebody has to be ' +
+            'watching this page for a held action to proceed.',
+        )
+      : table(
+          'Notification channels',
+          ['Name', 'Destination', 'Events', 'Parameters', 'Status'],
+          channels.map(
+            (channel) => raw(html`<tr>
+              <td>${String(channel.name)}</td>
+              <td>${mono(hostOf(channel.url))}</td>
+              <td>
+                ${
+                  list(channel.events).length === 0 && !Array.isArray(channel.events)
+                    ? muted('every event')
+                    : raw(html`${(Array.isArray(channel.events) ? channel.events : []).map(String).join(', ') || 'every event'}`)
+                }
+              </td>
+              <td>
+                ${
+                  channel.includeParameters === true
+                    ? raw(html`<span class="badge approval">included</span>`)
+                    : raw(html`${raw(muted('withheld').value)}`)
+                }
+              </td>
+              <td>${channel.enabled === true ? badge('allow', 'enabled') : badge('deny', 'disabled')}</td>
+            </tr>`),
+          ),
+        )
+  }
+
+  <p class="note">
+    A destination is shown by host rather than full URL: a webhook URL is a credential. Action parameters are
+    withheld unless a channel asked for them, because redacted is not the same as safe to post in a chat
+    workspace — a tool name, an amount and a customer reference together are a disclosure with every secret
+    already removed.
+  </p>
+
+  ${sectionTitle('Recent attempts')}
+  ${
+    deliveries.length === 0
+      ? emptyState('Nothing has been sent yet.')
+      : table(
+          'Delivery attempts',
+          ['Event', 'About', 'Channel', 'Attempts', 'Status', 'What was said'],
+          deliveries.map(
+            (delivery) => raw(html`<tr>
+              <td>${mono(String(delivery.event))}</td>
+              <td>${mono(shortId(String(delivery.subject)))}</td>
+              <td>${String(delivery.channelName)}</td>
+              <td><span class="tnum">${count(list(delivery.attempts).length)}</span></td>
+              <td>
+                ${deliveryBadge(delivery.status)}
+                ${
+                  typeof delivery.deliveredAt === 'string'
+                    ? raw(html`<span class="tnum muted">${timestamp(delivery.deliveredAt)}</span>`)
+                    : raw(html`${raw(muted(lastError(delivery)).value)}`)
+                }
+              </td>
+              <td>${String(delivery.summary)}</td>
+            </tr>`),
+          ),
+        )
+  }`;
+
+  return page(context, '/notifications', 'Notifications', raw(body), shell);
+}
+
+/** The host of a webhook URL. The rest of it is a credential. */
+function hostOf(url: unknown): string {
+  try {
+    return new URL(String(url)).host;
+  } catch {
+    return 'unparseable';
+  }
+}
+
+/** The reason the last attempt failed, for a delivery that has not landed. */
+function lastError(delivery: Record<string, unknown>): string {
+  const attempts = list(delivery.attempts);
+  const last = attempts.at(-1);
+  return typeof last?.error === 'string' ? last.error : 'no attempt recorded';
+}

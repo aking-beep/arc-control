@@ -368,6 +368,17 @@ export class ArcControlClient {
     return this.#request('GET', `/v1/findings${query(filter)}`, undefined, 'operator');
   }
 
+  /**
+   * Notification channels and what was delivered.
+   *
+   * The delivery list is the point rather than an extra: a product that sends
+   * webhooks and cannot tell you which ones failed has moved the problem
+   * rather than solved it.
+   */
+  async notifications(): Promise<Record<string, unknown>> {
+    return this.#request('GET', '/v1/notifications', undefined, 'operator');
+  }
+
   async getFinding(findingId: string): Promise<Record<string, unknown>> {
     return this.#request('GET', `/v1/findings/${encodeURIComponent(findingId)}`, undefined, 'operator');
   }

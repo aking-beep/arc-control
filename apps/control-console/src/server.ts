@@ -12,6 +12,7 @@ import {
   frameworkPage,
   riskDetailPage,
   risksPage,
+  notificationsPage,
   settingsPage,
 } from './assurance-pages.js';
 import {
@@ -242,6 +243,9 @@ async function route(
         return;
       case '/activity':
         sendHtml(response, 200, await activityPage(context));
+        return;
+      case '/notifications':
+        sendHtml(response, 200, await notificationsPage(context));
         return;
       case '/settings':
         sendHtml(response, 200, await settingsPage(context));
