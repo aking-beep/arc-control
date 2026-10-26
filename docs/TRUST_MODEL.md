@@ -83,7 +83,7 @@ operational need, and the honest way to meet it is a policy change that is
 itself recorded — not a button that produces an effect with no decision behind
 it.
 
-### What an operator *is* trusted with, and the v0.1 gap
+### What an operator *is* trusted with, and the gap that is still open in 2.0
 
 v0.1 authenticates operators with a **single shared token** and takes their
 identity from the `x-arc-operator` header.
@@ -208,6 +208,36 @@ agent; it is redacted on the way into evidence, and it is never interpreted as
 an instruction by ARC Control. What the *agent* does with it is the agent's
 own prompt-injection surface, which ARC Control bounds by deciding the agent's
 next action rather than by inspecting the text.
+
+---
+
+## What the assurance layer is trusted with
+
+2.0 adds a fifth party, and it is deliberately the least trusted of them.
+
+**The assurance engine reads enforcement and never writes it.** It reads
+agents, tools, policies, actions, evidence, approvals and the audit log, and
+writes only to its own collections. It holds no path into a decision.
+
+Three consequences:
+
+| | |
+|---|---|
+| A wrong assessment cannot weaken the gateway | There is nothing it can write that a decision reads. |
+| An assurance outage cannot open the gateway | Asserted by an eval that replaces every assurance collection with one that throws and checks the gateway still decides correctly. |
+| Assurance is not trusted to grade itself | A control ARC cannot decide from its own records reports `not_assessable`, not `pass`. Residual risk is never computed from the existence of controls. Framework mappings ship unreviewed. |
+
+That third row is the interesting one. The assurance layer is the component
+with the strongest incentive to flatter the product, so the model removes its
+ability to do so: there is no way to spell "passing" for a control nobody
+verified, and no way to record a residual rating without a named human
+attached to it.
+
+**An agent is trusted with none of it.** Every one of the 35 governance routes
+is operator-only. An agent that could read its own control results would learn
+which of its actions go unexamined; one that could write them would be marking
+its own homework. A test presents a valid agent key to all of them and asserts
+401.
 
 ---
 

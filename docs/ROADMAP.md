@@ -16,13 +16,50 @@ complete.
 A tool earns its way into this repository only by contributing to:
 
 > identity → authorization → policy → execution → evidence → security →
-> observability
+> observability → assurance
 
 Anything that does not is somebody else's repository. This rule exists because
 the failure mode for a product like this is not building the wrong thing — it
 is becoming a collection of unrelated AI utilities that happen to share a
 monorepo, at which point it stops being a control plane and starts being a
 toolbox.
+
+---
+
+## 2.0 — Control + Assurance ✅ shipped
+
+The release that renumbered the project. 1.0's capabilities are the baseline;
+2.0 adds the governance layer that evidences them, and answers the question an
+audit actually asks: *can you prove the authorization controls are operating?*
+
+[releases/2.0.md](./releases/2.0.md) is the authoritative boundary — what
+shipped, and what is deferred with the reason. In summary:
+
+**Shipped.** Agent lifecycle and governance records, credential inventory and
+rotation, policy coverage analysis, policy simulation against recorded traffic,
+policy version history, action risk classification, tool and connector kill
+switches, rate limiting, the nine ARC-AI controls with deterministic
+evaluators, assessment runs, a findings register, a risk register with
+reviewed-only residual ratings, coverage analysis, NIST AI RMF mappings,
+offline-verifiable evidence bundles, five new console sections, 35 assurance
+routes, SDK methods and four CLI commands.
+
+**Deferred, with reasons.** SSO and RBAC (a real identity integration, not a
+flag — and roles without authenticated identities are decoration);
+PostgreSQL and HA (the storage contract is implemented twice already, but a
+third needs migration tooling and a concurrency suite of its own, and HA on a
+single-node store would be a false claim); OpenTelemetry and SIEM export
+(small once the trace model is settled, and it should be settled by a design
+partner's stack rather than guessed); external anchoring as a scheduled job
+(the model is implemented, the job needs a target the customer chooses);
+penetration testing (a service, not a commit); ISO 42001 and EU AI Act
+mappings (publishing an unreviewed mapping for a framework with legal
+consequences invites someone to rely on it).
+
+**The next release is the enterprise identity release.** SSO, RBAC and
+separation of duties across the governance workflow, in that order, because
+each depends on the one before it. Everything else in the P1 list is smaller
+and can follow a design partner's priorities.
 
 ---
 

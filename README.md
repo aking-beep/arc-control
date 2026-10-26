@@ -8,7 +8,19 @@ infrastructure, send mail, close a ticket. The organization accountable for
 that action needs to answer two questions: before it happens, *is this
 permitted?*; afterwards, *what happened, and who authorized it?*
 
-ARC Control is the component that answers both.
+ARC Control answers both. **2.0 adds a third, which is the one that gets asked
+in an audit:** *can you prove the first two worked?*
+
+That is what ARC Assurance does — nine controls evaluated against the
+gateway's own records, each result stating the window it covers and what it
+does **not** establish, and an evidence export that verifies with ARC switched
+off.
+
+It is also why a fresh install does not show all green. A control ARC cannot
+decide for itself reports `not_assessable` rather than passing, and that is the
+product working. A governance tool that reports green where it has no evidence
+converts an unexamined risk into a documented assurance, and the customer finds
+out when an auditor disagrees.
 
 ```
                            AI agent
@@ -40,9 +52,21 @@ ARC Control is the component that answers both.
                                    │
                              audit record
                                    │
-                                   ▼
-                            Control Console
+                    ┌──────────────┴──────────────┐
+                    ▼                             ▼
+             Control Console                ARC Assurance
+                                                  │
+                                   ┌──────────────┼──────────────┐
+                                   ▼              ▼              ▼
+                            control results   findings    evidence bundle
+                                                            (verifies offline)
 ```
+
+Assurance reads enforcement and never writes it. There is no path from the
+governance layer into a decision, which is why an assurance outage can stop
+ARC reporting on itself but cannot open the gateway — asserted by an eval that
+breaks every assurance collection and checks the gateway still decides
+correctly.
 
 ---
 
@@ -419,15 +443,29 @@ Identity is the first gate (authorization/identity)
 
 ## Status
 
-**v0.1 — Control.** The one workflow above, end to end, with the guarantees
-asserted. Not yet: RBAC and SSO (v0.1 uses a single operator token and takes
-identity from a header — see
-[TRUST_MODEL.md](./docs/TRUST_MODEL.md#what-an-operator-is-trusted-with-and-the-v01-gap)),
-risk scoring and kill switches (v0.2), traces and cost (v0.3), agent-to-agent
-delegation (v0.4), multi-tenancy and retention (v0.5).
+**2.0 — Control + Assurance.** The workflow above end to end, plus the
+governance layer that evidences it. 356 tests, 66 asserted properties, a
+14-step end-to-end demonstration.
 
-[ROADMAP.md](./docs/ROADMAP.md) has the full phasing and what is deliberately
-not planned.
+| | |
+|---|---|
+| Shipped | Gateway, policy engine, approvals, evidence, hash-chained audit, MCP security, agent lifecycle, credential inventory, kill switches, rate limits, risk classification, policy history and simulation, nine ARC-AI controls, risk register, findings, coverage analysis, NIST AI RMF mappings, offline-verifiable evidence bundles, a fifteen-section console, 35 assurance routes, SDK and CLI |
+| **Not** shipped | SSO and RBAC — 2.0 still uses a single operator token and takes identity from a header, so an approval proves the workflow ran and **not who ran it**; PostgreSQL and HA; OpenTelemetry and SIEM export; external anchoring as a scheduled job; penetration testing; a Python SDK |
+
+Two limitations worth knowing before you evaluate anything else:
+
+**Operator identity is not authenticated.** Anyone holding the operator token
+can claim any identity. Put the console behind an identity-aware proxy. The
+product says this on its own Settings page and in every evidence bundle.
+
+**ARC-AI-006 does not pass by default.** The audit chain verifies internally,
+but walking records cannot detect truncation, and ARC checking its own log
+against its own copy of the head proves nothing to a reader who does not trust
+ARC. Anchor the head outside ARC and it passes. This is deliberate.
+
+[releases/2.0.md](./docs/releases/2.0.md) states the release boundary —
+everything that shipped, and everything deferred with the reason.
+[ROADMAP.md](./docs/ROADMAP.md) has the longer phasing.
 
 ---
 
@@ -437,10 +475,16 @@ not planned.
 |---|---|
 | [ARCHITECTURE.md](./docs/ARCHITECTURE.md) | The components, the layering, and why each exists |
 | [TRUST_MODEL.md](./docs/TRUST_MODEL.md) | Who trusts whom, and what each party cannot do |
-| [THREAT_MODEL.md](./docs/THREAT_MODEL.md) | 13 threats, the defence for each, and what is not defended |
+| [THREAT_MODEL.md](./docs/THREAT_MODEL.md) | 15 threats, the defence for each, and what is not defended |
 | [POLICY_MODEL.md](./docs/POLICY_MODEL.md) | The policy language and why it is shaped this way |
 | [EVIDENCE_MODEL.md](./docs/EVIDENCE_MODEL.md) | What a record contains and how to verify one |
-| [ROADMAP.md](./docs/ROADMAP.md) | v0.1 through v1.0 |
+| [releases/2.0.md](./docs/releases/2.0.md) | **The 2.0 release boundary**: what shipped, what is deferred and why |
+| [CONTROL_CATALOGUE.md](./docs/CONTROL_CATALOGUE.md) | The nine ARC-AI controls, and what a pass does not tell you |
+| [ASSURANCE_MODEL.md](./docs/ASSURANCE_MODEL.md) | How assurance works, and the rules that keep it honest |
+| [OPERATIONS.md](./docs/OPERATIONS.md) | Deployment, health, backup and restore, audit anchoring, five runbooks |
+| [SECURITY_QUESTIONNAIRE.md](./docs/SECURITY_QUESTIONNAIRE.md) | Buyer technical evaluation, answered against what the code does today |
+| [COMMERCIAL_READINESS.md](./docs/COMMERCIAL_READINESS.md) | Ideal customer, differentiation, design partners, pricing hypothesis |
+| [ROADMAP.md](./docs/ROADMAP.md) | The longer phasing |
 | [PORTFOLIO.md](./docs/PORTFOLIO.md) | Every repository in the ARC Control division, and how each relates to this one |
 | [SECURITY.md](./SECURITY.md) | Reporting a vulnerability |
 | [CONTRIBUTING.md](./CONTRIBUTING.md) | How to work in this repository |
@@ -452,7 +496,7 @@ not planned.
 A tool earns its way into this repository only by contributing to:
 
 > identity → authorization → policy → execution → evidence → security →
-> observability
+> observability → **assurance**
 
 Anything else belongs elsewhere. The failure mode for a product like this is
 not building the wrong thing — it is becoming a collection of unrelated AI

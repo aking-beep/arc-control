@@ -64,11 +64,11 @@ asserted as properties in `evals/`:
 
 ---
 
-## Why these six components
+## Why these seven components
 
-The v0.1 scope is the smallest set that makes the diagram above true. Each one
-exists because removing it would break a guarantee, not because it rounds out a
-feature list.
+Each one exists because removing it would break a guarantee, not because it
+rounds out a feature list. The first six make the diagram above true; the
+seventh makes it checkable.
 
 | Component | Without it |
 |---|---|
@@ -78,6 +78,7 @@ feature list.
 | **Approvals** (`packages/approvals`) | The only answers are yes and no, so every judgement call has to be pre-decided — which in practice means pre-approved. |
 | **Evidence** (`packages/evidence`) | "What did this agent do?" is answered from logs that were not designed to answer it. |
 | **Audit** (`packages/audit`) | Records can be edited after the fact, so the evidence is only as trustworthy as the person holding it. |
+| **Assurance** (`packages/assurance`) | Nobody can answer "are these controls actually operating?" except by reading logs by hand, quarterly, and taking somebody's word for the result. |
 
 ---
 
@@ -92,18 +93,28 @@ Dependencies point one way. Nothing below depends on anything above it.
   packages/cli                  policy linting, MCP scanning, verification
         │
   packages/gateway              orchestration + audited administration
+        │                        policy history, simulation, rate limiting
         │
         ├── packages/agent-identity
         ├── packages/policy-engine
         ├── packages/approvals
-        ├── packages/evidence
+        ├── packages/evidence    records + offline-verifiable bundles
         ├── packages/audit
+        ├── packages/assurance   controls, assessments, risks, findings, coverage
         └── packages/execution   ◄── connectors/* implement its Connector contract
                 │
         packages/store           storage contracts, memory + append-only file
                 │
         packages/schemas         the object model, canonical JSON, redaction
 ```
+
+**Assurance sits beside the gateway, not above it, and that placement is the
+point.** It depends on `store` and `schemas` and reads the same records the
+gateway writes — but the gateway does not depend on it, and there is no path
+from assurance into a decision. So a broken assurance layer can fail to report
+and cannot fail open. The audit log is *lent* to it as a single `append` verb
+rather than imported, which keeps the dependency graph acyclic and makes the
+one-way relationship explicit in the constructor signature.
 
 Three consequences of this shape are worth stating:
 
@@ -163,6 +174,32 @@ claim that was made.
 
 A clustered store (Postgres, with the audit chain anchored externally) is v0.5
 work. The interface exists now so that change does not reach the gateway.
+
+---
+
+## Where assurance fits
+
+The gateway answers *may this happen?* Assurance answers *can you prove the
+first answer was produced correctly, over this window, by this procedure?*
+
+```
+  enforcement writes          assurance reads
+  ──────────────────          ───────────────
+  actions                 ┐
+  decisions               │
+  evidence                ├──►  nine control evaluators
+  approvals               │           │
+  audit records           ┘           ▼
+                              assessments ──► findings
+                                   │
+                                   ├──► coverage: what is not governed at all
+                                   ├──► framework mappings (reviewed only)
+                                   └──► evidence bundles (verify with ARC off)
+```
+
+The arrow never reverses. See [ASSURANCE_MODEL.md](./ASSURANCE_MODEL.md) for
+the rules that keep the output honest — chiefly that a question which cannot be
+answered returns `not_assessable` and never `pass`.
 
 ---
 
