@@ -231,10 +231,19 @@ action.
 - **Approvals are single-use.** The grant is consumed under the approvals
   store's lock before execution, so concurrent resumes produce exactly one
   execution. The eval asserts this with three simultaneous calls.
-- **Idempotency keys** return the original outcome, scoped to the agent and
-  tool. A key reused with *different* parameters is refused rather than
-  conflated — treating it as a repeat would silently discard the second
-  request.
+- **Idempotency keys** are claimed atomically, scoped to the organization,
+  agent and tool. The claim and the action row are written in one critical
+  section against the actions collection's lock, so a caller that loses the
+  claim never reaches policy or a connector: it joins the request that won, or
+  reads back the outcome recorded for it. A key reused with *different*
+  parameters is refused rather than conflated — treating it as a repeat would
+  silently discard the second request. **This holds within one ARC Control
+  process.** Until 2.2 it did not hold at all under concurrency: the action was
+  recorded and *then* an earlier one with evidence was looked for, and evidence
+  is not written until the connector returns, so eight parallel refunds under
+  one key caused eight refunds. Two processes sharing a `FileStore` directory
+  can still both claim one key; the second refuses rather than guessing when it
+  finds a held key with no recorded outcome.
 - **Irreversible actions are never retried automatically.** A `read` may be
   retried once on a retryable failure; a `write` or `irreversible` action is
   attempted once. A timeout in particular is never retried, because a request
@@ -263,9 +272,21 @@ rather than leaving it to the console:
   not be a way around the control.
 - Expiry closes the window; a vote after it is refused and the held action
   cannot be executed.
+- **A grant does not outlive the rules it was given under.** The release path
+  re-evaluates current policy, re-checks the agent's lifecycle and the tool's
+  kill switch, and confirms the grant still binds to this action and decision.
+  A deny published while the approval sat in the queue stops the release; a
+  *narrowed* approver list, a raised threshold or newly required separation of
+  duties sends the action back for a fresh approval, because the votes on file
+  cannot be shown to satisfy a requirement that admits fewer people than the
+  one they were cast under. Until 2.2 the stored decision executed unchanged,
+  so an approved action released after a deny was published still took effect.
+  The remaining window is between that re-evaluation and the connector call;
+  see `docs/releases/2.2.md`.
 
-`packages/approvals/src/engine.ts` ·
-`evals/reliability/guarantees.eval.mjs`
+`packages/approvals/src/engine.ts`, `packages/gateway/src/revalidation.ts` ·
+`evals/reliability/guarantees.eval.mjs`,
+`evals/policy/decisions.eval.mjs`
 
 ---
 
@@ -454,6 +475,23 @@ process, they can authorize anything and write whatever records they like.
 
 **A compromised storage layer.** See T11. Partial edits are detectable; a full
 rewrite is not, until the head digest is anchored externally.
+
+**Concurrency across more than one ARC Control process.** Both shipped stores
+serialize a read-modify-write with an in-process mutex, so the idempotency
+claim, the approval consume and the audit sequence are all single-process
+guarantees. Two writers against one `FileStore` directory can each claim the
+same idempotency key and each spend the same grant. Run one writer. Crossing
+that boundary needs a store whose `transact` is backed by shared state, and
+no such store has been tested — so no distributed claim is made.
+
+**The gap between authorization and the effect.** A decision, and the
+release-time revalidation that re-checks it, are separated from the connector
+call by at least the connector's own latency. A deny published inside that
+window does not stop the call in flight, and a connector that times out after
+applying its effect leaves the effect uncompensated and recorded as `failed`.
+ARC records what it decided against so the gap is visible; closing it would
+need a two-phase commit against a third-party API. See
+[releases/2.2.md](./releases/2.2.md).
 
 **Operator impersonation in v0.1.** One shared token, identity from a header.
 See [TRUST_MODEL.md](./TRUST_MODEL.md#what-an-operator-is-trusted-with-and-how-far-that-trust-is-established).

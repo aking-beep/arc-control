@@ -1144,6 +1144,52 @@ describe('Detail pages', () => {
     assert.ok(page.includes('not executed: waiting on approval'), 'an unexecuted stage says why');
   });
 
+  /**
+   * Without this stage the timeline of a release that current policy stopped
+   * reads "approved, then nothing happened", which is the one reading an
+   * operator must not be left with.
+   */
+  it('shows the release-time revalidation, and why it refused', async () => {
+    const refused: Json = {
+      ...(EVIDENCE as Record<string, Json>),
+      outcome: 'denied',
+      approval: {
+        id: 'arc_apr_1111',
+        status: 'approved',
+        approvers: ['role:finance-manager'],
+        minApprovals: 1,
+        votes: [{ approver: 'cfo@example.com', vote: 'approve', votedAt: '2026-10-20T05:40:00.000Z' }],
+        resolvedAt: '2026-10-20T05:40:00.000Z',
+      },
+      revalidation: {
+        performedAt: '2026-10-20T06:00:00.000Z',
+        effect: 'DENY',
+        verdict: 'denied',
+        decisionId: 'arc_dec_2222',
+        policyId: 'REFUNDS-FROZEN',
+        ruleId: 'freeze',
+        reason: 'refunds are suspended pending investigation',
+        agentStatus: 'active',
+        toolDisabled: false,
+        approvalBound: true,
+        approvalId: 'arc_apr_1111',
+        traceDigest: 'sha256:ddd',
+      },
+    };
+
+    const { context } = contextFor(routes({ '/v1/evidence/arc_ev_1111': refused }));
+    const page = await evidenceDetailPage(context, 'arc_ev_1111');
+
+    assert.ok(page.includes('Revalidated'), 'the second look is a stage of its own');
+    assert.ok(page.includes('REFUNDS-FROZEN'), 'the policy that stopped it is named');
+    assert.ok(page.includes('refunds are suspended pending investigation'), 'and its reason is quoted');
+    assert.ok(
+      page.includes('not executed: refused when current policy was re-checked at release'),
+      'the executed stage says which refusal this was',
+    );
+    assert.ok(page.includes('FINANCE-004'), 'while the original decision is still on the record');
+  });
+
   it('still renders evidence when the decision trace has aged out', async () => {
     const { context } = contextFor({ ...routes(), '/v1/decisions/arc_dec_1111': { status: 404, body: { error: { code: 'not_found', message: 'gone' } } } });
     const page = await evidenceDetailPage(context, 'arc_ev_1111');

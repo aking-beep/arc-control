@@ -4,6 +4,7 @@ import {
   FINANCE_004,
   GLOBAL_001,
   buildHarness,
+  SEED_ACTOR,
   financeManager,
   refund,
 } from '../fixtures.mjs';
@@ -270,6 +271,85 @@ export default {
           0,
           'explain must not write evidence, or a dry run pollutes the audit record',
         );
+      },
+    },
+    {
+      name: 'a deny published while an approval is open stops the release',
+      async run() {
+        const { gateway, apiKey, connector } = await buildHarness();
+
+        const held = await gateway.handle(apiKey, refund(1800));
+        await gateway.approvals.vote({ approvalId: held.approvalId, approver: financeManager, vote: 'approve' });
+
+        await gateway.admin.publishPolicy(
+          {
+            id: 'REFUNDS-FROZEN',
+            version: 1,
+            name: 'Refunds suspended',
+            enabled: true,
+            match: { tools: ['stripe.refund'] },
+            rules: [{ id: 'freeze', when: { always: true }, effect: 'DENY', reason: 'refunds are suspended' }],
+            fallback: { effect: 'DENY', reason: 'refunds are suspended' },
+          },
+          SEED_ACTOR,
+        );
+
+        const released = await gateway.resume(held.approvalId);
+
+        expect.equal(released.outcome, 'denied', 'a stale approval must not outrank current policy');
+        expect.equal(connector.callCount('stripe.refund'), 0, 'and the refund must not have happened');
+      },
+    },
+    {
+      name: 'the release records that current policy was consulted, whichever way it went',
+      async run() {
+        const { gateway, apiKey } = await buildHarness();
+
+        const held = await gateway.handle(apiKey, refund(1800));
+        await gateway.approvals.vote({ approvalId: held.approvalId, approver: financeManager, vote: 'approve' });
+        const released = await gateway.resume(held.approvalId);
+
+        const evidence = await gateway.evidence(released.evidenceId);
+        expect.equal(
+          evidence.revalidation?.verdict,
+          'proceeded',
+          'an auditor must be able to see the second look happened, not assume it',
+        );
+        expect.equal(evidence.decision.policyId, 'FINANCE-004', 'and the original decision must survive it');
+        expect.equal(evidence.approval?.status, 'approved', 'along with the approval history');
+      },
+    },
+    {
+      name: 'a narrowed approval requirement sends a held action back rather than releasing it',
+      async run() {
+        const { gateway, apiKey, connector } = await buildHarness();
+
+        const held = await gateway.handle(apiKey, refund(1800));
+        await gateway.approvals.vote({ approvalId: held.approvalId, approver: financeManager, vote: 'approve' });
+
+        await gateway.admin.publishPolicy(
+          {
+            ...FINANCE_004,
+            version: 2,
+            rules: [
+              {
+                id: 'needs-cfo',
+                when: { always: true },
+                effect: 'REQUIRE_APPROVAL',
+                reason: 'only the CFO may approve this now',
+                approval: { approvers: ['user:cfo-only@example.com'], minApprovals: 1 },
+              },
+            ],
+          },
+          SEED_ACTOR,
+        );
+
+        const released = await gateway.resume(held.approvalId);
+
+        expect.equal(released.outcome, 'pending_approval', 'the grant on file no longer carries this action');
+        expect.equal(connector.callCount('stripe.refund'), 0, 'and nothing may execute on it');
+        const fresh = await gateway.approvals.require(released.approvalId);
+        expect.deepEqual(fresh.requirement.approvers, ['user:cfo-only@example.com'], 'policy names who to ask now');
       },
     },
     {

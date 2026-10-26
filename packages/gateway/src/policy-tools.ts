@@ -245,12 +245,12 @@ function summarise(decision: Decision): SimulatedDecision {
  * one in production — so a rule could look safe here and decide differently
  * live, which is worse than having no simulator.
  *
- * `source` is deliberately *not* supplied. The gateway records it in the
- * decision context but does not store it on the action, so a replay cannot
- * recover what it was. Guessing `internal` — which is what this did — made
- * every replayed action look like an internal call. An absent value simply
- * does not match, which fails closed for an ALLOW rule; the limitation is
- * stated on the replay result.
+ * `source` is passed through from the action when the action carries one,
+ * and never guessed. Guessing `internal` — which this did once — made every
+ * replayed action look like an internal call. Actions recorded before 2.2
+ * have no source; for those the value is absent, which simply does not match,
+ * failing closed for an ALLOW rule. The limitation is stated on the replay
+ * result.
  */
 function inputFor(
   agent: Agent,
@@ -258,6 +258,7 @@ function inputFor(
   parameters: Readonly<Record<string, unknown>>,
   at: Date,
   classification: ClassificationOptions = {},
+  source?: string,
 ): PolicyInput {
   const action: Action = {
     id: 'arc_act_simulation',
@@ -269,6 +270,7 @@ function inputFor(
     toolId: tool.id,
     parameters,
     parametersDigest: digest(parameters),
+    ...(source ? { source } : {}),
     requestedAt: at.toISOString(),
   };
 
@@ -407,7 +409,7 @@ export async function simulateAgainstHistory(
     }
 
     const at = new Date(action.requestedAt);
-    const input = inputFor(agent, tool, action.parameters, at, options.classification);
+    const input = inputFor(agent, tool, action.parameters, at, options.classification, action.source);
 
     const current = engine.evaluate(policies, input);
     const candidate = engine.evaluate(candidateSet, input);
@@ -435,7 +437,7 @@ export async function simulateAgainstHistory(
       'A replay re-decides traffic that already happened. It cannot predict traffic the change itself would cause.',
       'Actions that never reached the gateway are invisible to it, so a replay says nothing about bypass.',
       'Parameters are replayed as recorded. A sensitive parameter that was redacted before storage is replayed redacted, which can change the decision.',
-      'The request source is not stored on an action, so a rule reading $.context.source does not match in a replay. Risk classification is applied, and matches production when the same classification configuration is passed.',
+      'Actions recorded before 2.2 do not carry the request source, so a rule reading $.context.source does not match in a replay of them. Risk classification is applied, and matches production when the same classification configuration is passed.',
     ],
   };
 }

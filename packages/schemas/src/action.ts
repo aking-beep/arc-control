@@ -29,6 +29,17 @@ export interface Action {
   readonly idempotencyKey?: string;
   readonly intent?: string;
   readonly correlationId?: string;
+  /**
+   * How the action reached ARC: `api`, `mcp`, `cli`, `sdk` or `internal`.
+   *
+   * Recorded, never used to decide — but recorded so that *re-deciding* is
+   * faithful. A rule reading `$.context.source` is evaluated again when a held
+   * action is released and when a policy change is replayed against past
+   * traffic, and without this the re-evaluation would see no source and a rule
+   * naming one would stop matching. Optional because actions written before
+   * 2.2 do not carry it; such a rule still does not match for those.
+   */
+  readonly source?: string;
   readonly requestedAt: string;
 }
 

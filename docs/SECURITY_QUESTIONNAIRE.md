@@ -276,9 +276,10 @@ posture rather than your deployment. Ask us about it separately.
 
 | | |
 |---|---|
-| Unit and integration tests | 356 |
-| Security and reliability properties | 66, in a separate eval suite |
+| Unit and integration tests | 668 |
+| Security and reliability properties | 82, in a separate eval suite |
 | End-to-end demonstration | 14 steps, real gateway and real HTTP |
+| Independent adversarial harness | [arc-control-sandbox](https://github.com/aking-beep/arc-control-sandbox) — a synthetic enterprise we do not control, which found two authorization defects our own suite missed |
 | Threat model | [THREAT_MODEL.md](./THREAT_MODEL.md) |
 | Trust model, including what ARC does *not* protect against | [TRUST_MODEL.md](./TRUST_MODEL.md) |
 
@@ -289,6 +290,17 @@ authorization", "an assurance storage failure does not open the gateway".
 
 **Penetration testing?** Not yet performed. P1, and it is a service rather than
 a commit. We would rather say that than imply otherwise.
+
+**Has anything been found this way?** Yes, and the honest version is worth
+hearing. An independent harness driving ARC over HTTP found two authorization
+defects while our own suite was fully green: eight concurrent refunds sharing
+one idempotency key produced eight refunds, and an approved action released
+after a deny policy was published still executed. Both were ordering bugs that
+only appear under concurrency or across time, and neither was reachable by the
+sequential tests we had. They are fixed, with regression cover at both the
+in-process and HTTP levels, and the limits of each fix are stated in
+[releases/2.2.md](./releases/2.2.md). A green internal suite is evidence about
+the paths its authors thought to exercise, and nothing more.
 
 ---
 

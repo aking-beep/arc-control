@@ -62,7 +62,14 @@ export type AuditEventType =
   // able to show it performed.
   | 'operator.signed_in'
   | 'operator.signed_out'
-  | 'operator.sessions_revoked';
+  | 'operator.sessions_revoked'
+  // 2.2 — idempotency and release-time revalidation. A request that was
+  // collapsed into an earlier one, and a second look at current policy before
+  // a held action executes, are both things an incident review asks about:
+  // the first explains why eight calls produced one effect, the second is the
+  // only record that a stale approval was checked against today's rules.
+  | 'action.replayed'
+  | 'action.revalidated';
 
 export interface AuditRecord {
   readonly id: string;
