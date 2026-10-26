@@ -274,6 +274,416 @@ describe('rate limiting', () => {
   });
 });
 
+/**
+ * An approval is a grant from the past, and between the vote and the release
+ * an operator may have hit the kill switch or suspended the agent.
+ *
+ * These exist because that gap was real and shipped. `submit` gets its gates
+ * from `tools.resolve` and `agents.authenticate`; `resume` reached neither, so
+ * a held action executed after the tool was disabled and after the agent was
+ * suspended — making both controls a lie for exactly the actions most likely
+ * to matter, the ones a human had already been asked about.
+ */
+describe('releasing an approved action re-checks the gates', () => {
+  const HOLD: Policy = {
+    id: 'HOLD-001',
+    version: 1,
+    name: 'Hold refunds for a human',
+    enabled: true,
+    match: {},
+    rules: [
+      {
+        id: 'hold',
+        when: { always: true },
+        effect: 'REQUIRE_APPROVAL',
+        reason: 'needs a human',
+        approval: { approvers: ['role:finance-manager'], minApprovals: 1 },
+      },
+    ],
+    fallback: { effect: 'DENY', reason: 'no rule matched' },
+  };
+
+  /** Submits an action that is held, and votes it through. */
+  async function held(gateway: Gateway, apiKey: string): Promise<string> {
+    const result = await gateway.handle(apiKey, { tool: 'stripe.refund', parameters: { amount: 100 } });
+    assert.equal(result.outcome, 'pending_approval');
+
+    await gateway.approvals.vote({
+      approvalId: result.approvalId!,
+      approver: { identifier: 'cfo@example.com', roles: ['finance-manager'] },
+      vote: 'approve',
+    });
+
+    return result.approvalId!;
+  }
+
+  it('refuses to release an approved action whose tool has been disabled', async () => {
+    const { gateway, apiKey, connector, refund } = await setup({}, HOLD);
+    const approvalId = await held(gateway, apiKey);
+
+    await gateway.admin.setToolDisabled(refund.id, true, { identifier: 'ops@example.com' }, 'suspected runaway');
+
+    await assert.rejects(
+      () => gateway.resume(approvalId),
+      (error: ArcError) => error.code === 'tool_disabled',
+    );
+    assert.equal(connector.callCount('stripe.refund'), 0, 'the disabled tool must not have run');
+  });
+
+  it('refuses to release an approved action whose agent has been suspended', async () => {
+    const { gateway, apiKey, connector, agent } = await setup({}, HOLD);
+    const approvalId = await held(gateway, apiKey);
+
+    await gateway.admin.setAgentStatus(agent.id, 'suspended', { identifier: 'ops@example.com' });
+
+    await assert.rejects(
+      () => gateway.resume(approvalId),
+      (error: ArcError) => error.code === 'agent_suspended' && /is suspended and cannot act/.test(error.message),
+    );
+    assert.equal(connector.callCount('stripe.refund'), 0);
+  });
+
+  it('refuses to release an approved action whose agent has been retired', async () => {
+    const { gateway, apiKey, connector, agent } = await setup({}, HOLD);
+    const approvalId = await held(gateway, apiKey);
+
+    await gateway.admin.retireAgent(agent.id, { identifier: 'ops@example.com' });
+
+    await assert.rejects(
+      () => gateway.resume(approvalId),
+      (error: ArcError) => error.code === 'agent_suspended' && /is retired/.test(error.message),
+    );
+    assert.equal(connector.callCount('stripe.refund'), 0);
+  });
+
+  /**
+   * A refusal must not spend the grant. An operator who disables a tool, tries
+   * to release, then re-enables it should still have their approval — the
+   * alternative silently destroys a human decision.
+   */
+  it('does not consume the approval when it refuses', async () => {
+    const { gateway, apiKey, refund } = await setup({}, HOLD);
+    const approvalId = await held(gateway, apiKey);
+
+    await gateway.admin.setToolDisabled(refund.id, true, { identifier: 'ops@example.com' });
+    await assert.rejects(() => gateway.resume(approvalId));
+
+    const stillPending = await gateway.approvals.require(approvalId);
+    assert.equal(stillPending.consumedAt, undefined, 'the grant must not have been spent');
+
+    await gateway.admin.setToolDisabled(refund.id, false, { identifier: 'ops@example.com' });
+    assert.equal((await gateway.resume(approvalId)).outcome, 'executed', 'and it still works afterwards');
+  });
+
+  it('audits the refusal, so a release that did not happen is still recorded', async () => {
+    const { gateway, apiKey, refund } = await setup({}, HOLD);
+    const approvalId = await held(gateway, apiKey);
+    await gateway.admin.setToolDisabled(refund.id, true, { identifier: 'ops@example.com' });
+
+    await assert.rejects(() => gateway.resume(approvalId));
+
+    const audit = await gateway.audit.read({ limit: 50 });
+    const refusal = audit.find((record) => /refused at release/.test(record.summary));
+    assert.ok(refusal, 'the refusal is in the chain');
+    assert.equal(String(refusal!.data.code), 'tool_disabled');
+  });
+
+  it('still releases normally when nothing has changed', async () => {
+    const { gateway, apiKey, connector } = await setup({}, HOLD);
+    const approvalId = await held(gateway, apiKey);
+
+    assert.equal((await gateway.resume(approvalId)).outcome, 'executed');
+    assert.equal(connector.callCount('stripe.refund'), 1);
+  });
+});
+
+/**
+ * Retirement is meant to be final. The registry refused to revive a retired
+ * agent, but `Administration.setAgentStatus` reached for `agents.resume`,
+ * which sets the status unconditionally — so both the `/resume` and
+ * `/activate` API routes could undo a retirement.
+ */
+/**
+ * The release gates audit "an approved action was refused at release". That
+ * sentence has to be true when it is written.
+ *
+ * Checking the gates before spending the grant (above) created a precedence
+ * bug: `require` only checks that an approval exists, so a request that was
+ * never approved — still pending, rejected, expired, or already spent — hit
+ * the gate checks first. On a disabled tool the caller was told
+ * `tool_disabled` instead of `approval_required`, and the chain gained a
+ * record claiming an approved release was blocked when nothing had been
+ * approved. A false statement in an append-only log is worse than a confusing
+ * error, because ARC-AI-004 assesses approvals from exactly these records.
+ */
+describe('a grant that was never approved is refused on its own terms', () => {
+  const HOLD: Policy = {
+    id: 'HOLD-002',
+    version: 1,
+    name: 'Hold refunds for a human',
+    enabled: true,
+    match: {},
+    rules: [
+      {
+        id: 'hold',
+        when: { always: true },
+        effect: 'REQUIRE_APPROVAL',
+        reason: 'needs a human',
+        approval: { approvers: ['role:finance-manager'], minApprovals: 1 },
+      },
+    ],
+    fallback: { effect: 'DENY', reason: 'no rule matched' },
+  };
+
+  /** Raises a held action and leaves it unvoted. */
+  async function unvoted(gateway: Gateway, apiKey: string): Promise<string> {
+    const result = await gateway.handle(apiKey, { tool: 'stripe.refund', parameters: { amount: 100 } });
+    assert.equal(result.outcome, 'pending_approval');
+    return result.approvalId!;
+  }
+
+  it('reports the approval state, not the kill switch, for a pending grant', async () => {
+    const { gateway, apiKey, refund } = await setup({}, HOLD);
+    const approvalId = await unvoted(gateway, apiKey);
+
+    await gateway.admin.setToolDisabled(refund.id, true, { identifier: 'ops@example.com' });
+
+    await assert.rejects(
+      () => gateway.resume(approvalId),
+      (error: ArcError) => error.code === 'approval_required',
+    );
+  });
+
+  it('does not claim an approved release was blocked when nothing was approved', async () => {
+    const { gateway, apiKey, refund } = await setup({}, HOLD);
+    const approvalId = await unvoted(gateway, apiKey);
+    await gateway.admin.setToolDisabled(refund.id, true, { identifier: 'ops@example.com' });
+
+    await assert.rejects(() => gateway.resume(approvalId));
+
+    const audit = await gateway.audit.read({ limit: 50 });
+    assert.equal(
+      audit.filter((record) => /approved action was refused at release/.test(record.summary)).length,
+      0,
+      'the chain must not record a release of something never approved',
+    );
+  });
+
+  it('reports the rejection, not the kill switch, for a rejected grant', async () => {
+    const { gateway, apiKey, refund } = await setup({}, HOLD);
+    const approvalId = await unvoted(gateway, apiKey);
+
+    await gateway.approvals.vote({
+      approvalId,
+      approver: { identifier: 'cfo@example.com', roles: ['finance-manager'] },
+      vote: 'reject',
+    });
+    await gateway.admin.setToolDisabled(refund.id, true, { identifier: 'ops@example.com' });
+
+    await assert.rejects(
+      () => gateway.resume(approvalId),
+      (error: ArcError) => error.code === 'approval_rejected',
+    );
+  });
+
+  it('reports the conflict, not the kill switch, for a grant already spent', async () => {
+    const { gateway, apiKey, refund } = await setup({}, HOLD);
+    const approvalId = await unvoted(gateway, apiKey);
+
+    await gateway.approvals.vote({
+      approvalId,
+      approver: { identifier: 'cfo@example.com', roles: ['finance-manager'] },
+      vote: 'approve',
+    });
+    assert.equal((await gateway.resume(approvalId)).outcome, 'executed');
+
+    await gateway.admin.setToolDisabled(refund.id, true, { identifier: 'ops@example.com' });
+
+    await assert.rejects(
+      () => gateway.resume(approvalId),
+      (error: ArcError) => error.code === 'conflict',
+    );
+  });
+
+  /**
+   * And the gate still wins over a healthy grant, which is the whole point of
+   * the checks: a real approved release on a disabled tool must still refuse.
+   */
+  it('still refuses an approved grant when the tool is disabled', async () => {
+    const { gateway, apiKey, refund, connector } = await setup({}, HOLD);
+    const approvalId = await unvoted(gateway, apiKey);
+
+    await gateway.approvals.vote({
+      approvalId,
+      approver: { identifier: 'cfo@example.com', roles: ['finance-manager'] },
+      vote: 'approve',
+    });
+    await gateway.admin.setToolDisabled(refund.id, true, { identifier: 'ops@example.com' });
+
+    await assert.rejects(
+      () => gateway.resume(approvalId),
+      (error: ArcError) => error.code === 'tool_disabled',
+    );
+    assert.equal(connector.callCount('stripe.refund'), 0);
+
+    const audit = await gateway.audit.read({ limit: 50 });
+    assert.ok(
+      audit.some((record) => /approved action was refused at release/.test(record.summary)),
+      'and here the chain should say exactly that, because it is true',
+    );
+  });
+});
+
+/**
+ * `requireReleasable` exists so the release gates can run before the grant is
+ * spent. It must not *write* while doing that.
+ *
+ * `#expireIfDue` persists a pending-to-expired transition, and `put` does not
+ * take the approvals mutex. Called from a read path it could therefore
+ * overwrite a grant that a concurrent `vote` had just approved — turning a
+ * human's approval into `expired` and leaving the action permanently
+ * unreleasable. Which is the precise harm the release-gate ordering above was
+ * written to avoid, reintroduced one layer down.
+ *
+ * So expiry is judged from `expiresAt` on the read path and recorded only on
+ * the serialized one.
+ */
+describe('judging a closed approval window does not write', () => {
+  const HOLD: Policy = {
+    id: 'HOLD-003',
+    version: 1,
+    name: 'Hold refunds for a human',
+    enabled: true,
+    match: {},
+    rules: [
+      {
+        id: 'hold',
+        when: { always: true },
+        effect: 'REQUIRE_APPROVAL',
+        reason: 'needs a human',
+        approval: { approvers: ['role:finance-manager'], minApprovals: 1 },
+      },
+    ],
+    fallback: { effect: 'DENY', reason: 'no rule matched' },
+  };
+
+  /**
+   * Raises a held action and closes its window by rewriting `expiresAt`,
+   * leaving the stored status `pending` exactly as a real lapse would.
+   */
+  async function lapsed(gateway: Gateway, store: MemoryStore, apiKey: string): Promise<string> {
+    const result = await gateway.handle(apiKey, { tool: 'stripe.refund', parameters: { amount: 100 } });
+    assert.equal(result.outcome, 'pending_approval');
+
+    const approvalId = result.approvalId!;
+    const request = await store.approvals.get(approvalId);
+    assert.ok(request, 'the request was stored');
+    await store.approvals.put(approvalId, {
+      ...request,
+      expiresAt: new Date(Date.now() - 60_000).toISOString(),
+    });
+
+    return approvalId;
+  }
+
+  it('reports a lapsed window as expired', async () => {
+    const { gateway, store, apiKey } = await setup({}, HOLD);
+    const approvalId = await lapsed(gateway, store, apiKey);
+
+    await assert.rejects(
+      () => gateway.approvals.requireReleasable(approvalId),
+      (error: ArcError) => error.code === 'approval_expired',
+    );
+  });
+
+  it('leaves the stored request untouched, so a concurrent vote cannot be clobbered', async () => {
+    const { gateway, store, apiKey } = await setup({}, HOLD);
+    const approvalId = await lapsed(gateway, store, apiKey);
+
+    await assert.rejects(() => gateway.approvals.requireReleasable(approvalId));
+
+    const after = await store.approvals.get(approvalId);
+    assert.equal(after?.status, 'pending', 'the read path must not have written a status');
+    assert.equal(after?.resolvedAt, undefined, 'nor resolved it');
+  });
+
+  it('records the expiry on the serialized path, which holds the lock', async () => {
+    const { gateway, store, apiKey } = await setup({}, HOLD);
+    const approvalId = await lapsed(gateway, store, apiKey);
+
+    await assert.rejects(
+      () => gateway.approvals.consume(approvalId),
+      (error: ArcError) => error.code === 'approval_expired',
+    );
+    assert.equal((await store.approvals.get(approvalId))?.status, 'expired');
+  });
+
+  it('refuses to release it, without claiming an approved release was blocked', async () => {
+    const { gateway, store, apiKey, connector } = await setup({}, HOLD);
+    const approvalId = await lapsed(gateway, store, apiKey);
+
+    await assert.rejects(
+      () => gateway.resume(approvalId),
+      (error: ArcError) => error.code === 'approval_expired',
+    );
+    assert.equal(connector.callCount('stripe.refund'), 0);
+
+    const audit = await gateway.audit.read({ limit: 50 });
+    assert.equal(
+      audit.filter((record) => /approved action was refused at release/.test(record.summary)).length,
+      0,
+    );
+  });
+
+  /**
+   * A grant that a human approved *before* the window closed is still
+   * releasable. Only a `pending` request lapses — otherwise a slow operator
+   * would silently lose a decision that had already been made, which is the
+   * behaviour the engine had before and worth keeping deliberate.
+   */
+  it('still releases a grant approved before its window closed', async () => {
+    const { gateway, store, apiKey, connector } = await setup({}, HOLD);
+    const result = await gateway.handle(apiKey, { tool: 'stripe.refund', parameters: { amount: 100 } });
+    const approvalId = result.approvalId!;
+
+    await gateway.approvals.vote({
+      approvalId,
+      approver: { identifier: 'cfo@example.com', roles: ['finance-manager'] },
+      vote: 'approve',
+    });
+
+    const approved = await store.approvals.get(approvalId);
+    await store.approvals.put(approvalId, {
+      ...approved!,
+      expiresAt: new Date(Date.now() - 60_000).toISOString(),
+    });
+
+    assert.equal((await gateway.resume(approvalId)).outcome, 'executed');
+    assert.equal(connector.callCount('stripe.refund'), 1);
+  });
+});
+
+describe('retirement is final through every path', () => {
+  it('refuses to reactivate a retired agent through setAgentStatus', async () => {
+    const { gateway, agent } = await setup();
+    await gateway.admin.retireAgent(agent.id, { identifier: 'ops@example.com' });
+
+    await assert.rejects(
+      () => gateway.admin.setAgentStatus(agent.id, 'active', { identifier: 'ops@example.com' }),
+      /register a new agent rather than reviving it/,
+    );
+    assert.equal((await gateway.agents.require(agent.id)).status, 'retired');
+  });
+
+  it('still brings a merely suspended agent back', async () => {
+    const { gateway, agent, apiKey } = await setup();
+    await gateway.admin.setAgentStatus(agent.id, 'suspended', { identifier: 'ops@example.com' });
+    await gateway.admin.setAgentStatus(agent.id, 'active', { identifier: 'ops@example.com' });
+
+    assert.equal((await gateway.handle(apiKey, { tool: 'stripe.charge.read', parameters: {} })).outcome, 'executed');
+  });
+});
+
 describe('action risk classification', () => {
   it('is recorded on the evidence record', async () => {
     const { gateway, apiKey } = await setup();

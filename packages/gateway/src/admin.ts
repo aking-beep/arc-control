@@ -192,11 +192,21 @@ export class Administration {
     return issued;
   }
 
+  /**
+   * Suspends an agent, or brings one back.
+   *
+   * Going to `active` goes through `agents.activate`, not `agents.resume`.
+   * `resume` sets the status with no questions asked, so every caller of this
+   * method — the API's `/resume` and `/activate` routes among them — could
+   * revive a retired agent, which retirement is supposed to make impossible.
+   * Routing it through `activate` means the refusal lives in one place and
+   * no route can miss it.
+   */
   async setAgentStatus(agentId: string, status: 'active' | 'suspended', actor: Actor): Promise<Agent> {
     const agent =
       status === 'suspended'
         ? await this.#deps.agents.suspend(agentId)
-        : await this.#deps.agents.resume(agentId);
+        : await this.#deps.agents.activate(agentId);
 
     await this.#deps.audit.append({
       type: status === 'suspended' ? 'agent.suspended' : 'agent.resumed',

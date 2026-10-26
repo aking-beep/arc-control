@@ -319,3 +319,124 @@ describe('an assurance failure cannot open the gateway', () => {
     }
   });
 });
+
+/**
+ * An assessment window is the thing that makes a control status meaningful,
+ * so a run must refuse to record one it cannot describe. `new Date(junk)`
+ * yields an Invalid Date whose `toISOString()` throws or, worse, persists as
+ * `null` — leaving a completed run whose window reads as unbounded.
+ */
+describe('an assessment run refuses a window it cannot interpret', () => {
+  const BAD = ['not-a-date', '2026-13-45', 'yesterday'];
+
+  for (const value of BAD) {
+    it(`rejects from="${value}"`, async () => {
+      const h = await harness();
+      try {
+        const response = await fetch(`${h.base}/v1/assurance/runs`, {
+          method: 'POST',
+          headers: operator({ 'content-type': 'application/json' }),
+          body: JSON.stringify({ from: value }),
+        });
+
+        assert.equal(response.status, 400, `"${value}" must not be accepted as a date`);
+        const body = (await response.json()) as { error?: { message?: string } };
+        assert.match(String(body.error?.message), /from/);
+      } finally {
+        await h.close();
+      }
+    });
+  }
+
+  /**
+   * An empty string means the field was not supplied, which is different from
+   * supplying nonsense: the run falls back to its default window rather than
+   * refusing. Pinned so the distinction stays deliberate.
+   */
+  it('treats an empty string as an omitted bound, not as a bad date', async () => {
+    const h = await harness();
+    try {
+      const response = await fetch(`${h.base}/v1/assurance/runs`, {
+        method: 'POST',
+        headers: operator({ 'content-type': 'application/json' }),
+        body: JSON.stringify({ from: '' }),
+      });
+
+      assert.equal(response.status, 201);
+      const body = (await response.json()) as { run?: { window?: { from?: string; to?: string } } };
+      assert.ok(body.run?.window?.from, 'the default window still has a lower bound');
+      assert.ok(!Number.isNaN(Date.parse(String(body.run?.window?.from))), 'and it is a real date');
+    } finally {
+      await h.close();
+    }
+  });
+
+  it('still accepts a valid window and records exactly it', async () => {
+    const h = await harness();
+    try {
+      const from = '2026-01-01T00:00:00.000Z';
+      const to = '2026-02-01T00:00:00.000Z';
+      const response = await fetch(`${h.base}/v1/assurance/runs`, {
+        method: 'POST',
+        headers: operator({ 'content-type': 'application/json' }),
+        body: JSON.stringify({ from, to }),
+      });
+
+      assert.equal(response.status, 201);
+      const body = (await response.json()) as { run?: { window?: { from?: string; to?: string } } };
+      assert.equal(body.run?.window?.from, from);
+      assert.equal(body.run?.window?.to, to);
+    } finally {
+      await h.close();
+    }
+  });
+});
+
+/**
+ * Simulation answers "what would the policy have done?", so it has to build
+ * the same policy input the live path builds. It used to omit the risk
+ * classification entirely and hardcode `source: 'internal'`, which made a
+ * rule reading `$.action.risk.*` evaluate differently in the simulator than
+ * in production — the one thing a simulator must never do.
+ */
+describe('simulation sees the same action risk the live path sees', () => {
+  it('classifies the simulated action rather than omitting its risk', async () => {
+    const h = await harness();
+    try {
+      await h.api.gateway.admin.publishPolicy(
+        {
+          id: 'RISK-001',
+          version: 1,
+          name: 'Deny critical irreversible actions',
+          enabled: true,
+          match: { tools: ['stripe.*'] },
+          rules: [
+            {
+              id: 'risk-visible',
+              when: { eq: ['$.action.risk.severity', 'critical'] },
+              effect: 'DENY',
+              reason: 'the classifier rated this critical',
+            },
+          ],
+          fallback: { effect: 'ALLOW', reason: 'not critical' },
+        },
+        { identifier: 'ops@example.com', via: 'api' },
+      );
+
+      const response = await fetch(`${h.base}/v1/policies/simulate`, {
+        method: 'POST',
+        headers: operator({ 'content-type': 'application/json' }),
+        body: JSON.stringify({ candidate: { policyId: 'RISK-001' }, limit: 10 }),
+      });
+
+      assert.equal(response.status, 200);
+      const body = (await response.json()) as { limitations?: readonly string[] };
+      assert.ok(
+        (body.limitations ?? []).some((line) => /risk/i.test(line)),
+        'the replay must state how it reconstructed the risk classification',
+      );
+    } finally {
+      await h.close();
+    }
+  });
+});
