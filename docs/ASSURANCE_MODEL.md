@@ -152,6 +152,33 @@ live with, and never true are three different statements, and collapsing them
 makes the register useless for arguing about any of them. Every closure records
 who closed it, when, and why.
 
+### Remediation deadlines
+
+A finding carries an optional `dueAt`, and the summary reports five figures
+over the open ones: `open`, `overdue`, `dueSoon` (within seven days),
+`noDeadline` and `unassigned`.
+
+Computing `overdue` in the engine rather than leaving it to a reader is the
+whole point. The register stored the date and showed it on one detail page, so
+an operator would have had to read every row and do arithmetic against today
+to find out whether anything was late — which nobody does for thirty rows.
+
+Two distinctions keep the figure meaningful:
+
+**A finding with no deadline is not overdue.** It is unscheduled, and counted
+separately. If it counted as late the number would be alarming and useless; if
+it were silently fine, an organization could hide work by never setting a
+date. The console renders "none set" rather than a blank cell, because blank
+reads as fine.
+
+**A closed finding leaves the overdue queue**, even if it missed its date. One
+that was resolved late is history, not work, and a queue that stays
+permanently dirty trains people to ignore it.
+
+ARC surfaces deadlines; it does not notify anyone. There is no mail, webhook
+or ticket integration in this release, and the findings page says so in those
+words rather than letting a reader assume one exists.
+
 ---
 
 ## Attestations

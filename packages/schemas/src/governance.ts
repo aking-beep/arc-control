@@ -272,6 +272,62 @@ export const FINDING_SEVERITY_ORDER: readonly FindingSeverity[] = ['critical', '
 
 export type FindingStatus = 'open' | 'in_progress' | 'resolved' | 'accepted' | 'false_positive';
 
+/**
+ * How many days ahead of a deadline counts as "due soon".
+ *
+ * Here rather than in the engine because the console reports the same thing
+ * from the other side of the API and cannot import the engine. When each side
+ * kept its own notion of the boundary they drifted: the console rounded to
+ * whole days first, so a finding six hours past its deadline rendered as
+ * "due in 0d" in the very table the overdue filter had selected it for.
+ */
+export const DUE_SOON_DAYS = 7;
+
+const DAY_MS = 86_400_000;
+
+/**
+ * Where a deadline stands, as one value both sides derive the same way.
+ *
+ * `unscheduled` is deliberately not `overdue`: a finding with no deadline is a
+ * different gap, reported separately, because conflating them would let an
+ * organization hide work by simply never setting a date.
+ */
+export type DueState = 'unscheduled' | 'overdue' | 'due_soon' | 'scheduled' | 'unreadable';
+
+/** Still work: raised and not yet closed by any route. */
+export function isFindingOpen(finding: Pick<Finding, 'status'>): boolean {
+  return finding.status === 'open' || finding.status === 'in_progress';
+}
+
+/**
+ * Classifies a deadline on exact milliseconds.
+ *
+ * Callers may round for a label, but the classification itself must not round,
+ * or a row ends up contradicting the count beside it.
+ */
+export function dueState(dueAt: string | undefined, now: number): DueState {
+  if (dueAt === undefined || dueAt === '') return 'unscheduled';
+
+  const due = Date.parse(dueAt);
+  if (Number.isNaN(due)) return 'unreadable';
+  if (due < now) return 'overdue';
+  if (due <= now + DUE_SOON_DAYS * DAY_MS) return 'due_soon';
+  return 'scheduled';
+}
+
+/**
+ * Whole days between now and a deadline, truncated toward zero.
+ *
+ * Truncation rather than rounding, so a figure never overstates the gap: 23
+ * hours late is "0 days", which callers render as "overdue" without a count
+ * rather than as the "1d" that rounding would invent. The `+ 0` normalises
+ * the negative zero truncation produces for anything under a day late, which
+ * would otherwise reach a template as "-0".
+ */
+export function daysUntil(dueAt: string, now: number): number {
+  return Math.trunc((Date.parse(dueAt) - now) / DAY_MS) + 0;
+}
+
 export interface Finding {
   readonly id: string;
   readonly organizationId: string;

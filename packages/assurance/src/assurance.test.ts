@@ -585,6 +585,123 @@ describe('findings reconciliation', () => {
   });
 });
 
+describe('remediation deadlines', () => {
+  /**
+   * A due date that nothing surfaces is not a deadline. The register stored
+   * `dueAt` and showed it on one detail page; nothing computed whether
+   * anything was late, and the queue did not show the date at all — so an
+   * operator could not tell. These pin the computed state.
+   */
+  async function withFindings() {
+    const store = new MemoryStore();
+    await store.agents.put(agent().id, agent());
+    const engine = engineOn(store);
+    await engine.seedBaseline();
+    for (const id of ['ARC-AI-002', 'ARC-AI-003', 'ARC-AI-004', 'ARC-AI-005', 'ARC-AI-006', 'ARC-AI-007', 'ARC-AI-008', 'ARC-AI-009']) {
+      await engine.setControlEnabled(id, false, 'ops');
+    }
+    await engine.run({ requestedBy: 'ops' });
+    const [finding] = await engine.listFindings({ status: 'open' });
+    return { store, engine, finding: finding! };
+  }
+
+  const dayBefore = new Date(Date.parse(AT) - 3 * 86_400_000).toISOString();
+  const dayAfter = new Date(Date.parse(AT) + 3 * 86_400_000).toISOString();
+  const wellAfter = new Date(Date.parse(AT) + 60 * 86_400_000).toISOString();
+
+  it('counts a finding past its deadline as overdue', async () => {
+    const { engine, finding } = await withFindings();
+    await engine.updateFinding(finding.id, { dueAt: dayBefore }, 'ops');
+
+    const summary = await engine.summary();
+    assert.equal(summary.remediation.open, 1);
+    assert.equal(summary.remediation.overdue, 1);
+    assert.equal(summary.remediation.dueSoon, 0);
+  });
+
+  it('counts a finding due within a week as due soon, not overdue', async () => {
+    const { engine, finding } = await withFindings();
+    await engine.updateFinding(finding.id, { dueAt: dayAfter }, 'ops');
+
+    const summary = await engine.summary();
+    assert.equal(summary.remediation.overdue, 0);
+    assert.equal(summary.remediation.dueSoon, 1);
+  });
+
+  it('counts a distant deadline as neither', async () => {
+    const { engine, finding } = await withFindings();
+    await engine.updateFinding(finding.id, { dueAt: wellAfter }, 'ops');
+
+    const summary = await engine.summary();
+    assert.equal(summary.remediation.overdue, 0);
+    assert.equal(summary.remediation.dueSoon, 0);
+    assert.equal(summary.remediation.noDeadline, 0);
+  });
+
+  /**
+   * The distinction that stops the figure being gameable. If an unscheduled
+   * finding counted as overdue the number would be alarming and useless; if
+   * it were silently fine, an organization could hide work by never setting a
+   * date. It is counted separately.
+   */
+  it('does not call an unscheduled finding overdue, but does report it', async () => {
+    const { engine } = await withFindings();
+
+    const summary = await engine.summary();
+    assert.equal(summary.remediation.overdue, 0, 'no deadline means not late');
+    assert.equal(summary.remediation.noDeadline, 1, 'but it is reported as unscheduled');
+  });
+
+  it('reports an open finding with no owner as unassigned', async () => {
+    const { engine, finding } = await withFindings();
+    assert.equal((await engine.summary()).remediation.unassigned, 1);
+
+    await engine.updateFinding(finding.id, { owner: 'ops@example.com' }, 'ops');
+    assert.equal((await engine.summary()).remediation.unassigned, 0);
+  });
+
+  it('filters the queue to overdue findings', async () => {
+    const { engine, finding } = await withFindings();
+    assert.deepEqual(await engine.listFindings({ overdue: true }), [], 'nothing is late yet');
+
+    await engine.updateFinding(finding.id, { dueAt: dayBefore }, 'ops');
+    const late = await engine.listFindings({ overdue: true });
+    assert.equal(late.length, 1);
+    assert.equal(late[0]!.id, finding.id);
+  });
+
+  /**
+   * A resolved finding that happened to miss its date is history, not work.
+   * Leaving it in the overdue queue would make the queue permanently dirty
+   * and train people to ignore it.
+   */
+  it('drops a finding from the overdue queue once it is closed', async () => {
+    const { engine, finding } = await withFindings();
+    await engine.updateFinding(finding.id, { dueAt: dayBefore }, 'ops');
+    assert.equal((await engine.listFindings({ overdue: true })).length, 1);
+
+    await engine.resolveFinding(finding.id, { status: 'resolved', by: 'ops', note: 'Governance recorded.' });
+
+    assert.deepEqual(await engine.listFindings({ overdue: true }), []);
+    assert.equal((await engine.summary()).remediation.overdue, 0);
+    assert.equal((await engine.summary()).remediation.open, 0);
+  });
+
+  it('keeps an accepted finding out of the remediation figures too', async () => {
+    const { engine, finding } = await withFindings();
+    await engine.updateFinding(finding.id, { dueAt: dayBefore }, 'ops');
+    await engine.resolveFinding(finding.id, {
+      status: 'accepted',
+      by: 'ciso@example.com',
+      note: 'Dormant test agent, scheduled for retirement.',
+    });
+
+    const summary = await engine.summary();
+    assert.equal(summary.remediation.open, 0, 'accepted is a decision, not outstanding work');
+    assert.equal(summary.remediation.overdue, 0);
+  });
+});
+
 describe('the risk register', () => {
   it('rates inherent risk but never computes residual', async () => {
     const store = new MemoryStore();
