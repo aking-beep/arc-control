@@ -51,6 +51,10 @@ describe('ArcError status mapping', () => {
       approval_rejected: 403,
       execution_failed: 502,
       connector_unavailable: 503,
+      // An outage, not a credential problem: ARC could not ask the provider
+      // who someone is. 503 so a load balancer and an on-call rota treat it
+      // as the infrastructure failure it is, rather than as a user error.
+      identity_provider_unavailable: 503,
       not_found: 404,
       conflict: 409,
       invalid_request: 400,

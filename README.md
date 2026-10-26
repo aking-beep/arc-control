@@ -450,21 +450,25 @@ governance layer that evidences it. 356 tests, 66 asserted properties, a
 | | |
 |---|---|
 | Shipped | Gateway, policy engine, approvals, evidence, hash-chained audit, MCP security, agent lifecycle, credential inventory, kill switches, rate limits, risk classification, policy history and simulation, nine ARC-AI controls, risk register, findings, coverage analysis, NIST AI RMF mappings, offline-verifiable evidence bundles, a fifteen-section console, 35 assurance routes, SDK and CLI |
-| **Not** shipped | SSO and RBAC — 2.0 still uses a single operator token and takes identity from a header, so an approval proves the workflow ran and **not who ran it**; PostgreSQL and HA; OpenTelemetry and SIEM export; external anchoring as a scheduled job; penetration testing; a Python SDK |
+| Added in 2.1 | OpenID Connect single sign-on with server-side sessions and roles from verified claims; the provenance of every recorded identity; outbound notification with durable delivery records; an unattended scheduler; an append-only store with flat per-write cost; configuration that refuses to start unsafely; verified backups; a readiness probe |
+| **Not** shipped | More than one writer — `transact` is an in-process mutex, so no HA and no multi-region; PostgreSQL; per-object RBAC; OpenTelemetry and SIEM export; external anchoring as a scheduled job; email or paging for notifications; penetration testing; a Python SDK |
 
 Two limitations worth knowing before you evaluate anything else:
 
-**Operator identity is not authenticated.** Anyone holding the operator token
-can claim any identity. Put the console behind an identity-aware proxy. The
-product says this on its own Settings page and in every evidence bundle.
+**One process may write.** `transact` is an in-process mutex, so two replicas
+would break the single-use approval guarantee and the audit chain's
+single-writer assumption. Run exactly one writer; a restart is a brief window
+in which enforcement denies rather than mis-authorizes. A Postgres-backed store
+is the upgrade path and is not built.
 
 **ARC-AI-006 does not pass by default.** The audit chain verifies internally,
 but walking records cannot detect truncation, and ARC checking its own log
 against its own copy of the head proves nothing to a reader who does not trust
 ARC. Anchor the head outside ARC and it passes. This is deliberate.
 
-[releases/2.0.md](./docs/releases/2.0.md) states the release boundary —
-everything that shipped, and everything deferred with the reason.
+[releases/2.1.md](./docs/releases/2.1.md) states the current release boundary —
+everything that shipped, and everything deferred with the reason;
+[releases/2.0.md](./docs/releases/2.0.md) has the previous one.
 [ROADMAP.md](./docs/ROADMAP.md) has the longer phasing.
 
 ---

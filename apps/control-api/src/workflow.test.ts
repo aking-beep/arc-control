@@ -110,7 +110,7 @@ describe('a customer workflow, end to end through the HTTP connector', () => {
     vendorPort = await vendor.listen();
 
     store = new MemoryStore();
-    api = createControlApi({ store, operatorToken: TOKEN });
+    api = createControlApi({ store, operatorToken: TOKEN, schedule: false, consoleUrl: 'https://arc.example.com' });
 
     // The allowlist names the stub explicitly. An empty allowlist refuses
     // everything, which is the behaviour a misconfigured deployment gets.
@@ -308,6 +308,70 @@ describe('a customer workflow, end to end through the HTTP connector', () => {
     assert.equal(second.outcome, 'executed', 'the replay returns the original decision');
     assert.equal(second.actionId, first.actionId, 'and the same action, not a new one');
     assert.equal(vendor.calls.length, before, 'the vendor was not called a second time');
+  });
+
+  /**
+   * The 2.0 console said, in those words, that the page was the notification.
+   * For a workflow with a human in it that is the difference between a control
+   * and an obstacle: a refund held for an approval nobody hears about is a
+   * refund that does not happen.
+   */
+  it('tells somebody when an action is held for a human', async () => {
+    const received: Record<string, unknown>[] = [];
+    const hook = createServer((request, response) => {
+      const chunks: Buffer[] = [];
+      request.on('data', (chunk: Buffer) => chunks.push(chunk));
+      request.on('end', () => {
+        received.push(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') as Record<string, unknown>);
+        response.writeHead(200);
+        response.end();
+      });
+    });
+
+    const port = await new Promise<number>((resolve) => {
+      hook.listen(0, '127.0.0.1', () => {
+        const address = hook.address();
+        resolve(typeof address === 'object' && address ? address.port : 0);
+      });
+    });
+
+    try {
+      await api.notifier.addChannel({ name: 'ops', url: `http://127.0.0.1:${String(port)}/hook` });
+
+      const decision = await refund(26_000);
+      assert.equal(decision.outcome, 'pending_approval');
+
+      assert.equal(received.length, 1, 'exactly one notification went out');
+      const sent = received[0]!;
+      assert.equal(sent.event, 'approval.requested');
+      assert.match(String(sent.summary), /needs a human/);
+      assert.equal(sent.url, `https://arc.example.com/approvals/${String(decision.approvalId)}`);
+
+      // The channel did not ask for parameters, so the amount does not leave
+      // the deployment: a chat workspace has its own membership and retention.
+      assert.ok(!('parameters' in sent), 'parameters are withheld by default');
+      assert.ok(!JSON.stringify(sent).includes('26000'));
+
+      const deliveries = await api.notifier.deliveries(10);
+      assert.equal(deliveries[0]?.status, 'delivered', 'and the delivery is recorded');
+    } finally {
+      await new Promise<void>((resolve) => hook.close(() => resolve()));
+    }
+  });
+
+  /**
+   * A webhook that is down must not turn a correctly held action into an error
+   * for the agent. The action is held either way; the record carries the
+   * failure so an operator can see nobody was told.
+   */
+  it('still holds the action when nobody could be told', async () => {
+    await api.notifier.addChannel({ name: 'broken', url: 'https://127.0.0.1:1/hook' });
+
+    const decision = await refund(27_000);
+    assert.equal(decision.outcome, 'pending_approval', 'enforcement is unaffected by a broken channel');
+
+    const failures = await api.notifier.failures();
+    assert.ok(failures.length >= 1, 'and the undelivered notification is visible');
   });
 
   /**

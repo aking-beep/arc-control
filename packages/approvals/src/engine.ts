@@ -1,5 +1,6 @@
 import {
   ArcError,
+  assuranceOf,
   newId,
   type Action,
   type ApprovalRequest,
@@ -7,6 +8,7 @@ import {
   type ApprovalStatus,
   type ApprovalVote,
   type Decision,
+  type IdentityAssurance,
 } from '@arc-control/schemas';
 import type { ControlStore } from '@arc-control/store';
 
@@ -20,6 +22,19 @@ export interface ApprovalEngineOptions {
 export interface Approver {
   readonly identifier: string;
   readonly roles: readonly string[];
+  /**
+   * How this approver's identity was established.
+   *
+   * Carried onto the vote so the record states what it can support. Optional
+   * so a caller that has not been updated still compiles — and such a caller
+   * is recorded as `claimed`, which is the truth about a call site that cannot
+   * say where its name came from.
+   */
+  readonly assurance?: IdentityAssurance;
+  /** The issuer that vouched for them, when authenticated. */
+  readonly issuer?: string;
+  /** The provider's stable subject, which survives an email change. */
+  readonly subject?: string;
 }
 
 /**
@@ -142,7 +157,7 @@ export class ApprovalEngine {
         });
       }
 
-      if (request.votes.some((cast) => cast.approver === args.approver.identifier)) {
+      if (request.votes.some((cast) => sameIdentity(cast.approver, args.approver.identifier))) {
         throw new ArcError('conflict', `${args.approver.identifier} has already voted on this request`, {
           details: { approvalId: request.id },
         });
@@ -153,6 +168,12 @@ export class ApprovalEngine {
         vote: args.vote,
         ...(args.comment ? { comment: args.comment } : {}),
         votedAt: this.#now().toISOString(),
+        // Recorded at the moment of the vote, because it is a fact about this
+        // request and cannot be reconstructed later: the deployment's auth
+        // configuration may have changed by the time anyone reads the record.
+        assurance: assuranceOf(args.approver),
+        ...(args.approver.issuer ? { issuer: args.approver.issuer } : {}),
+        ...(args.approver.subject ? { subject: args.approver.subject } : {}),
       };
 
       const votes = [...request.votes, vote];
@@ -218,6 +239,58 @@ export class ApprovalEngine {
     return request;
   }
 
+  /**
+   * Expires every pending request whose window has closed.
+   *
+   * Until 2.1 a lapsed request only became `expired` when something happened
+   * to touch it, so an abandoned approval sat in the store reading `pending`
+   * indefinitely — and the console's queue showed it as live work. The
+   * scheduler calls this so the state of the queue is a fact rather than an
+   * artefact of who last looked at it.
+   *
+   * Each transition goes through the approvals lock via `transact`, and the
+   * request is re-read inside it. The previous implementation wrote through
+   * `#expireIfDue` without the lock, which is the same defect a review caught
+   * in the release path: a stale `pending` snapshot could overwrite a grant a
+   * concurrent `vote` had just approved, destroying a human decision. Reading
+   * outside a lock is fine; writing what you read is not.
+   */
+  async expireDue(): Promise<readonly ApprovalRequest[]> {
+    const now = this.#now().getTime();
+    const candidates = await this.#store.approvals.filter(
+      (request) => request.status === 'pending' && Date.parse(request.expiresAt) <= now,
+    );
+
+    const expired: ApprovalRequest[] = [];
+    for (const candidate of candidates) {
+      const result = await this.#store.approvals.transact(async () => {
+        // Re-read inside the lock: a vote may have resolved it since the scan.
+        const current = await this.#store.approvals.get(candidate.id);
+        if (!current || current.status !== 'pending') return undefined;
+        if (Date.parse(current.expiresAt) > this.#now().getTime()) return undefined;
+        return this.#expireIfDue(current);
+      });
+
+      if (result !== undefined && result.status === 'expired') expired.push(result);
+    }
+
+    return expired;
+  }
+
+  /**
+   * Pending requests whose window closes within `withinMs`.
+   *
+   * For warning somebody before the decision is lost rather than after.
+   */
+  async expiringSoon(withinMs: number): Promise<readonly ApprovalRequest[]> {
+    const now = this.#now().getTime();
+    return this.#store.approvals.filter((request) => {
+      if (request.status !== 'pending') return false;
+      const expiresAt = Date.parse(request.expiresAt);
+      return expiresAt > now && expiresAt <= now + withinMs;
+    });
+  }
+
   async cancel(approvalId: string, reason: string): Promise<ApprovalRequest> {
     return this.#store.approvals.transact(async () => {
       const request = await this.require(approvalId);
@@ -235,17 +308,6 @@ export class ApprovalEngine {
     });
   }
 
-  /** Expires every pending request past its window. Safe to call repeatedly. */
-  async expireDue(): Promise<number> {
-    const pending = await this.#store.approvals.filter((request) => request.status === 'pending');
-    let expired = 0;
-    for (const request of pending) {
-      const updated = await this.#expireIfDue(request);
-      if (updated.status === 'expired') expired += 1;
-    }
-    return expired;
-  }
-
   /**
    * Whether this human may vote on this request.
    *
@@ -255,16 +317,16 @@ export class ApprovalEngine {
    * the point of the control is that nobody approves their own agent's work.
    */
   canApprove(request: ApprovalRequest, approver: Approver): boolean {
-    if (request.requirement.requireSeparationOfDuties && approver.identifier === request.agentOwner) {
+    if (request.requirement.requireSeparationOfDuties && sameIdentity(approver.identifier, request.agentOwner)) {
       return false;
     }
 
     return request.requirement.approvers.some((selector) => {
       if (selector === '*') return true;
-      if (selector === 'owner') return approver.identifier === request.agentOwner;
+      if (selector === 'owner') return sameIdentity(approver.identifier, request.agentOwner);
       if (selector.startsWith('role:')) return approver.roles.includes(selector.slice('role:'.length));
-      if (selector.startsWith('user:')) return approver.identifier === selector.slice('user:'.length);
-      return approver.identifier === selector;
+      if (selector.startsWith('user:')) return sameIdentity(approver.identifier, selector.slice('user:'.length));
+      return sameIdentity(approver.identifier, selector);
     });
   }
 
@@ -324,4 +386,26 @@ function assertReleasable(request: ApprovalRequest, now: number): void {
         details: { approvalId: request.id },
       });
   }
+}
+
+/**
+ * Whether two recorded identities are the same person.
+ *
+ * Compared without regard to case, because the identity an operator arrives
+ * with is normalised and the identity written into a policy or an agent's
+ * owner field is whatever somebody typed. `identifierFor` lowercases a
+ * verified email and the trusted-proxy path does the same, so an agent
+ * registered to `Ops@Example.com` was not matched by an approver arriving as
+ * `ops@example.com` — which meant separation of duties silently failed to bar
+ * the owner, and an `owner` selector silently failed to admit them. One of
+ * those is a bypass and the other is a lockout; both came from the same
+ * comparison.
+ *
+ * Deliberately not Unicode case folding. These are email addresses and
+ * provider subjects, and an ASCII lowercase is what every identity provider
+ * in this range normalises to; a locale-sensitive fold would introduce a
+ * different class of mismatch than the one it fixed.
+ */
+function sameIdentity(left: string, right: string): boolean {
+  return left.toLowerCase() === right.toLowerCase();
 }

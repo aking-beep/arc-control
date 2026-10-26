@@ -56,10 +56,18 @@ penetration testing (a service, not a commit); ISO 42001 and EU AI Act
 mappings (publishing an unreviewed mapping for a framework with legal
 consequences invites someone to rely on it).
 
-**The next release is the enterprise identity release.** SSO, RBAC and
-separation of duties across the governance workflow, in that order, because
-each depends on the one before it. Everything else in the P1 list is smaller
-and can follow a design partner's priorities.
+**The identity release shipped as 2.1.** Single sign-on, server-side sessions,
+roles from verified claims, and the provenance of every recorded name — see
+`docs/releases/2.1.md`. Separation of duties across the wider governance
+workflow (who may change a control, who may accept a risk) is still coarse:
+policy approver selectors gate approvals, and there is no per-object
+permission model.
+
+**What a design partner should ask for next**, in the order we would build it:
+a Postgres-backed store with a cross-process lock, which is the only thing
+standing between this and more than one writer; per-object permissions; and an
+on-call path for notifications, which today reach a webhook or a chat
+workspace and no further.
 
 ---
 

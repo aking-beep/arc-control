@@ -16,6 +16,9 @@ import type {
   ExecutionAttempt,
   Finding,
   HumanAttestation,
+  NotificationChannel,
+  NotificationDelivery,
+  OperatorSession,
   Policy,
   PolicyVersionRecord,
   Risk,
@@ -52,6 +55,9 @@ export class FileStore implements ControlStore {
   readonly findings: Collection<Finding>;
   readonly attestations: Collection<HumanAttestation>;
   readonly policyVersions: Collection<PolicyVersionRecord>;
+  readonly operatorSessions: Collection<OperatorSession>;
+  readonly notificationChannels: Collection<NotificationChannel>;
+  readonly notificationDeliveries: Collection<NotificationDelivery>;
 
   private constructor(
     private readonly directory: string,
@@ -72,6 +78,9 @@ export class FileStore implements ControlStore {
       findings: Collection<Finding>;
       attestations: Collection<HumanAttestation>;
       policyVersions: Collection<PolicyVersionRecord>;
+      operatorSessions: Collection<OperatorSession>;
+      notificationChannels: Collection<NotificationChannel>;
+      notificationDeliveries: Collection<NotificationDelivery>;
     },
     audit: AuditLogStore,
   ) {
@@ -91,12 +100,25 @@ export class FileStore implements ControlStore {
     this.findings = collections.findings;
     this.attestations = collections.attestations;
     this.policyVersions = collections.policyVersions;
+    this.operatorSessions = collections.operatorSessions;
+    this.notificationChannels = collections.notificationChannels;
+    this.notificationDeliveries = collections.notificationDeliveries;
     this.audit = audit;
   }
 
   /** Opens a store, creating the directory and replaying any existing data. */
-  static async open(directory: string): Promise<FileStore> {
-    await mkdir(directory, { recursive: true });
+  /**
+   * Opens a data directory.
+   *
+   * `readOnly` skips the version stamp and the directory creation, so reading
+   * a directory does not modify it. That matters for exactly one reason and it
+   * is the product's central claim: verifying evidence must not alter it. An
+   * auditor checking a backup, or `arc backup verify` checking its own
+   * digests, would otherwise invalidate the thing it was asked to check —
+   * which is how the first version of that command failed.
+   */
+  static async open(directory: string, options: { readonly readOnly?: boolean } = {}): Promise<FileStore> {
+    if (options.readOnly !== true) await mkdir(directory, { recursive: true });
 
     const auditPath = join(directory, 'audit.jsonl');
     const headPath = join(directory, 'audit.head.json');
@@ -131,6 +153,9 @@ export class FileStore implements ControlStore {
       findings: await openCollection<Finding>(directory, 'findings'),
       attestations: await openCollection<HumanAttestation>(directory, 'attestations'),
       policyVersions: await openCollection<PolicyVersionRecord>(directory, 'policy-versions'),
+      operatorSessions: await openCollection<OperatorSession>(directory, 'operator-sessions'),
+      notificationChannels: await openCollection<NotificationChannel>(directory, 'notification-channels'),
+      notificationDeliveries: await openCollection<NotificationDelivery>(directory, 'notification-deliveries'),
     };
 
     // Stamp the directory with the model version. A 1.x directory has no
@@ -139,7 +164,7 @@ export class FileStore implements ControlStore {
     // optional, and nothing is rewritten. That is the entire migration, and it
     // is reversible — a 1.x build reading this directory ignores the files it
     // does not know about.
-    await stampSchemaVersion(directory);
+    if (options.readOnly !== true) await stampSchemaVersion(directory);
 
     return new FileStore(directory, collections, audit);
   }
@@ -192,8 +217,21 @@ export class FileStore implements ControlStore {
     }
   }
 
+  /**
+   * Waits for every queued append to reach disk.
+   *
+   * This used to be a no-op, which was true while each write rewrote the whole
+   * file synchronously. Writes are now queued, so closing without draining the
+   * queue would drop whatever had not been written yet — and a process that
+   * closes immediately after recording an action is the normal shape of a CLI
+   * command.
+   */
   async close(): Promise<void> {
-    /* every write is already flushed */
+    await Promise.all(
+      Object.values(this as unknown as Record<string, unknown>)
+        .filter((value): value is { flushed: () => Promise<void> } => isPersisted(value))
+        .map((collection) => collection.flushed()),
+    );
   }
 }
 
@@ -220,15 +258,66 @@ async function stampSchemaVersion(directory: string): Promise<void> {
   await rename(temporary, path);
 }
 
-/** A collection that persists a full snapshot after each mutation. */
+/**
+ * A collection persisted as an append-only log, compacted when it earns it.
+ *
+ * The 2.0 implementation rewrote the whole file after every mutation. That is
+ * fine for agents and policies, which number in the tens, and wrong for
+ * actions and evidence, which grow for as long as the deployment runs: the
+ * cost of recording the ten-thousandth action was proportional to the nine
+ * thousand, nine hundred and ninety-nine before it. A customer doing a few
+ * hundred actions a day would have watched writes get slower every week and
+ * had no way to tell why.
+ *
+ * So a write appends one line. A put appends the record exactly as the old
+ * format stored it, which is why existing data directories load unchanged and
+ * a compacted file is still readable by the 2.0 reader. Only a delete needs an
+ * envelope, since "this record is gone" cannot be expressed by a record.
+ *
+ * Replaying the log on open is last-write-wins in file order. Compaction
+ * rewrites the live set as a plain snapshot once the log has accumulated more
+ * dead weight than live records, which bounds both the file size and the time
+ * to open it.
+ */
+
+/** Whether a value is one of this store's append-queue-backed collections. */
+function isPersisted(value: unknown): value is { flushed: () => Promise<void> } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { flushed?: unknown }).flushed === 'function'
+  );
+}
+
+/** Marks a deletion in the log. ARC records never carry this key. */
+const DELETE_MARKER = '$arcDeleted';
+
+interface DeleteEntry {
+  readonly [DELETE_MARKER]: true;
+  readonly id: string;
+}
+
+function isDeleteEntry(value: unknown): value is DeleteEntry {
+  return typeof value === 'object' && value !== null && DELETE_MARKER in value;
+}
+
+/** Smallest log worth compacting, so a tiny collection is never rewritten. */
+const MIN_COMPACT_ENTRIES = 64;
+
 class PersistedCollection<T extends { id: string }> implements Collection<T> {
   readonly #inner = new MemoryCollection<T>();
+  /** Lines in the file, live and dead, since the last compaction. */
+  #entries: number;
+  /** Serializes appends so two writes cannot interleave a partial line. */
+  #writing: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly path: string,
     seed: readonly T[],
+    entries: number,
   ) {
     for (const item of seed) void this.#inner.put(item.id, item);
+    this.#entries = entries;
   }
 
   get(id: string): Promise<T | undefined> {
@@ -237,13 +326,13 @@ class PersistedCollection<T extends { id: string }> implements Collection<T> {
 
   async put(id: string, value: T): Promise<T> {
     await this.#inner.put(id, value);
-    await this.#flush();
+    await this.#append(JSON.stringify(value));
     return value;
   }
 
   async delete(id: string): Promise<boolean> {
     const deleted = await this.#inner.delete(id);
-    if (deleted) await this.#flush();
+    if (deleted) await this.#append(JSON.stringify({ [DELETE_MARKER]: true, id } satisfies DeleteEntry));
     return deleted;
   }
 
@@ -267,19 +356,84 @@ class PersistedCollection<T extends { id: string }> implements Collection<T> {
     return this.#inner.transact(critical);
   }
 
-  async #flush(): Promise<void> {
+  /**
+   * Appends one line, then compacts if the log has grown past twice the live
+   * set.
+   *
+   * Appends are chained rather than issued concurrently: `O_APPEND` is atomic
+   * per write on POSIX, but compaction renames the file underneath, and a
+   * write racing that rename is a lost record.
+   */
+  async #append(line: string): Promise<void> {
+    const write = async (): Promise<void> => {
+      await appendFile(this.path, `${line}\n`, 'utf8');
+      this.#entries += 1;
+
+      const live = await this.#inner.count();
+      if (this.#entries > MIN_COMPACT_ENTRIES && this.#entries > live * 2) {
+        await this.#compact();
+      }
+    };
+
+    // Runs after the previous write whether that one succeeded or failed, and
+    // the queue tail never holds a rejection. Chaining with a plain `.then`
+    // would leave the tail rejected after one failed write, so every later
+    // write would be skipped without being attempted — a full disk for one
+    // moment would silently stop persisting anything until a restart.
+    const queued = this.#writing.then(write, write);
+    this.#writing = queued.then(
+      () => undefined,
+      () => undefined,
+    );
+
+    return queued;
+  }
+
+  /** Rewrites the live set as a snapshot, atomically. */
+  async #compact(): Promise<void> {
     const items = await this.#inner.list();
     const body = items.map((item) => JSON.stringify(item)).join('\n');
     const temporary = `${this.path}.tmp`;
     await writeFile(temporary, body ? `${body}\n` : '', 'utf8');
     await rename(temporary, this.path);
+    this.#entries = items.length;
+  }
+
+  /** Compacts now, whatever the log looks like. Used on close and by tests. */
+  async compact(): Promise<void> {
+    const queued = this.#writing.then(
+      () => this.#compact(),
+      () => this.#compact(),
+    );
+    this.#writing = queued.then(
+      () => undefined,
+      () => undefined,
+    );
+    return queued;
+  }
+
+  /** Waits for every queued append to reach the file. */
+  async flushed(): Promise<void> {
+    return this.#writing;
   }
 }
 
 async function openCollection<T extends { id: string }>(directory: string, name: string): Promise<Collection<T>> {
   const path = join(directory, `${name}.jsonl`);
-  const seed = await readJsonLines<T>(path);
-  return new PersistedCollection<T>(path, seed);
+  const entries = await readJsonLines<T | DeleteEntry>(path);
+
+  // Last write wins, in file order. A record written twice keeps the position
+  // of its first appearance, which is the order the live map would have had.
+  const live = new Map<string, T>();
+  for (const entry of entries) {
+    if (isDeleteEntry(entry)) {
+      live.delete(entry.id);
+      continue;
+    }
+    live.set(entry.id, entry as T);
+  }
+
+  return new PersistedCollection<T>(path, [...live.values()], entries.length);
 }
 
 /** Reads a JSONL file, tolerating absence and skipping an incomplete trailing line. */

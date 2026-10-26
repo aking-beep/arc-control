@@ -46,11 +46,65 @@ spec:
               value: "8787"
             - name: ARC_DATA_DIR
               value: /var/lib/arc-control
+            # Where people reach the console. Notifications use it to say
+            # where to act, and a completed sign-in uses it to send the
+            # operator back where they came from — without it they land here,
+            # on an API that serves JSON.
+            - name: ARC_CONSOLE_URL
+              value: https://arc-control.example.com
+            # Assessments, approval expiry and sweeps run unattended. Off
+            # means an approval queue can rot with nobody told.
+            - name: ARC_SCHEDULE
+              value: "true"
+            # --- Single sign-on -------------------------------------------
+            #
+            # Fill these in and operators sign in individually: the ID token's
+            # signature is verified against the provider's published keys, and
+            # roles come from a verified claim rather than from a request. ARC
+            # Control then refuses the shared token below, so a deployment
+            # cannot hold the door open behind its own provider.
+            #
+            # The redirect URI is the address a *browser* reaches, and must be
+            # registered with the provider exactly as written.
+            - name: ARC_OIDC_ISSUER
+              value: ""
+            - name: ARC_OIDC_CLIENT_ID
+              value: ""
+            - name: ARC_OIDC_REDIRECT_URI
+              value: https://arc-control.example.com/auth/callback
+            # Without a role mapping every operator signs in with no roles,
+            # and so can approve nothing.
+            - name: ARC_OIDC_ROLE_CLAIM
+              value: groups
+            - name: ARC_OIDC_ROLE_MAP
+              value: arc-finance=finance-manager,arc-oncall=platform-oncall
+            - name: ARC_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: arc-control-operator
+                  key: oidc-client-secret
+                  optional: true
+            # Signs the server-side session cookie. The browser holds only the
+            # session id; the session itself never leaves the deployment.
+            - name: ARC_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: arc-control-operator
+                  key: session-secret
+                  optional: true
+            # Terminate TLS in front of this Service and leave this true, so
+            # the session cookie is never sent in clear.
+            - name: ARC_SECURE_COOKIES
+              value: "true"
+            # --- The fallback ---------------------------------------------
+            #
+            # Accepted only while no provider above is configured.
             - name: ARC_OPERATOR_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: arc-control-operator
                   key: operator-token
+                  optional: true
           volumeMounts:
             - name: data
               mountPath: /var/lib/arc-control

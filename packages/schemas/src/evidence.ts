@@ -9,6 +9,8 @@ import type { ActionRiskAssessment } from './classification.js';
  * Evidence is self-contained on purpose: it can be exported to an auditor
  * without granting access to ARC Control itself.
  */
+import type { IdentityAssurance } from './operator.js';
+
 export interface EvidenceRecord {
   /** `arc_ev_...` — the identifier quoted in a denial message or a compliance export. */
   readonly id: string;
@@ -58,7 +60,20 @@ export interface EvidenceRecord {
     readonly status: string;
     readonly approvers: readonly string[];
     readonly minApprovals: number;
-    readonly votes: readonly { readonly approver: string; readonly vote: string; readonly votedAt: string }[];
+    readonly votes: readonly {
+      readonly approver: string;
+      readonly vote: string;
+      readonly votedAt: string;
+      /**
+       * How the approver's identity was established, copied from the vote.
+       *
+       * Here as well as on the approval record because evidence is what gets
+       * exported to an auditor, and an exported approval that does not say
+       * whether the name was verified invites the reader to assume it was.
+       */
+      readonly assurance?: IdentityAssurance;
+      readonly issuer?: string;
+    }[];
     readonly resolvedAt?: string;
   };
 

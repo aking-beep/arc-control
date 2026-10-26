@@ -128,7 +128,14 @@ export const NAVIGATION: readonly NavGroup[] = [
       { href: '/security', label: 'Security' },
     ],
   },
-  { label: 'Record', items: [{ href: '/evidence', label: 'Evidence' }, { href: '/audit', label: 'Audit' }] },
+  {
+    label: 'Record',
+    items: [
+      { href: '/evidence', label: 'Evidence' },
+      { href: '/audit', label: 'Audit' },
+      { href: '/notifications', label: 'Notifications' },
+    ],
+  },
   { label: 'Admin', items: [{ href: '/reports', label: 'Reports' }, { href: '/settings', label: 'Settings' }] },
 ];
 

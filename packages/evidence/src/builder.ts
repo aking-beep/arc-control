@@ -1,5 +1,6 @@
 import {
   type ActionRiskAssessment,
+  assuranceOf,
   digest,
   newId,
   redactParameters,
@@ -95,6 +96,11 @@ export function buildEvidence(input: EvidenceInput): EvidenceRecord {
               approver: vote.approver,
               vote: vote.vote,
               votedAt: vote.votedAt,
+              // Carried into the exported record. An approval an auditor reads
+              // without knowing whether the name was verified invites them to
+              // assume it was.
+              assurance: assuranceOf(vote),
+              ...(vote.issuer ? { issuer: vote.issuer } : {}),
             })),
             ...(input.approval.resolvedAt ? { resolvedAt: input.approval.resolvedAt } : {}),
           },

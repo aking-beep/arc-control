@@ -45,11 +45,13 @@ see `infrastructure/kubernetes/networkpolicy.yaml` for the shape the rules need
 to take, in particular the third policy, which stops a governed agent reaching
 a target system directly.
 
-**It does not authenticate humans.** v0.1 takes the operator's identity from
-configuration, so every approval through the console is attributed to
-`operator_identity`. Put an identity-aware proxy in front of the console
-Service. See
-[TRUST_MODEL.md](../../docs/TRUST_MODEL.md#what-an-operator-is-trusted-with-and-the-v01-gap).
+**It does not configure an identity provider.** The module has no opinion about
+whose provider you use, so as applied it leaves the deployment on the shared
+token, attributing every approval to `operator_identity` and recording that as
+`claimed`. Set the OpenID Connect variables to get individual sign-in and roles
+from verified claims; otherwise put an identity-aware proxy in front of the
+console Service. See
+[TRUST_MODEL.md](../../docs/TRUST_MODEL.md#what-an-operator-is-trusted-with-and-how-far-that-trust-is-established).
 
 **It does not back up the volume.** The audit chain and every evidence record
 live on `data_volume_claim`, which is marked `prevent_destroy` so a careless

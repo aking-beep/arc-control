@@ -93,7 +93,7 @@ const SEEDS: readonly Seed[] = [
     category: 'authorization',
     failureSeverity: 'critical',
     limitations: [
-      'Approver identity comes from the console session. In this release that identity is a configured header, not an authenticated user, so this control proves the workflow ran — not who ran it.',
+      'Whether an approval can be attributed to a named individual depends on how that operator was authenticated, which varies by deployment and can vary between two approvals in the same window. Each assessment therefore states the attribution of the votes it actually examined, rather than this catalogue asserting one answer for every installation.',
     ],
     labels: { pillar: 'enforcement' },
   },

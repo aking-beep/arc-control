@@ -153,6 +153,26 @@ jobs:
       - name: Assert every dependency is a workspace sibling
         run: node .github/scripts/check-dependencies.mjs
 
+  infrastructure:
+    name: Deployment artefacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # The Terraform module, the Compose file and the Kubernetes manifests
+      # are the one part of this repository the test suite cannot run — there
+      # is no cluster here. Their failures are an undeclared variable or a
+      # misspelled environment variable, which surface as "the feature does
+      # nothing" in somebody else's cluster rather than as a red test.
+      - name: Check the deployment artefacts against the code they configure
+        run: node .github/scripts/check-infrastructure.mjs
+
   schemas:
     name: Published schemas
     runs-on: ubuntu-latest

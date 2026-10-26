@@ -4,9 +4,20 @@ import { AssuranceEngine } from '@arc-control/assurance';
 import type { ControlStore } from '@arc-control/store';
 import { addAssuranceRoutes } from './assurance-routes.js';
 import { buildRoutes } from './routes.js';
-import { OperatorAuth } from './operator.js';
+import { OperatorAuth, type TrustedProxyOptions } from './operator.js';
+import { addAuthRoutes } from './auth-routes.js';
+import { addNotificationRoutes } from './notification-routes.js';
+import { Scheduler } from './scheduler.js';
+import { Notifier } from '@arc-control/notify';
+import { ArcError } from '@arc-control/schemas';
+import {
+  OidcClient,
+  SessionManager,
+  type OidcOptions,
+  type RoleResolutionOptions,
+} from '@arc-control/operator-identity';
 
-export const API_VERSION = '2.0.0';
+export const API_VERSION = '2.1.0';
 
 export interface ControlApiOptions {
   readonly store: ControlStore;
@@ -24,11 +35,57 @@ export interface ControlApiOptions {
   readonly rateLimit?: RateLimitOptions;
   /** Amount at or above which a monetary action escalates its risk class. */
   readonly monetaryEscalationThreshold?: number;
+
+  // --- 2.1: operator identity -------------------------------------------
+
+  /**
+   * Single sign-on. When present, operators sign in against this provider and
+   * their approvals are recorded as authenticated.
+   */
+  readonly oidc?: OidcOptions;
+  /**
+   * Signs session cookies. Required with `oidc`, at least 32 characters, and
+   * stable across restarts or every operator is signed out on each deploy.
+   */
+  readonly sessionSecret?: string;
+  readonly sessionLifetimeMs?: number;
+  readonly sessionIdleTimeoutMs?: number;
+  /** How verified claims become ARC roles. */
+  readonly roles?: RoleResolutionOptions;
+  /** An identity-aware proxy in front of ARC, as an alternative to OIDC. */
+  readonly trustedProxy?: TrustedProxyOptions;
+  /**
+   * Whether the shared token may still authenticate operators. Defaults to
+   * "only when it is the only mode configured", so it is a fallback rather
+   * than a bypass.
+   */
+  readonly allowSharedToken?: boolean;
+  /** Set false only for local HTTP development; session cookies are Secure otherwise. */
+  readonly secureCookies?: boolean;
+
+  // --- 2.1: notification and the scheduler ------------------------------
+
+  /** Base URL of the console, so a notification can say where to act. */
+  readonly consoleUrl?: string;
+  /** Signs generic webhook payloads so a receiver can verify them. */
+  readonly webhookSigningSecret?: string;
+  /**
+   * Runs assessments, lapses approvals and retries notifications unattended.
+   *
+   * On by default. A governance product that only works while someone is
+   * looking at it does not govern anything: agents act on their own schedule.
+   * Off for tests and for a second replica, which must not also be ticking.
+   */
+  readonly schedule?: boolean | { readonly intervalMs?: number; readonly assessmentIntervalMs?: number };
 }
 
 export interface ControlApi {
   readonly gateway: Gateway;
   readonly assurance: AssuranceEngine;
+  readonly notifier: Notifier;
+  readonly scheduler: Scheduler;
+  /** How this deployment authenticates operators, for the startup banner. */
+  readonly operatorModes: readonly string[];
   readonly server: Server;
   listen(port: number, host?: string): Promise<{ port: number; host: string }>;
   close(): Promise<void>;
@@ -76,16 +133,76 @@ export function createControlApi(options: ControlApiOptions): ControlApi {
     },
   });
 
-  const operators = new OperatorAuth(options.operatorToken ? { token: options.operatorToken } : {});
+  // Sign-in is only wired when both a provider and a cookie secret are
+  // present. Half-configured single sign-on would otherwise look available and
+  // fail at the callback, which is the worst moment to discover it.
+  const sessions =
+    options.oidc !== undefined && options.sessionSecret !== undefined
+      ? new SessionManager({
+          store: options.store,
+          signingSecret: options.sessionSecret,
+          ...(options.sessionLifetimeMs !== undefined ? { lifetimeMs: options.sessionLifetimeMs } : {}),
+          ...(options.sessionIdleTimeoutMs !== undefined ? { idleTimeoutMs: options.sessionIdleTimeoutMs } : {}),
+        })
+      : undefined;
+
+  if (options.oidc !== undefined && options.sessionSecret === undefined) {
+    throw new ArcError(
+      'invalid_request',
+      'an OIDC issuer is configured but no session secret is; set ARC_SESSION_SECRET to at least 32 characters ' +
+        '(`openssl rand -hex 32`), or single sign-on would fail at the callback rather than at startup',
+    );
+  }
+
+  const oidc = options.oidc === undefined ? undefined : new OidcClient(options.oidc);
+
+  const operators = new OperatorAuth({
+    ...(sessions ? { sessions } : {}),
+    ...(options.trustedProxy ? { proxy: options.trustedProxy } : {}),
+    ...(options.operatorToken ? { token: options.operatorToken } : {}),
+    ...(options.allowSharedToken !== undefined ? { allowSharedToken: options.allowSharedToken } : {}),
+  });
+
+  const notifier = new Notifier({
+    store: options.store,
+    organizationId: options.defaultOrganizationId ?? 'default',
+    ...(options.consoleUrl ? { consoleUrl: options.consoleUrl } : {}),
+    ...(options.webhookSigningSecret ? { signingSecret: options.webhookSigningSecret } : {}),
+  });
+
   const router = buildRoutes({
     gateway,
     assurance,
     operators,
+    notifier,
     version: API_VERSION,
     demoSeed: options.demoSeed === true,
+    ...(options.defaultOrganizationId ? { defaultOrganizationId: options.defaultOrganizationId } : {}),
+  });
+
+  const schedule = options.schedule ?? true;
+  const scheduler = new Scheduler({
+    gateway,
+    assurance,
+    notifier,
+    ...(sessions ? { sessions } : {}),
+    ...(typeof schedule === 'object' && schedule.intervalMs !== undefined ? { intervalMs: schedule.intervalMs } : {}),
+    ...(typeof schedule === 'object' && schedule.assessmentIntervalMs !== undefined
+      ? { assessmentIntervalMs: schedule.assessmentIntervalMs }
+      : {}),
   });
 
   addAssuranceRoutes(router, { gateway, assurance, operators, version: API_VERSION });
+  addNotificationRoutes(router, { gateway, operators, notifier, scheduler });
+  addAuthRoutes(router, {
+    gateway,
+    operators,
+    ...(sessions ? { sessions } : {}),
+    ...(oidc ? { oidc } : {}),
+    ...(options.roles ? { roleOptions: options.roles } : {}),
+    ...(options.secureCookies !== undefined ? { secureCookies: options.secureCookies } : {}),
+    ...(options.consoleUrl ? { consoleUrl: options.consoleUrl } : {}),
+  });
 
   const server = createServer((request, response) => {
     void router.handle(request, response).catch((cause: unknown) => {
@@ -100,11 +217,19 @@ export function createControlApi(options: ControlApiOptions): ControlApi {
   return {
     gateway,
     assurance,
+    notifier,
+    scheduler,
+    operatorModes: operators.modes,
     server,
     listen: (port, host = '127.0.0.1') =>
       new Promise((resolve, reject) => {
         server.once('error', reject);
         server.listen(port, host, () => {
+          // Ticking starts with the listener, not with construction: a test or
+          // a tool that builds the API without serving should not acquire a
+          // background timer it never asked for.
+          if (schedule !== false) scheduler.start();
+
           const address = server.address();
           const actual = typeof address === 'object' && address ? address.port : port;
           resolve({ port: actual, host });
@@ -112,6 +237,7 @@ export function createControlApi(options: ControlApiOptions): ControlApi {
       }),
     close: () =>
       new Promise((resolve, reject) => {
+        scheduler.stop();
         server.close((cause) => (cause ? reject(cause) : resolve()));
       }),
   };

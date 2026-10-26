@@ -46,6 +46,7 @@
  * rewrite, so a page this script forgot cannot ship as a dead link.
  */
 
+import { createServer } from 'node:http';
 import { createControlApi, seedDemo } from '@arc-control/control-api';
 import { createConsole } from '@arc-control/control-console';
 import { MemoryStore } from '@arc-control/store';
@@ -190,13 +191,52 @@ async function main() {
   const revision = commit();
 
   const store = new MemoryStore();
-  const api = createControlApi({ store, operatorToken: OPERATOR_TOKEN, demoSeed: true });
+  const api = createControlApi({
+    store,
+    operatorToken: OPERATOR_TOKEN,
+    demoSeed: true,
+    consoleUrl: 'https://arc.example.com',
+    // A scheduler pass mid-crawl would change the data under the crawler, so
+    // the capture drives exactly one itself, after the scenario and before the
+    // crawl. See the `scheduler.tick()` call below.
+    schedule: false,
+  });
   const { apiKeys } = await seedDemo(api.gateway);
 
   // Install the baseline control library, exactly as `npm run api` does on
   // start. Without it the capture would show the governance sections empty,
   // which would misrepresent the product rather than demonstrate it.
   await api.assurance.seedBaseline();
+
+  /**
+   * Two notification channels, one of which is broken.
+   *
+   * The broken one is the point. A capture where every delivery succeeded
+   * would show a tidy table and demonstrate nothing: the property worth
+   * showing is that a notification nobody received is visible as such, rather
+   * than leaving an operator believing somebody was told. One channel accepts,
+   * one points at a port where nothing listens.
+   */
+  const received = [];
+  const hook = createServer((request, response) => {
+    const chunks = [];
+    request.on('data', (chunk) => chunks.push(chunk));
+    request.on('end', () => {
+      received.push(Buffer.concat(chunks).toString('utf8'));
+      response.writeHead(200);
+      response.end();
+    });
+  });
+  await new Promise((resolve) => hook.listen(0, '127.0.0.1', resolve));
+  const hookPort = hook.address().port;
+
+  await api.notifier.addChannel({
+    name: 'ops-alerts',
+    url: `http://127.0.0.1:${hookPort}/hook`,
+    events: ['approval.requested', 'finding.overdue'],
+  });
+  await api.notifier.addChannel({ name: 'legacy-pager', url: 'https://127.0.0.1:1/hook' });
+
   const apiAddress = await api.listen(0);
   const apiBase = `http://${apiAddress.host}:${apiAddress.port}`;
 
@@ -370,6 +410,30 @@ async function main() {
       });
       process.stdout.write('  assigned          1 finding, with a deadline that has passed\n');
     }
+
+    /**
+     * One scheduler pass, driven deliberately.
+     *
+     * The capture turns the scheduler off so a tick cannot change the data
+     * under the crawler, and then has to drive one itself — otherwise the
+     * overdue finding just created announces nothing and the Notifications
+     * section shows only the approval. The comment above the `schedule: false`
+     * promised this pass and the first version of this script never made it,
+     * which a review caught.
+     */
+    const tick = await api.scheduler.tick();
+    process.stdout.write(
+      `  swept             ${String(tick.overdueNotified)} overdue notified, ` +
+        `${String(tick.deliveriesAttempted)} delivery retried, ` +
+        `${String(tick.expiryWarningsSent)} expiry warning\n`,
+    );
+
+    if (tick.problems.length > 0) {
+      // A capture built on a failed pass would be a capture of a broken
+      // deployment presented as a demonstration.
+      throw new Error(`the scheduler pass reported problems: ${tick.problems.join('; ')}`);
+    }
+
     // -- crawl ------------------------------------------------------------
     process.stdout.write('\nCapturing pages\n');
 
@@ -458,6 +522,7 @@ async function main() {
   } finally {
     await app.close();
     await api.close();
+    await new Promise((resolve) => hook.close(resolve));
     await store.close();
   }
 }

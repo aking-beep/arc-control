@@ -456,7 +456,7 @@ process, they can authorize anything and write whatever records they like.
 rewrite is not, until the head digest is anchored externally.
 
 **Operator impersonation in v0.1.** One shared token, identity from a header.
-See [TRUST_MODEL.md](./TRUST_MODEL.md#what-an-operator-is-trusted-with-and-the-v01-gap).
+See [TRUST_MODEL.md](./TRUST_MODEL.md#what-an-operator-is-trusted-with-and-how-far-that-trust-is-established).
 
 **Denial of service.** There is no rate limiting, quota or concurrency control
 in v0.1. An agent in a loop can fill the audit log. Deploy behind something

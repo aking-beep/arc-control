@@ -7,8 +7,9 @@ metadata:
     app.kubernetes.io/name: arc-control
     app.kubernetes.io/component: console
 spec:
-  # The console holds no state of its own — it reads everything through the
-  # API with the operator credential — so it scales freely.
+  # The console holds no state of its own. It forwards the visitor's session
+  # to the API, which holds the session server-side, so any replica can serve
+  # any request and this scales freely.
   replicas: 2
   selector:
     matchLabels:
@@ -39,20 +40,24 @@ spec:
               value: "0.0.0.0"
             - name: ARC_CONSOLE_PORT
               value: "8788"
+            # Where the console reaches the API: a ClusterIP Service, which
+            # resolves inside the cluster and nowhere else.
             - name: ARC_API_BASE
               value: http://arc-control-api:8787
-            - name: ARC_OPERATOR_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: arc-control-operator
-                  key: operator-token
-            # v0.1 takes the operator identity from configuration rather than
-            # from an authenticated session. Put an identity-aware proxy in
-            # front of this Service — see docs/TRUST_MODEL.md.
-            - name: ARC_OPERATOR_IDENTITY
-              value: operator@cluster.local
-            - name: ARC_OPERATOR_ROLES
-              value: finance-manager,platform-oncall
+            # Where a browser reaches the API, for the sign-in redirect. Not
+            # the same address as above, which is why this exists: send a
+            # visitor to a ClusterIP name and you send them nowhere.
+            - name: ARC_PUBLIC_API_BASE
+              value: https://arc-control.example.com
+            # Deliberately no operator credential. Under single sign-on the
+            # console carries none: it forwards the visitor's session, asks the
+            # API who that is, and shows that answer — so the name on an
+            # approval is the one the API verified, never one configured here.
+            #
+            # For the shared-token fallback instead, set ARC_OPERATOR_TOKEN
+            # from the secret along with ARC_OPERATOR_IDENTITY and
+            # ARC_OPERATOR_ROLES, and read docs/TRUST_MODEL.md on what an
+            # approval recorded that way can support.
           readinessProbe:
             httpGet:
               path: /healthz

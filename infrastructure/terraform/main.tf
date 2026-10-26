@@ -26,10 +26,28 @@ locals {
   api_labels     = merge(local.common_labels, { "app.kubernetes.io/component" = "api" })
   console_labels = merge(local.common_labels, { "app.kubernetes.io/component" = "console" })
 
-  operator_token = coalesce(var.operator_token, random_password.operator_token.result)
+  sso_enabled = var.oidc != null
+
+  # The fallback token. Only generated where it can still be used: with single
+  # sign-on configured the API refuses it, so minting one would put a live
+  # credential in Terraform state to no purpose.
+  operator_token = local.sso_enabled ? "" : coalesce(var.operator_token, random_password.operator_token.result)
+
+  session_secret = local.sso_enabled ? coalesce(var.session_secret, random_password.session_secret.result) : ""
+
+  # Provider groups to ARC Control roles, in the form the API parses:
+  #   arc-finance=finance-manager|approver,arc-admin=admin
+  role_map = local.sso_enabled ? join(",", [
+    for group, roles in var.oidc.role_map : "${group}=${join("|", roles)}"
+  ]) : ""
 }
 
 resource "random_password" "operator_token" {
+  length  = 64
+  special = false
+}
+
+resource "random_password" "session_secret" {
   length  = 64
   special = false
 }
@@ -56,10 +74,30 @@ resource "kubernetes_secret_v1" "operator" {
   }
 
   data = {
-    "operator-token" = local.operator_token
+    "operator-token"     = local.operator_token
+    "session-secret"     = local.session_secret
+    "oidc-client-secret" = local.sso_enabled ? var.oidc.client_secret : ""
   }
 
   type = "Opaque"
+
+  lifecycle {
+    # Caught at plan time rather than by an operator staring at a sign-in page
+    # that will not load. The console redirects a visitor with no session to
+    # the API, and the address it uses itself is a ClusterIP name a browser
+    # cannot resolve.
+    precondition {
+      condition     = var.oidc == null || var.public_api_base != null
+      error_message = "public_api_base is required when oidc is set: it is the API address a browser reaches, and the sign-in redirect goes there."
+    }
+
+    # Roles are what approver selectors match. Sign everyone in with none and
+    # the approval queue is unanswerable.
+    precondition {
+      condition     = var.oidc == null || length(var.oidc.role_map) > 0
+      error_message = "oidc.role_map is empty, so every operator would sign in with no roles and could approve nothing."
+    }
+  }
 }
 
 resource "kubernetes_persistent_volume_claim_v1" "data" {
@@ -153,6 +191,76 @@ resource "kubernetes_deployment_v1" "api" {
             value = "/var/lib/arc-control"
           }
 
+          env {
+            name  = "ARC_CONSOLE_URL"
+            value = coalesce(var.public_console_base, "")
+          }
+
+          # Assessments, approval expiry and sweeps run unattended. Without
+          # this an approval queue can rot with nobody told.
+          env {
+            name  = "ARC_SCHEDULE"
+            value = "true"
+          }
+
+          # Single sign-on, when configured. Empty reads as unset, so the
+          # fallback below stays in force until all of these are set.
+          env {
+            name  = "ARC_OIDC_ISSUER"
+            value = local.sso_enabled ? var.oidc.issuer : ""
+          }
+
+          env {
+            name  = "ARC_OIDC_CLIENT_ID"
+            value = local.sso_enabled ? var.oidc.client_id : ""
+          }
+
+          env {
+            name  = "ARC_OIDC_REDIRECT_URI"
+            value = local.sso_enabled ? var.oidc.redirect_uri : ""
+          }
+
+          env {
+            name  = "ARC_OIDC_ROLE_CLAIM"
+            value = local.sso_enabled ? var.oidc.role_claim : ""
+          }
+
+          env {
+            name  = "ARC_OIDC_ROLE_MAP"
+            value = local.role_map
+          }
+
+          env {
+            name = "ARC_OIDC_CLIENT_SECRET"
+
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret_v1.operator.metadata[0].name
+                key  = "oidc-client-secret"
+              }
+            }
+          }
+
+          env {
+            name = "ARC_SESSION_SECRET"
+
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret_v1.operator.metadata[0].name
+                key  = "session-secret"
+              }
+            }
+          }
+
+          # Terminate TLS in front of the Service. The session cookie is then
+          # never sent in clear.
+          env {
+            name  = "ARC_SECURE_COOKIES"
+            value = "true"
+          }
+
+          # The fallback. Accepted only while single sign-on is unset, and
+          # empty here whenever it is set.
           env {
             name = "ARC_OPERATOR_TOKEN"
 
@@ -309,6 +417,24 @@ resource "kubernetes_deployment_v1" "console" {
             value = "http://${kubernetes_service_v1.api.metadata[0].name}:8787"
           }
 
+          # Where a browser reaches the API, for the sign-in redirect. Not the
+          # Service name above: send a visitor to a ClusterIP and you send
+          # them nowhere.
+          env {
+            name  = "ARC_PUBLIC_API_BASE"
+            value = coalesce(var.public_api_base, "")
+          }
+
+          # Under single sign-on the console carries no credential of its own:
+          # it forwards the visitor's session, asks the API who that is, and
+          # shows that answer, so the name on an approval is the one the API
+          # verified. These three are the fallback path.
+          #
+          # From the Secret, never inline. An inline `value` is readable by
+          # anyone who can `describe` the pod or read the Deployment, which is
+          # a wider audience than the Secret's — and this token lets its holder
+          # claim any identity. The Secret's key is empty when single sign-on
+          # is configured, and an empty setting reads as unset.
           env {
             name = "ARC_OPERATOR_TOKEN"
 
@@ -322,12 +448,12 @@ resource "kubernetes_deployment_v1" "console" {
 
           env {
             name  = "ARC_OPERATOR_IDENTITY"
-            value = var.operator_identity
+            value = local.sso_enabled ? "" : var.operator_identity
           }
 
           env {
             name  = "ARC_OPERATOR_ROLES"
-            value = join(",", var.operator_roles)
+            value = local.sso_enabled ? "" : join(",", var.operator_roles)
           }
 
           readiness_probe {

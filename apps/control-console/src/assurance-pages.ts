@@ -944,24 +944,20 @@ export async function settingsPage(context: PageContext): Promise<string> {
   })}
 
   ${sectionTitle('Identity and access')}
-  <p class="note">
-    <strong>Operator identity is not authenticated in this release.</strong> You are acting as
-    <strong>${context.operatorIdentity}</strong> because a request header says so, behind a single shared operator
-    token. Anyone holding that token can claim any identity, so an approval recorded here establishes that the
-    workflow ran — not who ran it. Single sign-on and role-based access control are the next release; until then put
-    this console behind an identity-aware proxy and treat the token as a production secret.
-  </p>
+  ${identityNotice(rec(report.operatorAuth), context.operatorIdentity)}
   ${definitions([
-    ['Acting as', raw(html`<strong>${context.operatorIdentity}</strong> ${raw(muted('(configured header)').value)}`)],
+    ['Acting as', raw(html`<strong>${context.operatorIdentity}</strong> ${assuranceBadge(rec(report.operatorAuth))}`)],
     [
-      'Roles claimed',
-      context.operatorRoles.length === 0 ? muted('none') : raw(html`${context.operatorRoles.join(', ')}`),
+      'Roles',
+      context.operatorRoles.length === 0
+        ? raw(html`${raw(muted('none').value)} — can read, and approve nothing`)
+        : raw(html`${context.operatorRoles.join(', ')}`),
     ],
     [
-      'Operator token',
+      'How operators sign in',
       report.operatorAuthConfigured === true
-        ? badge('allow', 'configured')
-        : badge('deny', 'not configured — operator endpoints refuse every request'),
+        ? raw(html`${modeSummary(rec(report.operatorAuth).modes)}`)
+        : badge('deny', 'nothing configured — operator endpoints refuse every request'),
     ],
     ['API', mono(context.apiBase)],
     ['Version', raw(html`<span class="tnum">${String(report.version ?? 'unknown')}</span>`)],
@@ -1100,4 +1096,214 @@ export async function frameworkPage(context: PageContext, frameworkId: string): 
   }`;
 
   return page(context, '/settings', String(framework.name ?? 'Framework'), raw(body), shell);
+}
+
+/**
+ * What each sign-in mode means, in words an operator can act on.
+ *
+ * Named rather than scored: "authenticated" and "claimed" are different kinds
+ * of fact, and a reader deciding whether to trust an approval record needs the
+ * difference rather than a rating.
+ */
+function describeMode(mode: string): string {
+  if (mode === 'authenticated') return 'single sign-on, verified by ARC against the identity provider';
+  if (mode === 'asserted_by_proxy') return 'an identity-aware proxy ARC is configured to trust';
+  if (mode === 'claimed') return 'a shared token, with the name taken from a request header';
+  return mode;
+}
+
+/** Every mode this deployment accepts, described in order of strength. */
+function modeSummary(modes: unknown): string {
+  if (!Array.isArray(modes) || modes.length === 0) return 'unknown';
+  return modes.map((mode) => describeMode(String(mode))).join('; ');
+}
+
+function assuranceBadge(auth: Record<string, unknown>): Trusted {
+  const strongest = typeof auth.strongest === 'string' ? auth.strongest : undefined;
+  if (strongest === 'authenticated') return raw(html`<span class="badge allow">authenticated</span>`);
+  if (strongest === 'asserted_by_proxy') return raw(html`<span class="badge approval">asserted by a proxy</span>`);
+  if (strongest === 'claimed') return raw(html`<span class="badge deny">claimed, not authenticated</span>`);
+  return raw(muted('unknown').value);
+}
+
+/**
+ * The paragraph that used to assert, unconditionally, that operator identity
+ * was not authenticated. It now reads the deployment, because the sentence is
+ * only true of some of them — and a console that keeps saying it after an
+ * administrator has configured single sign-on trains people to ignore it.
+ */
+function identityNotice(auth: Record<string, unknown>, identity: string): Trusted {
+  const strongest = typeof auth.strongest === 'string' ? auth.strongest : undefined;
+
+  if (strongest === 'authenticated') {
+    return raw(html`<p class="note">
+      You are acting as <strong>${identity}</strong>, verified by this deployment's identity provider when you signed
+      in. Approvals you cast are recorded as attributable to you individually. Your roles come from the provider's
+      claims and cannot be changed by a request header.
+    </p>`);
+  }
+
+  if (strongest === 'asserted_by_proxy') {
+    return raw(html`<p class="note">
+      You are acting as <strong>${identity}</strong>, as asserted by the identity-aware proxy in front of this
+      deployment. The attribution is sound for as long as nothing can reach the control API without passing through
+      that proxy — which is a property of the network, not something ARC can check from here.
+    </p>`);
+  }
+
+  if (strongest === 'claimed') {
+    return raw(html`<p class="note">
+      <strong>Operator identity is not authenticated in this deployment.</strong> You are acting as
+      <strong>${identity}</strong> because a request header says so, behind a single shared token. Anyone holding
+      that token can claim any identity, so an approval recorded here establishes that the workflow ran — not who
+      ran it. Set <span class="mono">ARC_OIDC_ISSUER</span> to sign operators in against your identity provider;
+      every approval cast after that is attributable to a person.
+    </p>`);
+  }
+
+  return raw(html`<p class="note">
+    No means of authenticating an operator is configured, so every operator endpoint refuses every request.
+  </p>`);
+}
+
+// --- Notifications ---------------------------------------------------------
+
+/** How a delivery status should read at a glance. */
+function deliveryBadge(status: unknown): Trusted {
+  const value = String(status);
+  if (value === 'delivered') return raw(html`<span class="badge allow">delivered</span>`);
+  if (value === 'pending') return raw(html`<span class="badge approval">pending</span>`);
+  if (value === 'failed') return raw(html`<span class="badge approval">failed, will retry</span>`);
+  if (value === 'abandoned') return raw(html`<span class="badge deny">never delivered</span>`);
+  return raw(muted(value).value);
+}
+
+/**
+ * Who was told, and who was not.
+ *
+ * This section exists because of one rule: a delivery that failed is not a
+ * notification. Fire-and-forget to a webhook is worse than no webhook, since
+ * it creates the belief that somebody was told — so the page leads with the
+ * count of notifications nobody received, and says plainly when no channel is
+ * configured at all rather than showing an empty table that reads as "nothing
+ * to report".
+ */
+export async function notificationsPage(context: PageContext): Promise<string> {
+  const [shell, report] = await Promise.all([
+    chrome(context),
+    context.client.notifications().catch(() => ({}) as Record<string, unknown>),
+  ]);
+
+  const channels = list(report.channels);
+  const deliveries = list(report.deliveries);
+  const failures = Number(report.failures ?? 0);
+
+  const body = html`${pageHeader({
+    title: 'Notifications',
+    lede:
+      'Where ARC sends an approval that needs a human, a deadline that has passed and a control that started ' +
+      'failing — and a record of every attempt, because a delivery that failed is not a notification.',
+  })}
+
+  ${
+    typeof report.notice === 'string' && report.notice
+      ? raw(html`<p class="note"><strong>${report.notice}</strong></p>`)
+      : raw('')
+  }
+
+  ${
+    failures > 0
+      ? raw(html`<p class="count-line">
+          <span class="badge deny">${count(failures)} not delivered</span>
+          <span class="sep" aria-hidden="true">·</span>
+          <span>${count(deliveries.length)} recent attempt(s)</span>
+        </p>`)
+      : raw(html`<p class="count-line">${count(deliveries.length)} recent attempt(s)</p>`)
+  }
+
+  ${sectionTitle('Channels')}
+  ${
+    channels.length === 0
+      ? emptyState(
+          'No channel is configured. ARC will surface an approval here and tell nobody, so somebody has to be ' +
+            'watching this page for a held action to proceed.',
+        )
+      : table(
+          'Notification channels',
+          ['Name', 'Destination', 'Events', 'Parameters', 'Status'],
+          channels.map(
+            (channel) => raw(html`<tr>
+              <td>${String(channel.name)}</td>
+              <td>${mono(hostOf(channel.url))}</td>
+              <td>
+                ${
+                  list(channel.events).length === 0 && !Array.isArray(channel.events)
+                    ? muted('every event')
+                    : raw(html`${(Array.isArray(channel.events) ? channel.events : []).map(String).join(', ') || 'every event'}`)
+                }
+              </td>
+              <td>
+                ${
+                  channel.includeParameters === true
+                    ? raw(html`<span class="badge approval">included</span>`)
+                    : raw(html`${raw(muted('withheld').value)}`)
+                }
+              </td>
+              <td>${channel.enabled === true ? badge('allow', 'enabled') : badge('deny', 'disabled')}</td>
+            </tr>`),
+          ),
+        )
+  }
+
+  <p class="note">
+    A destination is shown by host rather than full URL: a webhook URL is a credential. Action parameters are
+    withheld unless a channel asked for them, because redacted is not the same as safe to post in a chat
+    workspace — a tool name, an amount and a customer reference together are a disclosure with every secret
+    already removed.
+  </p>
+
+  ${sectionTitle('Recent attempts')}
+  ${
+    deliveries.length === 0
+      ? emptyState('Nothing has been sent yet.')
+      : table(
+          'Delivery attempts',
+          ['Event', 'About', 'Channel', 'Attempts', 'Status', 'What was said'],
+          deliveries.map(
+            (delivery) => raw(html`<tr>
+              <td>${mono(String(delivery.event))}</td>
+              <td>${mono(shortId(String(delivery.subject)))}</td>
+              <td>${String(delivery.channelName)}</td>
+              <td><span class="tnum">${count(list(delivery.attempts).length)}</span></td>
+              <td>
+                ${deliveryBadge(delivery.status)}
+                ${
+                  typeof delivery.deliveredAt === 'string'
+                    ? raw(html`<span class="tnum muted">${timestamp(delivery.deliveredAt)}</span>`)
+                    : raw(html`${raw(muted(lastError(delivery)).value)}`)
+                }
+              </td>
+              <td>${String(delivery.summary)}</td>
+            </tr>`),
+          ),
+        )
+  }`;
+
+  return page(context, '/notifications', 'Notifications', raw(body), shell);
+}
+
+/** The host of a webhook URL. The rest of it is a credential. */
+function hostOf(url: unknown): string {
+  try {
+    return new URL(String(url)).host;
+  } catch {
+    return 'unparseable';
+  }
+}
+
+/** The reason the last attempt failed, for a delivery that has not landed. */
+function lastError(delivery: Record<string, unknown>): string {
+  const attempts = list(delivery.attempts);
+  const last = attempts.at(-1);
+  return typeof last?.error === 'string' ? last.error : 'no attempt recorded';
 }

@@ -445,7 +445,8 @@ export class AssuranceEngine {
       observations: result.observations,
       window: context.window,
       ...(attestation && result.status === 'attested' ? { attestation } : {}),
-      limitations: control.limitations,
+      // Standing limitations first, then anything this run established.
+      limitations: [...control.limitations, ...(result.limitations ?? [])],
       findingIds,
       evaluatedAt: context.now.toISOString(),
       evaluationMs,

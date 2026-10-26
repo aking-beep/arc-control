@@ -17,6 +17,15 @@ export type ArcErrorCode =
   | 'approval_rejected'
   | 'execution_failed'
   | 'connector_unavailable'
+  /**
+   * The identity provider could not be reached or answered badly.
+   *
+   * Distinct from `unauthenticated` on purpose. Nobody failed to prove who
+   * they are — ARC could not ask. It is an outage to page someone about, not a
+   * credential to correct, and it does not stop enforcement: agents keep being
+   * authorized while operators cannot sign in.
+   */
+  | 'identity_provider_unavailable'
   | 'not_found'
   | 'conflict'
   | 'invalid_request'
@@ -68,6 +77,7 @@ const HTTP_STATUS_BY_CODE: Record<ArcErrorCode, number> = {
   approval_rejected: 403,
   execution_failed: 502,
   connector_unavailable: 503,
+  identity_provider_unavailable: 503,
   not_found: 404,
   conflict: 409,
   invalid_request: 400,

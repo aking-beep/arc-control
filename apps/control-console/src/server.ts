@@ -12,6 +12,7 @@ import {
   frameworkPage,
   riskDetailPage,
   risksPage,
+  notificationsPage,
   settingsPage,
 } from './assurance-pages.js';
 import {
@@ -37,10 +38,36 @@ import {
 import type { BannerKind } from './render.js';
 
 export interface ConsoleOptions {
+  /**
+   * Where the console reaches the API. Usually private: a ClusterIP Service, a
+   * Compose service name, a loopback port.
+   */
   readonly apiBase: string;
-  readonly operatorToken: string;
-  readonly operatorIdentity: string;
-  readonly operatorRoles: readonly string[];
+  /**
+   * Where a *browser* reaches the API, for the one redirect the console hands
+   * to the visitor rather than following itself.
+   *
+   * These are the same address only in a single-host deployment. Behind a
+   * Service or a Compose network, `apiBase` resolves for the console and
+   * nowhere else, so sending a browser there sends it nowhere. Defaults to
+   * `apiBase`, which is right for the single-host case and wrong silently for
+   * every other — hence the configuration check in `main.ts`.
+   */
+  readonly publicApiBase?: string;
+  /**
+   * Shared operator token, for a deployment that has not configured single
+   * sign-on.
+   *
+   * Optional since 2.1. When the API has single sign-on configured it refuses
+   * this token, so a console that insisted on it could not work at all against
+   * the mode this release exists to provide — and forcing the token back on
+   * would record every console vote as `claimed` while the Settings page said
+   * the deployment was authenticated.
+   */
+  readonly operatorToken?: string;
+  /** Identity for the shared-token path only. A session supplies its own. */
+  readonly operatorIdentity?: string;
+  readonly operatorRoles?: readonly string[];
 }
 
 export interface ConsoleApp {
@@ -48,6 +75,13 @@ export interface ConsoleApp {
   listen(port: number, host?: string): Promise<{ port: number; host: string }>;
   close(): Promise<void>;
 }
+
+/**
+ * Cookie the API issues a console session under.
+ *
+ * The console forwards it rather than minting anything of its own.
+ */
+const SESSION_COOKIE = 'arc_operator_session';
 
 /** Largest form body the console will read. */
 export const MAX_FORM_BYTES = 64 * 1024;
@@ -62,15 +96,8 @@ export const MAX_FORM_BYTES = 64 * 1024;
  * through the API.
  */
 export function createConsole(options: ConsoleOptions): ConsoleApp {
-  const client = new ArcControlClient({
-    baseUrl: options.apiBase,
-    operatorToken: options.operatorToken,
-    operatorIdentity: options.operatorIdentity,
-    operatorRoles: options.operatorRoles,
-  });
-
   const server = createServer((request, response) => {
-    void route(request, response, client, options).catch((cause: unknown) => {
+    void route(request, response, options).catch((cause: unknown) => {
       process.stderr.write(`arc-console: ${String(cause)}\n`);
       if (!response.headersSent) {
         response.writeHead(500, { 'content-type': 'text/html; charset=utf-8' });
@@ -120,7 +147,6 @@ const APPROVAL_VOTE = /^\/approvals\/(arc_apr_[0-9a-f]+)\/vote$/;
 async function route(
   request: IncomingMessage,
   response: ServerResponse,
-  client: ArcControlClient,
   options: ConsoleOptions,
 ): Promise<void> {
   const url = new URL(request.url ?? '/', 'http://localhost');
@@ -130,11 +156,71 @@ async function route(
   const notice = url.searchParams.get('notice');
   const kind = url.searchParams.get('kind');
 
+  /**
+   * Liveness, answered before anything else and without reaching the API.
+   *
+   * This has to come before the `whoami` below, which is a network call. A
+   * probe that waits on the API answers the wrong question twice over: the
+   * console is alive whether or not the API is, and a brief API outage would
+   * otherwise stall the probe past its timeout and have the orchestrator
+   * restart a perfectly healthy console — turning one service's blip into two
+   * services down. It would also redirect an unauthenticated probe to a
+   * sign-in page, which is not a liveness answer in any case.
+   */
+  if (path === '/healthz') {
+    response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    response.end(JSON.stringify({ status: 'ok', apiBase: options.apiBase }));
+    return;
+  }
+
+  // Built per request, because the credential is per request: the browser's
+  // own session cookie, forwarded to the API. A client built once at startup
+  // could only ever hold the shared token.
+  const session = sessionCookie(request);
+  const client = new ArcControlClient({
+    baseUrl: options.apiBase,
+    ...(session ? { operatorSession: session } : {}),
+    ...(options.operatorToken ? { operatorToken: options.operatorToken } : {}),
+    ...(options.operatorIdentity ? { operatorIdentity: options.operatorIdentity } : {}),
+    ...(options.operatorRoles ? { operatorRoles: options.operatorRoles } : {}),
+  });
+
+  /**
+   * Who the API says this is, rather than what the console was configured
+   * with. Asked once per request and cheap; wrong once and the Settings page
+   * tells an operator something untrue about their own approval.
+   */
+  let identity = { identifier: options.operatorIdentity ?? 'operator', roles: options.operatorRoles ?? [] };
+  let unauthenticated = false;
+  try {
+    const who = await client.whoami();
+    identity = { identifier: who.identifier, roles: who.roles };
+  } catch (cause) {
+    if (isArcError(cause) && cause.code === 'unauthenticated') unauthenticated = true;
+  }
+
+  /**
+   * Nobody is signed in, so send them to sign in rather than rendering a
+   * console full of error panels. The API owns the flow; the console only
+   * knows where it starts.
+   */
+  if (unauthenticated) {
+    const returnTo = `${path}${url.search}`;
+    // The browser's address for the API, not the console's.
+    const signIn = options.publicApiBase ?? options.apiBase;
+    response.writeHead(302, {
+      location: `${signIn}/auth/login?returnTo=${encodeURIComponent(returnTo)}`,
+      'cache-control': 'no-store',
+    });
+    response.end();
+    return;
+  }
+
   const context: PageContext = {
     client,
     apiBase: options.apiBase,
-    operatorIdentity: options.operatorIdentity,
-    operatorRoles: options.operatorRoles,
+    operatorIdentity: identity.identifier,
+    operatorRoles: identity.roles,
     query: url.searchParams,
     ...(notice ? { banner: { kind: bannerKind(kind), message: notice } } : {}),
   };
@@ -243,12 +329,11 @@ async function route(
       case '/activity':
         sendHtml(response, 200, await activityPage(context));
         return;
+      case '/notifications':
+        sendHtml(response, 200, await notificationsPage(context));
+        return;
       case '/settings':
         sendHtml(response, 200, await settingsPage(context));
-        return;
-      case '/healthz':
-        response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-        response.end(JSON.stringify({ status: 'ok', apiBase: options.apiBase }));
         return;
       default:
         break;
@@ -473,4 +558,31 @@ function redirect(response: ServerResponse, to: string, notice: string, kind: Ba
   const query = new URLSearchParams({ notice, kind });
   response.writeHead(303, { location: `${to}?${query.toString()}`, 'cache-control': 'no-store' });
   response.end();
+}
+
+/**
+ * The operator's session cookie, as the browser sent it.
+ *
+ * Forwarded to the API verbatim: the console is a server-rendered proxy and
+ * holds no credential of its own, so the operator's session is the operator's
+ * session all the way through. A duplicated name keeps the first value, since
+ * taking the last would let anything able to append a header shadow a real
+ * session.
+ */
+function sessionCookie(request: IncomingMessage): string | undefined {
+  const header = request.headers.cookie;
+  if (typeof header !== 'string') return undefined;
+
+  for (const pair of header.split(';')) {
+    const index = pair.indexOf('=');
+    if (index <= 0) continue;
+    if (pair.slice(0, index).trim() !== SESSION_COOKIE) continue;
+
+    try {
+      return decodeURIComponent(pair.slice(index + 1).trim()) || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
 }

@@ -6,6 +6,7 @@ import { lintPolicy, testPolicy } from './commands/policy.js';
 import { diffMcp, scanMcp } from './commands/mcp.js';
 import { verifyAudit, verifyEvidenceFile } from './commands/audit.js';
 import { runDemo } from './commands/demo.js';
+import { createBackup, verifyBackup } from './commands/backup.js';
 import {
   evaluateControls,
   listControls,
@@ -32,6 +33,8 @@ const COMMANDS: Readonly<Record<string, Command>> = {
   'mcp scan': { words: 2, run: scanMcp },
   'mcp diff': { words: 2, run: diffMcp },
   'audit verify': { words: 2, run: verifyAudit },
+  'backup create': { words: 2, run: createBackup },
+  'backup verify': { words: 2, run: verifyBackup },
   'evidence verify': { words: 2, run: verifyEvidenceFile },
   'bundle verify': { words: 2, run: verifyBundleFile },
   'assurance controls': { words: 2, run: listControls },
@@ -57,6 +60,9 @@ ${style.bold('MCP SECURITY')}
       --suppress <ids>                         Check ids to record as informational
       --json                                   Emit the raw report
   arc mcp diff --pinned <f> --endpoint <url>  Detect drift from a pinned manifest
+
+  arc backup create --data <dir> --to <dir>   Copy a data directory with digests
+  arc backup verify --data <dir>              Check a backup is intact and verifies
 
 ${style.bold('ASSURANCE')}
   arc assurance controls                      Print the control library
