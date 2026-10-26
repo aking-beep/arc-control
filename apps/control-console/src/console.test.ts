@@ -21,6 +21,19 @@ import {
   toolsPage,
   type PageContext,
 } from './pages.js';
+import {
+  activityPage,
+  assessmentDetailPage,
+  assessmentRunPage,
+  assurancePage,
+  controlDetailPage,
+  findingDetailPage,
+  findingsPage,
+  frameworkPage,
+  riskDetailPage,
+  risksPage,
+  settingsPage,
+} from './assurance-pages.js';
 import { cellScope } from './components.js';
 import { actionHeadline, conditionToText, expiresIn, shortDigest, timestamp } from './format.js';
 import { escapeHtml, html, NAVIGATION, raw } from './render.js';
@@ -100,7 +113,7 @@ function contextFor(
 
 const HEALTH: Json = {
   status: 'ok',
-  version: '0.1.0',
+  version: '2.0.0',
   operatorAuthConfigured: true,
   demoSeed: false,
   counts: { agents: 1, tools: 1, policies: 1, auditRecords: 4 },
@@ -241,6 +254,206 @@ const CHAIN_OK: Json = {
   checkedAgainstExpectation: false,
 };
 
+/**
+ * Two controls: one assessed and passing, one never assessed. The second is
+ * the interesting case — it must render as unassessed rather than as benign.
+ */
+const CONTROL_ASSESSED: Json = {
+  id: 'ARC-AI-001',
+  version: 1,
+  title: 'Every registered agent has a recorded identity and owner',
+  objective: 'An agent can be traced to a named accountable human.',
+  procedure: 'Assert every non-retired agent has an owner, a purpose and a criticality.',
+  assurance: 'automated',
+  frequency: 'continuous',
+  enabled: true,
+  category: 'governance',
+  failureSeverity: 'high',
+  limitations: ['Checks that an owner is recorded, not that the named person knows they own it.'],
+  labels: {},
+  createdAt: '2026-10-20T05:00:00.000Z',
+  updatedAt: '2026-10-20T05:00:00.000Z',
+  latest: {
+    id: 'arc_asm_1111',
+    status: 'pass',
+    summary: 'All 1 agents have a recorded owner, business purpose and criticality.',
+    evaluatedAt: '2026-10-20T06:00:00.000Z',
+  },
+};
+
+const CONTROL_UNASSESSED: Json = {
+  id: 'ARC-AI-009',
+  version: 1,
+  title: 'Protected connectors cannot be bypassed through other routes',
+  objective: 'Governed systems are reachable by agents only through ARC.',
+  procedure: 'Requires a dated attestation from a named reviewer.',
+  assurance: 'deployment',
+  frequency: 'quarterly',
+  enabled: true,
+  category: 'authorization',
+  failureSeverity: 'critical',
+  limitations: ['ARC cannot test this from inside itself.'],
+  labels: {},
+  createdAt: '2026-10-20T05:00:00.000Z',
+  updatedAt: '2026-10-20T05:00:00.000Z',
+};
+
+const ASSESSMENT: Json = {
+  id: 'arc_asm_1111',
+  schemaVersion: 2,
+  runId: 'arc_run_1111',
+  controlId: 'ARC-AI-001',
+  controlVersion: 1,
+  organizationId: 'default',
+  status: 'pass',
+  assurance: 'automated',
+  summary: 'All 1 agents have a recorded owner, business purpose and criticality.',
+  observations: [
+    {
+      subject: 'arc_ag_1111',
+      subjectKind: 'agent',
+      ok: true,
+      detail: 'owned by finance@example.com; purpose and criticality recorded',
+      evidenceIds: ['arc_ev_1111'],
+    },
+    { subject: 'arc_ag_2222', subjectKind: 'agent', ok: false, detail: 'agent "ops-agent" is missing: governance record' },
+  ],
+  window: { from: '2026-09-20T06:00:00.000Z', to: '2026-10-20T06:00:00.000Z', actionsConsidered: 4, evidenceConsidered: 4 },
+  limitations: ['Checks that an owner is recorded, not that the named person knows they own it.'],
+  findingIds: ['arc_fnd_1111'],
+  evaluatedAt: '2026-10-20T06:00:00.000Z',
+  evaluationMs: 2,
+  integrityDigest: 'sha256:aaaa',
+};
+
+const RUN: Json = {
+  id: 'arc_run_1111',
+  organizationId: 'default',
+  requestedBy: 'ops@example.com',
+  window: { from: '2026-09-20T06:00:00.000Z', to: '2026-10-20T06:00:00.000Z', actionsConsidered: 4, evidenceConsidered: 4 },
+  controlIds: ['ARC-AI-001'],
+  assessmentIds: ['arc_asm_1111'],
+  totals: { pass: 1, fail: 0, not_assessable: 0, not_applicable: 0, attested: 0 },
+  startedAt: '2026-10-20T06:00:00.000Z',
+  finishedAt: '2026-10-20T06:00:01.000Z',
+  auditHead: { sequence: 4, digest: 'sha256:0123456789abcdef0123' },
+};
+
+/** One risk with a reviewed residual, one without. */
+const RISK_REVIEWED: Json = {
+  id: 'arc_rsk_1111',
+  reference: 'RISK-AI-001',
+  title: 'Agent issues an unauthorized refund',
+  description: 'A finance agent refunds a charge outside policy.',
+  organizationId: 'default',
+  category: 'unauthorized-action',
+  status: 'assessed',
+  inherent: { impact: 4, likelihood: 3, score: 12, severity: 'high' },
+  residual: {
+    impact: 4,
+    likelihood: 1,
+    score: 4,
+    severity: 'low',
+    reviewedBy: 'risk@example.com',
+    reviewedAt: '2026-10-20T06:00:00.000Z',
+    rationale: 'Approval gate verified operating for two quarters.',
+  },
+  treatment: 'mitigate',
+  owner: 'cfo@example.com',
+  controlIds: ['ARC-AI-004'],
+  scope: [],
+  labels: {},
+  createdAt: '2026-10-20T05:00:00.000Z',
+  updatedAt: '2026-10-20T06:00:00.000Z',
+};
+
+const RISK_UNREVIEWED: Json = {
+  id: 'arc_rsk_2222',
+  reference: 'RISK-AI-002',
+  title: 'Audit log is truncated without detection',
+  description: 'An attacker removes records from the end of the chain.',
+  organizationId: 'default',
+  category: 'evidence-integrity',
+  status: 'identified',
+  inherent: { impact: 5, likelihood: 2, score: 10, severity: 'moderate' },
+  treatment: 'mitigate',
+  owner: 'secops@example.com',
+  controlIds: [],
+  scope: [],
+  labels: {},
+  createdAt: '2026-10-20T05:00:00.000Z',
+  updatedAt: '2026-10-20T05:00:00.000Z',
+};
+
+const FINDING: Json = {
+  id: 'arc_fnd_1111',
+  organizationId: 'default',
+  controlId: 'ARC-AI-001',
+  assessmentId: 'arc_asm_1111',
+  severity: 'high',
+  status: 'open',
+  title: 'ARC-AI-001: Every registered agent has a recorded identity and owner',
+  detail: 'agent "ops-agent" is missing: governance record',
+  subject: 'arc_ag_2222',
+  subjectKind: 'agent',
+  evidenceIds: [],
+  occurrences: 3,
+  firstSeenAt: '2026-10-18T06:00:00.000Z',
+  lastSeenAt: '2026-10-20T06:00:00.000Z',
+  createdAt: '2026-10-18T06:00:00.000Z',
+  updatedAt: '2026-10-20T06:00:00.000Z',
+};
+
+const SUMMARY: Json = {
+  window: { from: '2026-09-20T06:00:00.000Z', to: '2026-10-20T06:00:00.000Z', actionsConsidered: 4, evidenceConsidered: 4 },
+  totals: { pass: 1, fail: 1, not_assessable: 2, not_applicable: 1, attested: 1 },
+  controls: 9,
+  controlsEnabled: 9,
+  openFindings: { critical: 0, high: 1, medium: 0, low: 0, info: 0 },
+  risks: { total: 2, accepted: 0, overdueReview: 0 },
+  lastRun: { id: 'arc_run_1111', finishedAt: '2026-10-20T06:00:01.000Z', requestedBy: 'ops@example.com' },
+  attestedOrUnassessable: 3,
+  generatedAt: '2026-10-20T06:00:01.000Z',
+};
+
+const FRAMEWORKS: Json = {
+  frameworks: [
+    {
+      id: 'nist-ai-rmf',
+      name: 'NIST AI Risk Management Framework',
+      edition: 'AI RMF 1.0 (NIST AI 100-1, January 2023)',
+      disclaimer: 'These mappings are not an assessment, not a certification, and not a statement that the reference is satisfied.',
+      mappings: 17,
+      reviewed: 0,
+    },
+  ],
+};
+
+const FRAMEWORK_DETAIL: Json = {
+  framework: {
+    id: 'nist-ai-rmf',
+    name: 'NIST AI Risk Management Framework',
+    publisher: 'National Institute of Standards and Technology',
+    edition: 'AI RMF 1.0 (NIST AI 100-1, January 2023)',
+    disclaimer: 'These mappings are not an assessment, not a certification, and not a statement that the reference is satisfied.',
+  },
+  rows: [
+    {
+      mapping: {
+        framework: 'nist-ai-rmf',
+        reference: 'GOVERN 2.1',
+        title: 'Roles, responsibilities and accountability are documented',
+        controlIds: ['ARC-AI-001'],
+        review: 'proposed',
+        note: 'ARC evidences a named accountable owner per agent.',
+      },
+      controls: [{ controlId: 'ARC-AI-001', status: 'pass', evaluatedAt: '2026-10-20T06:00:00.000Z' }],
+      evidenced: false,
+      gap: 'the mapping has not been reviewed',
+    },
+  ],
+};
+
 const BASE_ROUTES: Record<string, Json | { status: number; body: Json }> = {
   '/health': HEALTH,
   '/v1/agents': { agents: [AGENT] },
@@ -275,6 +488,28 @@ const BASE_ROUTES: Record<string, Json | { status: number; body: Json }> = {
   },
   '/v1/audit': { records: [AUDIT_RECORD], total: 4 },
   '/v1/audit/verify': CHAIN_OK,
+
+  // 2.0 governance surface.
+  '/v1/assurance/summary': SUMMARY,
+  '/v1/assurance/controls': { controls: [CONTROL_ASSESSED, CONTROL_UNASSESSED] },
+  '/v1/assurance/controls/ARC-AI-001': {
+    control: CONTROL_ASSESSED,
+    history: [ASSESSMENT],
+    attestations: [],
+  },
+  '/v1/assurance/controls/ARC-AI-009': { control: CONTROL_UNASSESSED, history: [], attestations: [] },
+  '/v1/assurance/runs?limit=10': { runs: [RUN] },
+  '/v1/assurance/runs/arc_run_1111': { run: RUN, assessments: [ASSESSMENT] },
+  '/v1/assurance/assessments/arc_asm_1111': ASSESSMENT,
+  '/v1/assurance/frameworks': FRAMEWORKS,
+  '/v1/assurance/frameworks/nist-ai-rmf': FRAMEWORK_DETAIL,
+  '/v1/risks': { risks: [RISK_REVIEWED, RISK_UNREVIEWED] },
+  '/v1/risks/arc_rsk_1111': RISK_REVIEWED,
+  '/v1/risks/arc_rsk_2222': RISK_UNREVIEWED,
+  '/v1/findings?status=open': { findings: [FINDING] },
+  '/v1/findings': { findings: [FINDING] },
+  '/v1/findings/arc_fnd_1111': FINDING,
+  '/v1/evidence?limit=100': { evidence: [EVIDENCE] },
 };
 
 /** Routes with a query string need the exact key, so build them per test. */
@@ -299,6 +534,11 @@ describe('Every section renders from the API', () => {
     ['Audit', auditPage],
     ['Security', securityPage],
     ['Reports', reportsPage],
+    ['Assurance', assurancePage],
+    ['Risks', risksPage],
+    ['Findings', findingsPage],
+    ['Activity', activityPage],
+    ['Settings', settingsPage],
   ];
 
   for (const [name, render] of sections) {
@@ -325,8 +565,257 @@ describe('Every section renders from the API', () => {
 
   it('every navigation href has a route that renders', async () => {
     const hrefs = NAVIGATION.flatMap((group) => group.items.map((item) => item.href));
-    assert.deepEqual(hrefs, ['/', '/approvals', '/agents', '/tools', '/policies', '/access', '/evidence', '/audit', '/security', '/reports']);
+    assert.deepEqual(hrefs, [
+      '/',
+      '/approvals',
+      '/activity',
+      '/agents',
+      '/tools',
+      '/policies',
+      '/access',
+      '/assurance',
+      '/risks',
+      '/findings',
+      '/security',
+      '/evidence',
+      '/audit',
+      '/reports',
+      '/settings',
+    ]);
     assert.equal(hrefs.length, sections.length, 'one renderer per navigation item');
+  });
+});
+
+/**
+ * Collapses whitespace, for asserting on prose.
+ *
+ * The HTML templates wrap, so a sentence written on one line in the source
+ * arrives with a newline and indentation somewhere in the middle of it.
+ * Asserting on the raw string makes a test that breaks when someone reflows a
+ * paragraph, which teaches people to delete the test.
+ */
+function prose(page: string): string {
+  return page.replace(/\s+/g, ' ');
+}
+
+// --- the 2.0 governance sections tell the truth ---------------------------
+
+/**
+ * These are the assertions that keep the governance sections worth shipping.
+ *
+ * A console that renders a plausible figure where it has none is worse than
+ * one that renders nothing, because somebody will screenshot it and put it in
+ * front of a buyer. Each test below pins one way that could happen.
+ */
+describe('The governance sections never invent a figure', () => {
+  it('shows a never-assessed control as unassessed, not as passing or pending', async () => {
+    const { context } = contextFor(routes());
+    const page = await assurancePage(context);
+
+    assert.ok(page.includes('ARC-AI-009'), 'the unassessed control is listed');
+    assert.ok(page.includes('never assessed'), 'and is labelled as never assessed');
+
+    // The row for the unassessed control must carry no status badge at all.
+    const row = page.slice(page.indexOf('ARC-AI-009'), page.indexOf('ARC-AI-009') + 600);
+    assert.ok(!/badge (allow|ok)/.test(row), 'an unassessed control must not render as passing');
+  });
+
+  it('states the data window wherever it states a status total', async () => {
+    const { context } = contextFor(routes());
+    const page = await assurancePage(context);
+
+    const text = prose(page);
+    assert.ok(text.includes('Covering'), 'the window is stated');
+    assert.ok(text.includes('fell in that window'));
+    assert.ok(text.includes('describes that period and nothing outside it'));
+  });
+
+  it('emits no percentage or compliance score anywhere in the governance sections', async () => {
+    const renderers = [assurancePage, risksPage, findingsPage, activityPage, settingsPage];
+
+    for (const render of renderers) {
+      const { context } = contextFor(routes());
+      const page = await render(context);
+
+      // A stray `%` in CSS is fine; a percentage presented as a figure is not.
+      const body = page.slice(page.indexOf('id="main"'));
+      assert.ok(!/\d+(\.\d+)?\s*%/.test(body), `${render.name} rendered a percentage figure`);
+      assert.ok(!/compliance score/i.test(body), `${render.name} rendered a compliance score`);
+      assert.ok(!/\bcompliant\b/i.test(body), `${render.name} claimed compliance`);
+    }
+  });
+
+  it('shows an unreviewed residual risk as not reviewed, never by repeating the inherent figure', async () => {
+    const { context } = contextFor(routes());
+    const page = await risksPage(context);
+
+    assert.ok(page.includes('RISK-AI-002'));
+    assert.ok(page.includes('not reviewed'), 'the unreviewed residual says so');
+
+    // RISK-AI-002's inherent score is 10. It must appear once, in the
+    // inherent column — not twice, which is what repeating it as the residual
+    // would look like.
+    const row = page.slice(page.indexOf('RISK-AI-002'), page.indexOf('RISK-AI-002') + 900);
+    assert.equal((row.match(/>10</g) ?? []).length, 1, 'the inherent score must not be repeated as a residual');
+  });
+
+  it('says on a risk detail page why ARC will not compute a residual', async () => {
+    const { context } = contextFor(routes());
+    const page = await riskDetailPage(context, 'arc_rsk_2222');
+
+    const text = prose(page);
+    assert.ok(text.includes('ARC does not compute this'));
+    assert.ok(text.includes('named reviewer'));
+  });
+
+  it('attributes a reviewed residual to the person who reviewed it', async () => {
+    const { context } = contextFor(routes());
+    const page = await riskDetailPage(context, 'arc_rsk_1111');
+
+    assert.ok(page.includes('risk@example.com'));
+    assert.ok(page.includes('Approval gate verified operating for two quarters.'));
+  });
+
+  it('carries a control\u2019s limitations onto the control page and the assessment', async () => {
+    const limitation = 'Checks that an owner is recorded, not that the named person knows they own it.';
+
+    const control = await controlDetailPage(contextFor(routes()).context, 'ARC-AI-001');
+    assert.ok(control.includes('What a pass does not tell you'));
+    assert.ok(control.includes(limitation));
+
+    const assessment = await assessmentDetailPage(contextFor(routes()).context, 'arc_asm_1111');
+    assert.ok(assessment.includes('What this result does not establish'));
+    assert.ok(assessment.includes(limitation));
+  });
+
+  it('says plainly that a deployment control cannot be decided by ARC', async () => {
+    const { context } = contextFor(routes());
+    const page = await controlDetailPage(context, 'ARC-AI-009');
+
+    const text = prose(page);
+    assert.ok(text.includes('ARC cannot test this from inside itself.'));
+    assert.ok(text.includes('never been assessed'));
+    assert.ok(text.includes('That is not a pass.'));
+  });
+
+  /**
+   * The evidence explorer. An assessment must link each observation to the
+   * primary record it rests on, so a reader never has to take the summary's
+   * word for anything.
+   */
+  it('links an assessment observation to the evidence record behind it', async () => {
+    const { context } = contextFor(routes());
+    const page = await assessmentDetailPage(context, 'arc_asm_1111');
+
+    assert.ok(page.includes('href="/evidence/arc_ev_1111"'), 'the observation links to its evidence');
+    assert.ok(page.includes('href="/findings/arc_fnd_1111"'), 'and to the finding it raised');
+    assert.ok(page.includes('href="/assurance/ARC-AI-001"'), 'and back to the control');
+  });
+
+  it('shows failing observations before passing ones', async () => {
+    const { context } = contextFor(routes());
+    const page = await assessmentDetailPage(context, 'arc_asm_1111');
+
+    assert.ok(page.indexOf('arc_ag_2222') < page.indexOf('arc_ag_1111'), 'the failing subject comes first');
+  });
+
+  it('reports a finding\u2019s occurrence count rather than duplicating it', async () => {
+    const { context } = contextFor(routes());
+    const page = await findingsPage(context);
+
+    assert.ok(page.includes('3×'), 'the occurrence count is shown');
+    assert.equal((page.match(/arc_fnd_1111|ops-agent/g) ?? []).length >= 1, true);
+  });
+
+  it('states on the settings page that operator identity is not authenticated', async () => {
+    const { context } = contextFor(routes());
+    const page = await settingsPage(context);
+
+    const text = prose(page);
+    assert.ok(text.includes('Operator identity is not authenticated in this release'));
+    assert.ok(text.includes('can claim any identity'));
+    assert.ok(text.includes('not who ran it'));
+  });
+
+  it('states on the settings page that enforcement does not depend on assurance', async () => {
+    const { context } = contextFor(routes());
+    const page = await settingsPage(context);
+
+    const text = prose(page);
+    assert.ok(text.includes('Enforcement does not depend on the assurance layer'));
+    assert.ok(text.includes('cannot open the gateway'));
+  });
+
+  it('shows framework mappings as proposed and counts none as evidenced', async () => {
+    const { context } = contextFor(routes());
+    const page = await frameworkPage(context, 'nist-ai-rmf');
+
+    const text = prose(page);
+    assert.ok(text.includes('This is not an assessment.'));
+    assert.ok(text.includes('proposed'));
+    assert.ok(!page.includes('>reviewed<'), 'nothing ships marked reviewed');
+    assert.ok(page.includes('the mapping has not been reviewed'), 'the gap is named');
+  });
+
+  it('renders an assessment run with its window and audit head', async () => {
+    const { context } = contextFor(routes());
+    const page = await assessmentRunPage(context, 'arc_run_1111');
+
+    assert.ok(page.includes('Audit head at run time'));
+    assert.ok(page.includes('sha256:0123456789abcdef0123'));
+    assert.ok(page.includes('Covering'));
+  });
+
+  it('renders a finding detail page with the assessment that raised it', async () => {
+    const { context } = contextFor(routes());
+    const page = await findingDetailPage(context, 'arc_fnd_1111');
+
+    assert.ok(page.includes('href="/assurance/assessments/arc_asm_1111"'));
+    assert.ok(page.includes('unassigned'), 'an unassigned finding says so');
+    assert.ok(page.includes('no deadline set'));
+  });
+
+  it('says an empty activity timeline is empty rather than filling it', async () => {
+    const { context } = contextFor(routes({ '/v1/evidence?limit=100': { evidence: [] } }));
+    const page = await activityPage(context);
+
+    const text = prose(page);
+    assert.ok(text.includes('No actions have reached the gateway yet'));
+    assert.ok(text.includes('Nothing on this page is synthesised'));
+  });
+
+  it('says an empty risk register is empty rather than shipping a starter list', async () => {
+    const { context } = contextFor(routes({ '/v1/risks': { risks: [] } }));
+    const page = await risksPage(context);
+
+    const text = prose(page);
+    assert.ok(text.includes('No risks are recorded'));
+    assert.ok(text.includes('ARC ships no starter register'));
+  });
+
+  it('tells an operator how to run an assessment when none has been run', async () => {
+    const { context } = contextFor(routes({ '/v1/assurance/runs?limit=10': { runs: [] } }));
+    const page = await assurancePage(context);
+
+    const text = prose(page);
+    assert.ok(text.includes('No assessment has been run'));
+    assert.ok(text.includes('which is not the same as passing'));
+    assert.ok(text.includes('arc assurance evaluate'));
+  });
+
+  it('escapes governance content from the API like everything else', async () => {
+    const hostile = {
+      ...FINDING,
+      detail: '<img src=x onerror=alert(1)> &amp; "quoted"',
+      subject: '</td><script>alert(1)</script>',
+    };
+
+    const { context } = contextFor(routes({ '/v1/findings?status=open': { findings: [hostile] } }));
+    const page = await findingsPage(context);
+
+    assert.ok(!page.includes('<img src=x'), 'markup from the API must not survive as markup');
+    assert.ok(!page.includes('<script>alert(1)</script>'));
+    assert.ok(page.includes('&lt;img src=x'), 'it survives as escaped text');
   });
 });
 

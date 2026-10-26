@@ -1,5 +1,19 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { isArcError } from '@arc-control/schemas';
 import { ArcControlClient } from '@arc-control/sdk-typescript';
+import {
+  activityPage,
+  assessmentDetailPage,
+  assessmentRunPage,
+  assurancePage,
+  controlDetailPage,
+  findingDetailPage,
+  findingsPage,
+  frameworkPage,
+  riskDetailPage,
+  risksPage,
+  settingsPage,
+} from './assurance-pages.js';
 import {
   accessPage,
   agentDetailPage,
@@ -89,6 +103,16 @@ const APPROVAL_ID = /^\/approvals\/(arc_apr_[0-9a-f]+)$/;
 const POLICY_ID = /^\/policies\/([A-Za-z0-9._-]+)$/;
 const CONFIRM = /^\/confirm\/(reject|suspend|disable)\/([A-Za-z0-9._-]+)$/;
 
+// 2.0 governance routes. Each id shape is pinned, so a path that looks like an
+// id but is not one falls through to the 404 rather than reaching the API.
+const ASSESSMENT_ID = /^\/assurance\/assessments\/(arc_asm_[0-9a-f]+)$/;
+const RUN_ID = /^\/assurance\/runs\/(arc_run_[0-9a-f]+)$/;
+const RISK_ID = /^\/risks\/(arc_rsk_[0-9a-f]+)$/;
+const FINDING_ID = /^\/findings\/(arc_fnd_[0-9a-f]+)$/;
+const FRAMEWORK_ID = /^\/frameworks\/([a-z0-9-]+)$/;
+/** Control ids are operator-facing, like policy ids: `ARC-AI-001`. */
+const CONTROL_ID = /^\/assurance\/([A-Za-z0-9._-]+)$/;
+
 const AGENT_MUTATION = /^\/agents\/(arc_ag_[0-9a-f]+)\/(suspend|resume)$/;
 const POLICY_MUTATION = /^\/policies\/([A-Za-z0-9._-]+)\/(enable|disable)$/;
 const APPROVAL_VOTE = /^\/approvals\/(arc_apr_[0-9a-f]+)\/vote$/;
@@ -144,6 +168,32 @@ async function route(
       return;
     }
 
+    // Matched before the looser CONTROL_ID pattern below, which would
+    // otherwise swallow `/assurance/runs` and `/assurance/assessments`.
+    const assessment = ASSESSMENT_ID.exec(path);
+    if (assessment) {
+      sendHtml(response, 200, await assessmentDetailPage(context, assessment[1]!));
+      return;
+    }
+
+    const run = RUN_ID.exec(path);
+    if (run) {
+      sendHtml(response, 200, await assessmentRunPage(context, run[1]!));
+      return;
+    }
+
+    const risk = RISK_ID.exec(path);
+    if (risk) {
+      sendHtml(response, 200, await riskDetailPage(context, risk[1]!));
+      return;
+    }
+
+    const finding = FINDING_ID.exec(path);
+    if (finding) {
+      sendHtml(response, 200, await findingDetailPage(context, finding[1]!));
+      return;
+    }
+
     const confirm = CONFIRM.exec(path);
     if (confirm) {
       sendHtml(response, 200, await confirmPage(context, confirm[1] as ConfirmAction, confirm[2]!));
@@ -181,6 +231,21 @@ async function route(
       case '/reports':
         sendHtml(response, 200, await reportsPage(context));
         return;
+      case '/assurance':
+        sendHtml(response, 200, await assurancePage(context));
+        return;
+      case '/risks':
+        sendHtml(response, 200, await risksPage(context));
+        return;
+      case '/findings':
+        sendHtml(response, 200, await findingsPage(context));
+        return;
+      case '/activity':
+        sendHtml(response, 200, await activityPage(context));
+        return;
+      case '/settings':
+        sendHtml(response, 200, await settingsPage(context));
+        return;
       case '/healthz':
         response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
         response.end(JSON.stringify({ status: 'ok', apiBase: options.apiBase }));
@@ -189,8 +254,21 @@ async function route(
         break;
     }
 
-    // A policy id is matched last: its pattern is loose enough to shadow a
-    // literal section name, so every known route gets first refusal.
+    const framework = FRAMEWORK_ID.exec(path);
+    if (framework) {
+      sendHtml(response, 200, await frameworkPage(context, framework[1]!));
+      return;
+    }
+
+    // The two loose id patterns are matched last: both are permissive enough
+    // to shadow a literal section name, so every known route gets first
+    // refusal before either of them is tried.
+    const control = CONTROL_ID.exec(path);
+    if (control) {
+      sendHtml(response, 200, await controlDetailPage(context, control[1]!));
+      return;
+    }
+
     const policy = POLICY_ID.exec(path);
     if (policy) {
       sendHtml(response, 200, await policyDetailPage(context, policy[1]!));
@@ -199,7 +277,24 @@ async function route(
 
     sendHtml(response, 404, errorPage(context, 404, `There is no page at ${path}.`));
   } catch (cause) {
+    // A 404 from the API is not an outage, and saying so sends an operator to
+    // look at the wrong thing. The same mistake as reporting a broken audit
+    // chain as an unreachable API, which is why both are now distinguished:
+    // 404 means the object is not there, 403 means they may not see it, and
+    // only a genuine transport failure is a 502.
+    const code = isArcError(cause) ? cause.code : undefined;
     const message = cause instanceof Error ? cause.message : String(cause);
+
+    if (code === 'not_found') {
+      sendHtml(response, 404, errorPage(context, 404, message));
+      return;
+    }
+
+    if (code === 'unauthenticated' || code === 'policy_denied') {
+      sendHtml(response, 403, errorPage(context, 403, message));
+      return;
+    }
+
     sendHtml(response, 502, errorPage(context, 502, `The control API could not be reached: ${message}`));
   }
 }

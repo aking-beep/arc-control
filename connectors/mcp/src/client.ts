@@ -53,7 +53,7 @@ export class McpClient {
     await this.#call('initialize', {
       protocolVersion: this.#protocolVersion,
       capabilities: {},
-      clientInfo: { name: 'arc-control', version: '0.1.0' },
+      clientInfo: { name: 'arc-control', version: '2.0.0' },
     });
   }
 

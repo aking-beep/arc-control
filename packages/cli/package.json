@@ -1,6 +1,6 @@
 {
   "name": "@arc-control/cli",
-  "version": "0.1.0",
+  "version": "2.0.0",
   "description": "The arc command line: policy checks, agent management, evidence and audit verification.",
   "license": "Apache-2.0",
   "type": "module",
@@ -25,18 +25,18 @@
     "clean": "tsc -b --clean"
   },
   "dependencies": {
-    "@arc-control/schemas": "0.1.0",
-    "@arc-control/store": "0.1.0",
-    "@arc-control/policy-engine": "0.1.0",
-    "@arc-control/audit": "0.1.0",
-    "@arc-control/mcp-security": "0.1.0",
-    "@arc-control/gateway": "0.1.0",
-    "@arc-control/execution": "0.1.0",
-    "@arc-control/agent-identity": "0.1.0",
-    "@arc-control/sdk-typescript": "0.1.0",
-    "@arc-control/connector-simulation": "0.1.0",
-    "@arc-control/connector-mcp": "0.1.0",
-    "@arc-control/evidence": "0.1.0",
-    "@arc-control/assurance": "0.1.0"
+    "@arc-control/schemas": "2.0.0",
+    "@arc-control/store": "2.0.0",
+    "@arc-control/policy-engine": "2.0.0",
+    "@arc-control/audit": "2.0.0",
+    "@arc-control/mcp-security": "2.0.0",
+    "@arc-control/gateway": "2.0.0",
+    "@arc-control/execution": "2.0.0",
+    "@arc-control/agent-identity": "2.0.0",
+    "@arc-control/sdk-typescript": "2.0.0",
+    "@arc-control/connector-simulation": "2.0.0",
+    "@arc-control/connector-mcp": "2.0.0",
+    "@arc-control/evidence": "2.0.0",
+    "@arc-control/assurance": "2.0.0"
   }
 }

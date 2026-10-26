@@ -181,6 +181,11 @@ async function main() {
   const store = new MemoryStore();
   const api = createControlApi({ store, operatorToken: OPERATOR_TOKEN, demoSeed: true });
   const { apiKeys } = await seedDemo(api.gateway);
+
+  // Install the baseline control library, exactly as `npm run api` does on
+  // start. Without it the capture would show the governance sections empty,
+  // which would misrepresent the product rather than demonstrate it.
+  await api.assurance.seedBaseline();
   const apiAddress = await api.listen(0);
   const apiBase = `http://${apiAddress.host}:${apiAddress.port}`;
 
