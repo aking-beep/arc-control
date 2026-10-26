@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arctransformationgroup.com/arc-control/v2.0/control.schema.json",
+  "title": "ARC Control Control Definition",
+  "description": "A governance control: the assurance it provides, how it is checked, what a pass does not tell you, and whether ARC can decide it at all. `assurance` is the field that keeps the model honest — only an `automated` control can be decided from ARC's own records; a `deployment` or `manual` control needs a dated human attestation and reports `not_assessable` without one, never a pass.",
+  "type": "object",
+  "required": [
+    "id",
+    "version",
+    "title",
+    "objective",
+    "procedure",
+    "assurance",
+    "frequency",
+    "enabled",
+    "category",
+    "failureSeverity",
+    "limitations",
+    "labels",
+    "createdAt",
+    "updatedAt"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Operator-facing control id, cited in reports and framework mappings.",
+      "examples": ["ARC-AI-001"]
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Bumped when the procedure or scope changes. A result is only interpretable against the procedure that produced it."
+    },
+    "title": { "type": "string" },
+    "objective": {
+      "type": "string",
+      "description": "The assurance the control provides, in one sentence an auditor can read."
+    },
+    "procedure": {
+      "type": "string",
+      "description": "Exactly what is checked. For an automated control this describes the implemented assertion; otherwise it is the instruction to the human or deployment reviewer."
+    },
+    "assurance": {
+      "enum": ["automated", "deployment", "manual"],
+      "description": "`automated`: ARC decides it deterministically from its own records. `deployment`: the answer depends on facts outside ARC's records, such as network routes or credential scope. `manual`: a human judgement."
+    },
+    "frequency": { "enum": ["continuous", "daily", "weekly", "monthly", "quarterly", "annual"] },
+    "enabled": { "type": "boolean" },
+    "category": { "type": "string", "examples": ["governance", "authorization", "evidence", "supply-chain"] },
+    "failureSeverity": { "enum": ["info", "low", "medium", "high", "critical"] },
+    "limitations": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "description": "What a pass does not tell you. Required and non-empty: these travel with every result and every export, so the caveat arrives attached to the green tick rather than in a document beside it."
+    },
+    "owner": { "type": "string" },
+    "labels": { "type": "object", "additionalProperties": { "type": "string" } },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" }
+  }
+}

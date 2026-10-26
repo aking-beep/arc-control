@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.arctransformationgroup.com/arc-control/v0.1/action.schema.json",
+  "$id": "https://schemas.arctransformationgroup.com/arc-control/v2.0/action.schema.json",
   "title": "ARC Control Action",
   "description": "An action is a single thing an agent asked to do. It is recorded before any decision is made, so a denied action is as durable as an executed one — the attempt is itself the security signal.",
   "type": "object",

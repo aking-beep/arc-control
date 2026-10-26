@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.arctransformationgroup.com/arc-control/v0.1/policy.schema.json",
+  "$id": "https://schemas.arctransformationgroup.com/arc-control/v2.0/policy.schema.json",
   "title": "ARC Control Policy",
   "description": "A policy is a document an auditor can read. It matches a set of agents and tools, then evaluates ordered rules against the requested action; the first rule whose condition holds decides, and if none holds the fallback applies. Conditions are a closed expression language with no embedded code, so evaluation is total, side-effect free and identical every time.",
   "type": "object",

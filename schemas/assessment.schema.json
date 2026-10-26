@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arctransformationgroup.com/arc-control/v2.0/assessment.schema.json",
+  "title": "ARC Control Control Assessment",
+  "description": "The outcome of evaluating one control once, over a stated window. `not_assessable` is a first-class status, not an error: it means the question was asked and could not be answered, which is materially different from both yes and no and must survive into reports as its own category. `window` is required because a status without a data window cannot be interpreted.",
+  "type": "object",
+  "required": [
+    "id",
+    "schemaVersion",
+    "runId",
+    "controlId",
+    "controlVersion",
+    "organizationId",
+    "status",
+    "assurance",
+    "summary",
+    "observations",
+    "window",
+    "limitations",
+    "findingIds",
+    "evaluatedAt",
+    "evaluationMs",
+    "integrityDigest"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": "string", "pattern": "^arc_asm_[0-9a-f]{32}$" },
+    "schemaVersion": { "const": 2 },
+    "runId": { "type": "string", "pattern": "^arc_run_[0-9a-f]{32}$" },
+    "controlId": { "type": "string" },
+    "controlVersion": { "type": "integer", "minimum": 1 },
+    "organizationId": { "type": "string" },
+    "status": {
+      "enum": ["pass", "fail", "not_assessable", "not_applicable", "attested"],
+      "description": "`attested` means a named human stated it, not that ARC proved it."
+    },
+    "assurance": { "enum": ["automated", "deployment", "manual"] },
+    "summary": { "type": "string" },
+    "observations": { "type": "array", "items": { "$ref": "#/$defs/observation" } },
+    "window": { "$ref": "#/$defs/window" },
+    "attestation": { "$ref": "#/$defs/attestation" },
+    "limitations": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Carried from the control definition so an exported result keeps its caveats."
+    },
+    "findingIds": { "type": "array", "items": { "type": "string", "pattern": "^arc_fnd_[0-9a-f]{32}$" } },
+    "evaluatedAt": { "type": "string", "format": "date-time" },
+    "evaluationMs": { "type": "number", "minimum": 0 },
+    "integrityDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Digest over every other field, written when ARC stored the record. An exported assessment is checked against this as well as against its bundle digest, so a record altered before export is still caught."
+    }
+  },
+  "$defs": {
+    "observation": {
+      "type": "object",
+      "required": ["subject", "subjectKind", "ok", "detail"],
+      "additionalProperties": false,
+      "properties": {
+        "subject": {
+          "type": "string",
+          "description": "A stable name for the thing examined, not the value observed. Keying a finding on a moving value makes every run open a new finding for one unchanged condition."
+        },
+        "subjectKind": {
+          "enum": ["agent", "tool", "policy", "action", "evidence", "approval", "audit", "connector", "system"]
+        },
+        "ok": { "type": "boolean" },
+        "detail": { "type": "string" },
+        "evidenceIds": { "type": "array", "items": { "type": "string", "pattern": "^arc_ev_[0-9a-f]{32}$" } }
+      }
+    },
+    "window": {
+      "type": "object",
+      "required": ["from", "to", "actionsConsidered", "evidenceConsidered"],
+      "additionalProperties": false,
+      "description": "The data window a result covers. Mandatory: a report that omits it invites the reader to assume \"always\".",
+      "properties": {
+        "from": { "type": "string", "format": "date-time" },
+        "to": { "type": "string", "format": "date-time" },
+        "actionsConsidered": { "type": "integer", "minimum": 0 },
+        "evidenceConsidered": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "attestation": {
+      "type": "object",
+      "required": ["id", "controlId", "attestedBy", "attestedAt", "statement", "expiresAt"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^arc_att_[0-9a-f]{32}$" },
+        "controlId": { "type": "string" },
+        "attestedBy": { "type": "string" },
+        "attestedAt": { "type": "string", "format": "date-time" },
+        "statement": {
+          "type": "string",
+          "description": "What the attester claims to have checked. The value of an attestation is this sentence, not the fact that a box was ticked."
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Required. Without it, a control nobody has looked at in three years keeps reporting its old answer."
+        },
+        "reference": { "type": "string" }
+      }
+    }
+  }
+}

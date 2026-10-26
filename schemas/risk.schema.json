@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arctransformationgroup.com/arc-control/v2.0/risk.schema.json",
+  "title": "ARC Control Risk",
+  "description": "A risk on the register. `inherent` is the position before ARC's controls are credited. `residual` is deliberately optional and, when present, carries the name of the human who reviewed it and their rationale: ARC never computes a residual rating, because crediting a control automatically would improve the number because a control exists rather than because anyone checked it works.",
+  "type": "object",
+  "required": [
+    "id",
+    "reference",
+    "title",
+    "description",
+    "organizationId",
+    "category",
+    "status",
+    "inherent",
+    "treatment",
+    "owner",
+    "controlIds",
+    "scope",
+    "labels",
+    "createdAt",
+    "updatedAt"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": "string", "pattern": "^arc_rsk_[0-9a-f]{32}$" },
+    "reference": { "type": "string", "description": "Operator-facing reference cited in reports.", "examples": ["RISK-AI-004"] },
+    "title": { "type": "string" },
+    "description": { "type": "string" },
+    "organizationId": { "type": "string" },
+    "category": { "type": "string", "examples": ["unauthorized-action", "data-exposure", "availability"] },
+    "status": { "enum": ["identified", "assessed", "treated", "accepted", "closed"] },
+    "inherent": { "$ref": "#/$defs/rating" },
+    "residual": {
+      "allOf": [{ "$ref": "#/$defs/rating" }],
+      "type": "object",
+      "required": ["impact", "likelihood", "score", "severity", "reviewedBy", "reviewedAt", "rationale"],
+      "properties": {
+        "reviewedBy": { "type": "string", "description": "Required. An unreviewed residual is not a residual." },
+        "reviewedAt": { "type": "string", "format": "date-time" },
+        "rationale": { "type": "string", "description": "What the reviewer relied on. Shown verbatim beside the number." }
+      }
+    },
+    "treatment": { "enum": ["mitigate", "transfer", "avoid", "accept"] },
+    "owner": { "type": "string", "description": "Accountable for the risk, not for the agent." },
+    "controlIds": { "type": "array", "items": { "type": "string" } },
+    "scope": { "type": "array", "items": { "type": "string" }, "description": "Agents, tools or systems concerned. Empty means organization-wide." },
+    "acceptance": {
+      "type": "object",
+      "required": ["acceptedBy", "acceptedAt", "rationale", "expiresAt"],
+      "additionalProperties": false,
+      "properties": {
+        "acceptedBy": { "type": "string" },
+        "acceptedAt": { "type": "string", "format": "date-time" },
+        "rationale": { "type": "string" },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Required. An acceptance with no end date is a decision nobody revisits."
+        }
+      }
+    },
+    "reviewDueAt": { "type": "string", "format": "date-time" },
+    "labels": { "type": "object", "additionalProperties": { "type": "string" } },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" }
+  },
+  "$defs": {
+    "rating": {
+      "type": "object",
+      "required": ["impact", "likelihood", "score", "severity"],
+      "description": "Impact and likelihood are 1-5 ordinal bands rather than probabilities: nobody can honestly put a number on \"an agent exfiltrates customer data this quarter\", and a model demanding one produces false precision that then gets multiplied.",
+      "properties": {
+        "impact": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "likelihood": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "score": { "type": "integer", "minimum": 1, "maximum": 25 },
+        "severity": { "enum": ["low", "moderate", "high", "critical"] }
+      }
+    }
+  }
+}
