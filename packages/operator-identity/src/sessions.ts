@@ -173,11 +173,33 @@ export class SessionManager {
     };
   }
 
+  /**
+   * Records that a session is in use.
+   *
+   * Inside the lock, and re-read inside it, because this writes a record it
+   * read earlier. Without that, a revocation landing between the read and the
+   * write is erased by the stale snapshot and the session comes back to life:
+   * offboarding would silently fail at exactly the moment it matters, while
+   * the person is still clicking.
+   *
+   * This is the fourth time this shape has gone wrong in this codebase.
+   * Reading outside a lock is fine; writing back what you read is not.
+   */
   async #touch(session: OperatorSession, now: number): Promise<void> {
     if (now - Date.parse(session.lastSeenAt) < this.#touchMs) return;
-    await this.#store.operatorSessions.put(session.id, {
-      ...session,
-      lastSeenAt: new Date(now).toISOString(),
+
+    await this.#store.operatorSessions.transact(async () => {
+      const current = await this.#store.operatorSessions.get(session.id);
+
+      // Gone, or ended since the read. Either way there is nothing here whose
+      // last-seen time is worth recording, and writing one would resurrect it.
+      if (!current || current.revokedAt !== undefined) return;
+      if (now - Date.parse(current.lastSeenAt) < this.#touchMs) return;
+
+      await this.#store.operatorSessions.put(current.id, {
+        ...current,
+        lastSeenAt: new Date(now).toISOString(),
+      });
     });
   }
 

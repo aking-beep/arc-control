@@ -24,13 +24,16 @@ credential custody — and it is the single most important control.
 API and nothing else outbound; only the API may reach target systems. The
 Terraform module deliberately does not guess at this.
 
-**2. An unauthenticated console.**
+**2. An unconfigured identity provider.**
 
-v0.1 takes the operator's identity from configuration rather than from an
-authenticated session, so every approval is attributed to whatever
-`ARC_OPERATOR_IDENTITY` says. Put an identity-aware proxy in front of the
-console, and treat the operator token as a shared administrative secret. See
-[TRUST_MODEL.md](../docs/TRUST_MODEL.md#what-an-operator-is-trusted-with-and-the-v01-gap).
+Nothing here points ARC Control at one. Until you do, the deployment falls back
+to the shared operator token and attributes every approval to whatever
+`ARC_OPERATOR_IDENTITY` says — recorded honestly as `claimed`, which is not the
+evidence an auditor wants. Configure OpenID Connect (`ARC_OIDC_ISSUER`,
+`ARC_OIDC_CLIENT_ID`, `ARC_OIDC_CLIENT_SECRET`, `ARC_SESSION_SECRET`) and the
+API stops accepting the token at all. Failing that, put an identity-aware proxy
+in front and treat the operator token as a shared administrative secret. See
+[TRUST_MODEL.md](../docs/TRUST_MODEL.md#what-an-operator-is-trusted-with-and-how-far-that-trust-is-established).
 
 **3. An unbacked-up volume.**
 

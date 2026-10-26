@@ -99,6 +99,16 @@ export interface NotificationDelivery {
   /** The human-readable line that was sent, kept so the record shows what was said. */
   readonly summary: string;
   readonly status: DeliveryStatus;
+  /**
+   * Console path this was about, kept so a retry can rebuild the same message.
+   *
+   * Without it a retry that succeeds carries no link — so the attempt that
+   * actually reaches somebody is the one that cannot tell them where to act,
+   * which is most of a notification's value.
+   */
+  readonly path?: string;
+  /** Structured fields sent with the original, kept for the same reason. */
+  readonly details?: Readonly<Record<string, unknown>>;
   readonly attempts: readonly DeliveryAttempt[];
   readonly createdAt: string;
   readonly deliveredAt?: string;

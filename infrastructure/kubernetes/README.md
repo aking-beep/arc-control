@@ -18,11 +18,13 @@ kubectl -n arc-control port-forward svc/arc-control-console 8788:8788
 
 ## What to change before trusting this
 
-**Put something that authenticates humans in front of the console.** v0.1
-takes the operator's identity from configuration, not from an authenticated
-session, so the console as deployed here attributes every approval to
-`operator@cluster.local`. See
-[TRUST_MODEL.md](../../docs/TRUST_MODEL.md#what-an-operator-is-trusted-with-and-the-v01-gap).
+**Point it at your identity provider.** The manifests here ship no provider, so
+the deployment falls back to the shared token and attributes every approval to
+`operator@cluster.local` — recorded as `claimed`. Fill in the OpenID Connect
+keys in `secret.yaml` and operators sign in individually, with roles from
+verified claims and the token refused outright. Until then, put something that
+authenticates humans in front of the console. See
+[TRUST_MODEL.md](../../docs/TRUST_MODEL.md#what-an-operator-is-trusted-with-and-how-far-that-trust-is-established).
 
 **Narrow the egress rules.** `networkpolicy.yaml` allows the API to reach
 anything on 443 because it cannot know which systems you connect. The

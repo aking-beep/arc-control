@@ -102,16 +102,31 @@ npm run console
 `src/console.test.ts` drives every page against a stub API rather than a live
 one, which buys the payloads a real deployment produces rarely: a broken audit
 chain, a hostile tool description, a credential record whose salt must not
-reach the page, an endpoint that is down. 89 tests cover rendering, navigation,
-the 409 path, escaping, empty states, API failures, both themes and
+reach the page, an endpoint that is down. 141 tests cover rendering,
+navigation, the 409 path, escaping, empty states, API failures, both themes and
 accessibility.
+
+`src/sso.test.ts` does the opposite, and is the one test a stub cannot stand in
+for: it starts the real control API with single sign-on configured, signs in
+against a stub identity provider that mints genuinely signed ID tokens, and
+drives this console on the resulting session alone. It exists because the
+console was briefly unable to use the authentication the API had just gained —
+every page returned 401 — and nothing in a stub-driven suite could have noticed.
 
 `npm run demo:console` walks the whole workflow over HTTP through this console
 and asserts each step.
 
-## Put something in front of it
+## Who the console thinks you are
 
-v0.1 takes the operator's identity from configuration, not from an
-authenticated session, so every approval through this console is attributed to
-`ARC_OPERATOR_IDENTITY`. Deploy it behind an identity-aware proxy. See
-[TRUST_MODEL.md](../../docs/TRUST_MODEL.md#what-an-operator-is-trusted-with-and-the-v01-gap).
+The console holds no identity of its own. It forwards the visitor's session to
+the control API, asks `/v1/whoami` who that is, and displays the answer — so
+the name on an approval is the one the API resolved, never one the console was
+configured with. A visitor with no session is sent to the API's sign-in flow
+and returned to the page they were going to.
+
+That means the attribution shown on screen matches the attribution recorded in
+the audit log, including when it is weak. Where a deployment runs on the shared
+token instead of an identity provider, the console says so on every page that
+turns on who you are, rather than printing a configured name as though it had
+been verified. See
+[TRUST_MODEL.md](../../docs/TRUST_MODEL.md#what-an-operator-is-trusted-with-and-how-far-that-trust-is-established).

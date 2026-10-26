@@ -59,10 +59,18 @@ These are not vulnerabilities; they are v0.1 limits, written down because a
 threat model that only lists wins is marketing. Reports about them are welcome
 as design discussion rather than as security reports.
 
-- **Operator authentication is a single shared token**, with identity taken
-  from a request header. Anyone holding the token can claim any identity. Real
-  RBAC and SSO are v0.5. See
-  [TRUST_MODEL.md](./docs/TRUST_MODEL.md#what-an-operator-is-trusted-with-and-the-v01-gap).
+- **The shared operator token is still accepted where no identity provider is
+  configured**, with identity taken from a request header, so anyone holding
+  that token can claim any identity. 2.1 closed the gap for deployments that
+  configure OpenID Connect — individual sign-in, server-side sessions, roles
+  from verified claims — and the token survives only as a fallback: configure a
+  provider and the API stops accepting it. What does not close is the
+  provenance question itself, which is why every recorded identity carries the
+  assurance it was established with (`authenticated`, `asserted_by_proxy`,
+  `claimed`) and the console reports it rather than presenting all three alike.
+  A deployment left on the token is a deployment whose approvals are
+  attributable to the token, not to a person. See
+  [TRUST_MODEL.md](./docs/TRUST_MODEL.md#what-an-operator-is-trusted-with-and-how-far-that-trust-is-established).
 - **The audit chain is tamper-evident, not tamper-proof.** Two parts. An
   attacker who controls the storage can rewrite the whole chain and recompute
   every digest. And walking the records cannot detect truncation at all —

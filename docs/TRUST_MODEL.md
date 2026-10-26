@@ -83,24 +83,32 @@ operational need, and the honest way to meet it is a policy change that is
 itself recorded — not a button that produces an effect with no decision behind
 it.
 
-### What an operator *is* trusted with, and the gap that is still open in 2.0
+### What an operator *is* trusted with, and how far that trust is established
 
-v0.1 authenticates operators with a **single shared token** and takes their
-identity from the `x-arc-operator` header.
+An approval is only worth what the identity on it is worth, so ARC Control
+records **how** each identity was established rather than treating all three
+ways alike. `apps/control-api/src/operator.ts` resolves one of them per
+request, and the assurance travels with the identity onto every vote, every
+audit record and every evidence bundle:
 
-This means: anyone holding the token can claim any identity. An approval
-attributed to `cfo@example.com` proves that *someone with the operator token
-said they were the CFO*, which is weaker than it reads.
+| Assurance | What it means | What an approval on it proves |
+|---|---|---|
+| `authenticated` | The operator signed in through your OpenID Connect provider. ARC Control verified the ID token's signature against the provider's published keys, and the issuer, audience, expiry and nonce with it. Roles come from a configured claim, not from the request. | A named person, verified by your identity provider, approved this. |
+| `asserted_by_proxy` | An identity-aware proxy asserted the identity, and proved it was the proxy with a shared secret. ARC Control recorded the assertion; it did not verify the person. | Your proxy says this person approved it. The claim is only as good as the proxy. |
+| `claimed` | The shared operator token, with identity from the `x-arc-operator` header. | *Someone holding the operator token said they were the CFO* — which is weaker than it reads. |
 
-It is adequate for a pilot behind an existing identity-aware proxy — where the
-proxy establishes identity and ARC Control records it — and inadequate for
-anything else. The claimed identity is recorded on every vote and in every
-audit record, so a disputed approval can be traced to the token and the claim
-that was made, but the claim itself is not independently verified.
+2.1 added the first of those, and made the third a fallback rather than a
+bypass: configure a provider and the API stops accepting the token. So the gap
+that was open in 2.0 is closed for any deployment that configures single
+sign-on, and remains open — honestly labelled — for one that does not.
 
-`apps/control-api/src/operator.ts` is the module real RBAC and SSO replace in
-v0.5. Until then, treat the operator token as a shared administrative secret
-and put a proxy that authenticates humans in front of the console.
+Two consequences worth stating plainly. A deployment left on the shared token
+has approvals attributable to the token, not to a person; treat the token as a
+shared administrative secret and put a proxy that authenticates humans in front
+of the console. And an evidence bundle carries the weakest assurance of the
+identities it depends on, because a chain of custody is not stronger than its
+weakest link — an auditor reading `claimed` is being told something true about
+what the record can support.
 
 ---
 

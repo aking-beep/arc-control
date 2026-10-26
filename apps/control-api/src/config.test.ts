@@ -193,6 +193,62 @@ describe('configurations that are allowed with a warning', () => {
   });
 });
 
+/**
+ * Every way a deployment actually leaves a setting blank produces an empty
+ * string, not an absent one: `ARC_SESSION_SECRET=` in a `.env` file, `${VAR:-}`
+ * in a compose file, a Kubernetes `secretKeyRef` to an empty key. Reading
+ * those as *configured* is how the compose file this repository ships came to
+ * refuse to start.
+ */
+describe('a blank setting is an unset setting', () => {
+  it('starts with the whole identity block present but empty', () => {
+    const config = loadConfig({
+      ...LOOPBACK,
+      ARC_OIDC_ISSUER: '',
+      ARC_OIDC_CLIENT_ID: '',
+      ARC_OIDC_CLIENT_SECRET: '',
+      ARC_OIDC_REDIRECT_URI: '',
+      ARC_SESSION_SECRET: '',
+      ARC_OPERATOR_TOKEN: 'a-real-token',
+    });
+
+    assert.equal(config.options.oidc, undefined, 'a blank issuer is not single sign-on');
+    assert.equal(config.options.sessionSecret, undefined);
+  });
+
+  it('does not count a blank token as an operator credential', () => {
+    const config = loadConfig({ ...LOOPBACK, ARC_OPERATOR_TOKEN: '   ' });
+
+    assert.equal(config.options.operatorToken, undefined, 'a blank token would authenticate nobody');
+    assert.ok(
+      config.warnings.some((warning) => warning.includes('No operator authentication is configured')),
+      `expected a warning about unconfigured authentication, got ${JSON.stringify(config.warnings)}`,
+    );
+  });
+
+  it('does not refuse a blank session secret for being shorter than 32 characters', () => {
+    const config = loadConfig({ ...LOOPBACK, ARC_SESSION_SECRET: '', ARC_OPERATOR_TOKEN: 'a-real-token' });
+
+    assert.ok(
+      !config.warnings.some((warning) => warning.includes('32 characters')),
+      'a blank secret is unset, not too short',
+    );
+  });
+
+  /** A short secret that someone did set is still refused. */
+  it('still refuses a session secret that is present and too short', () => {
+    const error = refusal({ ...LOOPBACK, ARC_SESSION_SECRET: 'too-short' });
+
+    assert.match(error.message, /ARC_SESSION_SECRET must be at least 32 characters/);
+  });
+
+  it('trims a setting rather than carrying the whitespace into a credential', () => {
+    const config = loadConfig({ ...LOOPBACK, ARC_OPERATOR_TOKEN: `  ${SECRET}\n` });
+
+    assert.equal(config.options.operatorToken, SECRET);
+  });
+});
+
 describe('parsing', () => {
   it('reads a group-to-role mapping', () => {
     const config = loadConfig({

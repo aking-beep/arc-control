@@ -322,6 +322,91 @@ describe('a failed delivery is recorded, not lost', () => {
     assert.match(String(final.attempts.at(-1)?.error), /no longer exists/);
   });
 
+  /**
+   * The retry is the attempt that actually reaches somebody, so it is the one
+   * that most needs the link. `sweep` rebuilt the payload from the delivery
+   * record, which did not store the path — so the message that arrived was
+   * the one that could not say where to act.
+   */
+  it('keeps the console link on a retry', async () => {
+    channel.reply.status = 500;
+    const store = new MemoryStore();
+    let now = Date.parse('2026-06-15T12:00:00.000Z');
+    const notify = new Notifier({
+      store,
+      consoleUrl: 'https://arc.example.com',
+      now: () => new Date(now),
+    });
+    await notify.addChannel({ name: 'flaky', url });
+
+    await notify.notify({
+      event: 'approval.requested',
+      subject: 'arc_apr_1',
+      summary: 'needs a human',
+      path: '/approvals/arc_apr_1',
+      details: { tool: 'stripe.refund' },
+    });
+
+    now += 60_000;
+    channel.reply.status = 200;
+    channel.received.length = 0;
+    assert.equal((await notify.sweep()).delivered, 1);
+
+    const body = channel.received[0]?.body as Record<string, unknown>;
+    assert.equal(body.url, 'https://arc.example.com/approvals/arc_apr_1', 'the retry carries the link');
+    assert.deepEqual(body.details, { tool: 'stripe.refund' });
+  });
+
+  /**
+   * Parameters are the one field deliberately not kept on the record, so they
+   * are not replayed either: a delivery row is something an operator browses,
+   * and it must not become a second copy of an action's arguments.
+   */
+  it('does not persist action parameters onto the delivery record', async () => {
+    channel.reply.status = 500;
+    const store = new MemoryStore();
+    const notify = new Notifier({ store });
+    await notify.addChannel({ name: 'ops', url, includeParameters: true });
+
+    const [delivery] = await notify.notify({
+      event: 'approval.requested',
+      subject: 'arc_apr_1',
+      summary: 'needs a human',
+      parameters: { amount: 25_000, customer: 'cus_secret' },
+    });
+
+    const stored = JSON.stringify(await store.notificationDeliveries.get(delivery!.id));
+    assert.ok(!stored.includes('cus_secret'), 'a delivery row is not a copy of the action');
+    assert.ok(!stored.includes('25000'));
+  });
+
+  /**
+   * Deduplication used to read a page of recent deliveries, which held until
+   * that window rolled off — after which every overdue finding was announced
+   * again on every tick, forever.
+   */
+  it('remembers a subject was notified however many deliveries came after', async () => {
+    channel.reply.status = 200;
+    const store = new MemoryStore();
+    const notify = new Notifier({ store });
+    await notify.addChannel({ name: 'ops', url });
+
+    await notify.notify({ event: 'finding.overdue', subject: 'arc_fnd_first', summary: 'late' });
+
+    // More than any page size the caller might have used.
+    for (let index = 0; index < 60; index += 1) {
+      await notify.notify({ event: 'finding.overdue', subject: `arc_fnd_${String(index)}`, summary: 'late' });
+    }
+
+    assert.equal(await notify.hasNotified('finding.overdue', 'arc_fnd_first'), true);
+    assert.equal(await notify.hasNotified('finding.overdue', 'arc_fnd_never'), false);
+    assert.equal(
+      await notify.hasNotified('approval.expiring', 'arc_fnd_first'),
+      false,
+      'and it is keyed on the event as well as the subject',
+    );
+  });
+
   it('lists failures, so a webhook that has been broken for a week is visible', async () => {
     channel.reply.status = 500;
     const store = new MemoryStore();

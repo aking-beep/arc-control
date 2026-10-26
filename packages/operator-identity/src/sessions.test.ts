@@ -136,6 +136,109 @@ describe('ending a session', () => {
   });
 });
 
+/**
+ * Recording that a session is in use writes a record that was read earlier,
+ * which is the shape that has now gone wrong four times in this codebase.
+ *
+ * The specific harm: a revocation landing between the read and the write is
+ * erased by the stale snapshot, and the session comes back to life. Offboarding
+ * silently fails at exactly the moment it matters — while the person is still
+ * clicking — and the audit record says they were removed.
+ */
+describe('using a session cannot undo a revocation', () => {
+  /**
+   * The interleave is forced rather than raced.
+   *
+   * Starting two promises and hoping they collide is not a test: JavaScript's
+   * ordering decided the winner, and the first version of this test passed
+   * against the bug. So the store's read is instrumented to land the
+   * revocation at the one moment that matters — after `resolve` has its
+   * snapshot and before it writes the last-seen time.
+   */
+  it('does not resurrect a session revoked between the read and the write', async () => {
+    let now = Date.parse('2026-06-15T12:00:00.000Z');
+    const store = new MemoryStore();
+    const manager = new SessionManager({
+      store,
+      signingSecret: SECRET,
+      now: () => new Date(now),
+      idleTimeoutMs: 600_000,
+    });
+
+    const { session, cookie } = await manager.open(PERSON);
+
+    // Past the write throttle, so the resolve below will try to record activity.
+    now += 300_000;
+
+    const realGet = store.operatorSessions.get.bind(store.operatorSessions);
+    let landed = false;
+    store.operatorSessions.get = async (id: string) => {
+      const value = await realGet(id);
+      if (!landed) {
+        // Set before awaiting, so the revoke's own read does not recurse.
+        landed = true;
+        await manager.revoke(session.id, 'admin@example.com', 'left the company');
+      }
+      return value;
+    };
+
+    await manager.resolve(cookie).catch(() => undefined);
+    store.operatorSessions.get = realGet;
+
+    const after = await store.operatorSessions.get(session.id);
+    assert.ok(after?.revokedAt, 'the revocation must survive a concurrent touch');
+    assert.equal(after.revokedReason, 'left the company');
+
+    await assert.rejects(
+      () => manager.resolve(cookie),
+      (error: ArcError) => error.code === 'unauthenticated',
+      'and the cookie must be dead afterwards',
+    );
+  });
+
+  it('still records activity when nothing is racing it', async () => {
+    let now = Date.parse('2026-06-15T12:00:00.000Z');
+    const store = new MemoryStore();
+    const manager = new SessionManager({
+      store,
+      signingSecret: SECRET,
+      now: () => new Date(now),
+      idleTimeoutMs: 600_000,
+    });
+
+    const { session, cookie } = await manager.open(PERSON);
+    const before = (await store.operatorSessions.get(session.id))!.lastSeenAt;
+
+    now += 300_000;
+    await manager.resolve(cookie);
+
+    assert.notEqual(
+      (await store.operatorSessions.get(session.id))?.lastSeenAt,
+      before,
+      'the throttle must not have swallowed a real update',
+    );
+  });
+
+  it('does not write at all for a session already revoked', async () => {
+    let now = Date.parse('2026-06-15T12:00:00.000Z');
+    const store = new MemoryStore();
+    const manager = new SessionManager({ store, signingSecret: SECRET, now: () => new Date(now) });
+
+    const { session, cookie } = await manager.open(PERSON);
+    await manager.revoke(session.id, 'admin@example.com', 'revoked');
+    const snapshot = JSON.stringify(await store.operatorSessions.get(session.id));
+
+    now += 300_000;
+    await assert.rejects(() => manager.resolve(cookie));
+
+    assert.equal(
+      JSON.stringify(await store.operatorSessions.get(session.id)),
+      snapshot,
+      'a refused resolve must leave the record exactly as it was',
+    );
+  });
+});
+
 describe('session lifetime', () => {
   it('stops accepting a session past its expiry', async () => {
     let now = Date.parse('2026-06-15T12:00:00.000Z');

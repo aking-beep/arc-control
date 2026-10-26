@@ -197,7 +197,8 @@ async function main() {
     demoSeed: true,
     consoleUrl: 'https://arc.example.com',
     // A scheduler pass mid-crawl would change the data under the crawler, so
-    // the capture drives one deliberately instead, below.
+    // the capture drives exactly one itself, after the scenario and before the
+    // crawl. See the `scheduler.tick()` call below.
     schedule: false,
   });
   const { apiKeys } = await seedDemo(api.gateway);
@@ -409,6 +410,30 @@ async function main() {
       });
       process.stdout.write('  assigned          1 finding, with a deadline that has passed\n');
     }
+
+    /**
+     * One scheduler pass, driven deliberately.
+     *
+     * The capture turns the scheduler off so a tick cannot change the data
+     * under the crawler, and then has to drive one itself — otherwise the
+     * overdue finding just created announces nothing and the Notifications
+     * section shows only the approval. The comment above the `schedule: false`
+     * promised this pass and the first version of this script never made it,
+     * which a review caught.
+     */
+    const tick = await api.scheduler.tick();
+    process.stdout.write(
+      `  swept             ${String(tick.overdueNotified)} overdue notified, ` +
+        `${String(tick.deliveriesAttempted)} delivery retried, ` +
+        `${String(tick.expiryWarningsSent)} expiry warning\n`,
+    );
+
+    if (tick.problems.length > 0) {
+      // A capture built on a failed pass would be a capture of a broken
+      // deployment presented as a demonstration.
+      throw new Error(`the scheduler pass reported problems: ${tick.problems.join('; ')}`);
+    }
+
     // -- crawl ------------------------------------------------------------
     process.stdout.write('\nCapturing pages\n');
 

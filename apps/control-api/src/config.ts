@@ -37,6 +37,25 @@ function bool(value: string | undefined): boolean | undefined {
   return value === 'true' || value === '1' || value === 'yes';
 }
 
+/**
+ * A string setting, where empty means unset.
+ *
+ * This matters more than it looks. Every way a deployment actually leaves a
+ * variable blank produces an empty string rather than an absent one:
+ * `ARC_SESSION_SECRET=` in a `.env` file, `${VAR:-}` in a compose file, a
+ * Kubernetes `secretKeyRef` to a key that exists and is empty. Comparing
+ * against `undefined` reads all of those as *configured*, so a blank
+ * `ARC_OIDC_ISSUER` would refuse to start for want of a client id nobody
+ * meant to set, and a blank `ARC_OPERATOR_TOKEN` would count as an operator
+ * credential. `bool` above already drew this line; the string settings did
+ * not, and the shipped compose file tripped over it.
+ */
+function text(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const trimmed = value.trim();
+  return trimmed === '' ? undefined : trimmed;
+}
+
 function csv(value: string | undefined): readonly string[] {
   return (value ?? '').split(/[\s,]+/).filter(Boolean);
 }
@@ -79,19 +98,19 @@ export function loadConfig(env: Env = process.env): LoadedConfig {
     refusals.push(`ARC_PORT="${String(env.ARC_PORT)}" is not a port number`);
   }
 
-  const host = env.ARC_HOST ?? '127.0.0.1';
+  const host = text(env.ARC_HOST) ?? '127.0.0.1';
   const exposed = isExposed(host);
-  const dataDir = env.ARC_DATA_DIR;
+  const dataDir = text(env.ARC_DATA_DIR);
   const demoSeed = bool(env.ARC_SEED_DEMO) === true;
 
   // --- operator identity ---------------------------------------------------
 
-  const issuer = env.ARC_OIDC_ISSUER;
-  const clientId = env.ARC_OIDC_CLIENT_ID;
-  const redirectUri = env.ARC_OIDC_REDIRECT_URI;
-  const sessionSecret = env.ARC_SESSION_SECRET;
-  const operatorToken = env.ARC_OPERATOR_TOKEN;
-  const proxySecret = env.ARC_TRUSTED_PROXY_SECRET;
+  const issuer = text(env.ARC_OIDC_ISSUER);
+  const clientId = text(env.ARC_OIDC_CLIENT_ID);
+  const redirectUri = text(env.ARC_OIDC_REDIRECT_URI);
+  const sessionSecret = text(env.ARC_SESSION_SECRET);
+  const operatorToken = text(env.ARC_OPERATOR_TOKEN);
+  const proxySecret = text(env.ARC_TRUSTED_PROXY_SECRET);
   const allowSharedToken = bool(env.ARC_ALLOW_SHARED_TOKEN);
 
   if (issuer !== undefined) {
@@ -190,7 +209,7 @@ export function loadConfig(env: Env = process.env): LoadedConfig {
     );
   }
 
-  const consoleUrl = env.ARC_CONSOLE_URL;
+  const consoleUrl = text(env.ARC_CONSOLE_URL);
   if (consoleUrl === undefined) {
     warnings.push(
       'ARC_CONSOLE_URL is unset, so notifications can say what happened but not where to act on it.',
@@ -207,7 +226,11 @@ export function loadConfig(env: Env = process.env): LoadedConfig {
 
   const roleMap = mapping(env.ARC_OIDC_ROLE_MAP);
   const directory = mapping(env.ARC_OPERATOR_DIRECTORY);
-  const roleClaim = env.ARC_OIDC_ROLE_CLAIM;
+  const roleClaim = text(env.ARC_OIDC_ROLE_CLAIM);
+  const clientSecret = text(env.ARC_OIDC_CLIENT_SECRET);
+  const rolesHeader = text(env.ARC_TRUSTED_PROXY_ROLES_HEADER);
+  const webhookSigningSecret = text(env.ARC_WEBHOOK_SIGNING_SECRET);
+  const defaultOrganizationId = text(env.ARC_DEFAULT_ORGANIZATION_ID);
 
   if (issuer !== undefined && roleMap === undefined && directory === undefined) {
     warnings.push(
@@ -225,16 +248,16 @@ export function loadConfig(env: Env = process.env): LoadedConfig {
     ...(sessionSecret ? { sessionSecret } : {}),
     ...(secureCookies !== undefined ? { secureCookies } : {}),
     ...(consoleUrl ? { consoleUrl } : {}),
-    ...(env.ARC_WEBHOOK_SIGNING_SECRET ? { webhookSigningSecret: env.ARC_WEBHOOK_SIGNING_SECRET } : {}),
+    ...(webhookSigningSecret ? { webhookSigningSecret } : {}),
     ...(schedule !== undefined ? { schedule } : {}),
-    ...(env.ARC_DEFAULT_ORGANIZATION_ID ? { defaultOrganizationId: env.ARC_DEFAULT_ORGANIZATION_ID } : {}),
+    ...(defaultOrganizationId ? { defaultOrganizationId } : {}),
     ...(issuer && clientId && redirectUri
       ? {
           oidc: {
             issuer,
             clientId,
             redirectUri,
-            ...(env.ARC_OIDC_CLIENT_SECRET ? { clientSecret: env.ARC_OIDC_CLIENT_SECRET } : {}),
+            ...(clientSecret ? { clientSecret } : {}),
             ...(csv(env.ARC_OIDC_SCOPES).length > 0 ? { scopes: csv(env.ARC_OIDC_SCOPES) } : {}),
           },
         }
@@ -253,8 +276,8 @@ export function loadConfig(env: Env = process.env): LoadedConfig {
       ? {
           trustedProxy: {
             sharedSecret: proxySecret,
-            identityHeader: env.ARC_TRUSTED_PROXY_IDENTITY_HEADER ?? 'x-forwarded-email',
-            ...(env.ARC_TRUSTED_PROXY_ROLES_HEADER ? { rolesHeader: env.ARC_TRUSTED_PROXY_ROLES_HEADER } : {}),
+            identityHeader: text(env.ARC_TRUSTED_PROXY_IDENTITY_HEADER) ?? 'x-forwarded-email',
+            ...(rolesHeader ? { rolesHeader } : {}),
             ...(env.ARC_TRUSTED_PROXY_SECRET_HEADER ? { secretHeader: env.ARC_TRUSTED_PROXY_SECRET_HEADER } : {}),
             ...(roleMap ? { roleMap } : {}),
           },

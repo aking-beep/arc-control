@@ -154,6 +154,8 @@ export class Notifier {
         subject: input.subject,
         summary: input.summary,
         status: 'pending',
+        ...(input.path === undefined ? {} : { path: input.path }),
+        ...(input.details === undefined ? {} : { details: input.details }),
         attempts: [],
         createdAt: this.#now().toISOString(),
       };
@@ -199,10 +201,20 @@ export class Notifier {
         continue;
       }
 
+      // Rebuilt from the record, including the path and details the original
+      // carried. Omitting them meant a successful retry arrived without the
+      // console link — the one attempt that reached somebody was the one that
+      // could not say where to act.
+      //
+      // Parameters are deliberately not kept on the record and so are not
+      // replayed: they are the one field that must not be persisted anywhere
+      // an operator browsing deliveries could read it.
       const result = await this.#attempt(delivery, channel, {
         event: delivery.event,
         subject: delivery.subject,
         summary: delivery.summary,
+        ...(delivery.path === undefined ? {} : { path: delivery.path }),
+        ...(delivery.details === undefined ? {} : { details: delivery.details }),
       });
 
       if (result.status === 'delivered') delivered += 1;
@@ -217,6 +229,21 @@ export class Notifier {
     return this.#store.notificationDeliveries.filter(
       (delivery) => delivery.status === 'abandoned' || delivery.status === 'failed',
     );
+  }
+
+  /**
+   * Whether this subject has ever been notified about this event.
+   *
+   * Asked of the whole collection rather than of a page of recent rows. The
+   * caller used to scan the newest 500 deliveries, which worked until that
+   * window rolled off — after which every overdue finding and expiring
+   * approval was announced again on every tick, forever.
+   */
+  async hasNotified(event: NotificationEvent, subject: string): Promise<boolean> {
+    const found = await this.#store.notificationDeliveries.find(
+      (delivery) => delivery.event === event && delivery.subject === subject,
+    );
+    return found !== undefined;
   }
 
   async deliveries(limit = 50): Promise<readonly NotificationDelivery[]> {

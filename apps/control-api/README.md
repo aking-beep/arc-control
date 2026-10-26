@@ -28,19 +28,25 @@ tools, policies, approvals, evidence, audit, MCP scanning.
 | `403` | Policy denied *the caller*, or the agent is suspended. |
 | `409` | A conflict: a reused idempotency key with different parameters, an approval already consumed, or an audit chain that failed verification. |
 
-## The v0.1 operator gap
+## How an operator is authenticated
 
-Operators authenticate with **one shared token**, and identity comes from the
-`x-arc-operator` header. Anyone holding the token can claim any identity.
+`src/operator.ts` resolves an operator one of three ways, and records which one
+was used, because an approval signed by a verified person and one signed by
+whoever held a shared secret are not the same evidence:
 
-That is adequate for a pilot behind an existing identity-aware proxy — where
-the proxy establishes identity and ARC Control records it — and inadequate for
-anything else. `src/operator.ts` is the seam real RBAC and SSO replace in
-v0.5. The claimed identity is recorded on every vote and in every audit record,
-so a disputed approval can be traced to the token and the claim made.
+| Mode | How identity is established | Recorded assurance |
+|---|---|---|
+| **OpenID Connect** | Authorization code with PKCE against your provider; the ID token's signature, issuer, audience, expiry and nonce are all verified; roles come from a configured claim. The session lives server-side and the browser holds only its id. | `authenticated` |
+| **Identity-aware proxy** | A trusted proxy asserts the identity in a header and proves it is the proxy with a shared secret. ARC Control records the assertion, not a verification of its own. | `asserted_by_proxy` |
+| **Shared token** | One token for everyone, with identity taken from the `x-arc-operator` header. Anyone holding the token can claim any identity. | `claimed` |
 
-Operator endpoints refuse every request when no token is configured. That is
-the correct default: an unauthenticated control plane is worse than none,
+The shared token is a **fallback, never a bypass**. It is accepted only where
+neither of the other two is configured, so a deployment cannot quietly hold the
+door open behind its own single sign-on — and `/v1/whoami` reports the mode in
+force, so the console states it rather than guessing.
+
+Operator endpoints refuse every request when no mode is configured at all. That
+is the correct default: an unauthenticated control plane is worse than none,
 because people believe it.
 
 ## Running it

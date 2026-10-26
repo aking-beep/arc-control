@@ -110,6 +110,26 @@ export function addAuthRoutes(router: Router, options: AuthRouteOptions): Router
     };
   });
 
+  /**
+   * Who the caller is, as this deployment resolved them.
+   *
+   * Available on every mode, because the console needs it on every mode: with
+   * a session the identity and roles are the session's, and a console that
+   * displayed what its own configuration said would be presenting a guess as
+   * a fact — on the page where an operator checks exactly this.
+   */
+  router.get('/v1/whoami', async (context) => {
+    const operator = await operators.authenticate(context);
+    return {
+      identifier: operator.identifier,
+      roles: operator.roles,
+      assurance: operator.assurance,
+      ...(operator.issuer === undefined ? {} : { issuer: operator.issuer }),
+      ...(operator.subject === undefined ? {} : { subject: operator.subject }),
+      ...(operator.sessionId === undefined ? {} : { sessionId: operator.sessionId }),
+    };
+  });
+
   if (sessions === undefined || oidc === undefined) return router;
 
   router.get('/auth/login', async (context) => {

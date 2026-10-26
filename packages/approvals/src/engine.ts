@@ -157,7 +157,7 @@ export class ApprovalEngine {
         });
       }
 
-      if (request.votes.some((cast) => cast.approver === args.approver.identifier)) {
+      if (request.votes.some((cast) => sameIdentity(cast.approver, args.approver.identifier))) {
         throw new ArcError('conflict', `${args.approver.identifier} has already voted on this request`, {
           details: { approvalId: request.id },
         });
@@ -317,16 +317,16 @@ export class ApprovalEngine {
    * the point of the control is that nobody approves their own agent's work.
    */
   canApprove(request: ApprovalRequest, approver: Approver): boolean {
-    if (request.requirement.requireSeparationOfDuties && approver.identifier === request.agentOwner) {
+    if (request.requirement.requireSeparationOfDuties && sameIdentity(approver.identifier, request.agentOwner)) {
       return false;
     }
 
     return request.requirement.approvers.some((selector) => {
       if (selector === '*') return true;
-      if (selector === 'owner') return approver.identifier === request.agentOwner;
+      if (selector === 'owner') return sameIdentity(approver.identifier, request.agentOwner);
       if (selector.startsWith('role:')) return approver.roles.includes(selector.slice('role:'.length));
-      if (selector.startsWith('user:')) return approver.identifier === selector.slice('user:'.length);
-      return approver.identifier === selector;
+      if (selector.startsWith('user:')) return sameIdentity(approver.identifier, selector.slice('user:'.length));
+      return sameIdentity(approver.identifier, selector);
     });
   }
 
@@ -386,4 +386,26 @@ function assertReleasable(request: ApprovalRequest, now: number): void {
         details: { approvalId: request.id },
       });
   }
+}
+
+/**
+ * Whether two recorded identities are the same person.
+ *
+ * Compared without regard to case, because the identity an operator arrives
+ * with is normalised and the identity written into a policy or an agent's
+ * owner field is whatever somebody typed. `identifierFor` lowercases a
+ * verified email and the trusted-proxy path does the same, so an agent
+ * registered to `Ops@Example.com` was not matched by an approver arriving as
+ * `ops@example.com` — which meant separation of duties silently failed to bar
+ * the owner, and an `owner` selector silently failed to admit them. One of
+ * those is a bypass and the other is a lockout; both came from the same
+ * comparison.
+ *
+ * Deliberately not Unicode case folding. These are email addresses and
+ * provider subjects, and an ASCII lowercase is what every identity provider
+ * in this range normalises to; a locale-sensitive fold would introduce a
+ * different class of mismatch than the one it fixed.
+ */
+function sameIdentity(left: string, right: string): boolean {
+  return left.toLowerCase() === right.toLowerCase();
 }
