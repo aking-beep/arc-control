@@ -1,4 +1,5 @@
 import { ArcError } from '@arc-control/schemas';
+import { consoleOrigin } from './auth-routes.js';
 import type { ControlApiOptions } from './server.js';
 
 /**
@@ -210,6 +211,26 @@ export function loadConfig(env: Env = process.env): LoadedConfig {
   }
 
   const consoleUrl = text(env.ARC_CONSOLE_URL);
+
+  /**
+   * A console URL that is not an absolute http(s) URL.
+   *
+   * Refused rather than warned about, because `new URL` is more permissive
+   * than it looks and the failure is silent downstream. `localhost:8788` —
+   * wrong only by a missing scheme, and the obvious thing to write — parses as
+   * a URL whose *scheme* is `localhost`, with no origin. Notification links
+   * built from it go nowhere, and a completed sign-in cannot be sent back to
+   * the console. Both fail quietly, long after startup, so this is the right
+   * moment to say so.
+   */
+  if (consoleUrl !== undefined && consoleOrigin(consoleUrl) === undefined) {
+    refusals.push(
+      `ARC_CONSOLE_URL="${consoleUrl}" is not an absolute http or https URL. Notification links and the ` +
+        'redirect back to the console after sign-in are both built from it, so include the scheme: ' +
+        'ARC_CONSOLE_URL=https://arc-control.example.com',
+    );
+  }
+
   if (consoleUrl === undefined) {
     warnings.push(
       'ARC_CONSOLE_URL is unset, so notifications can say what happened but not where to act on it.',

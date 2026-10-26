@@ -131,12 +131,12 @@ export function safeReturnTo(value: string | null): string {
 export function returnToUrl(path: string, consoleUrl: string | undefined): string {
   if (consoleUrl === undefined || consoleUrl === '') return path;
 
-  let base: URL;
-  try {
-    base = new URL(consoleUrl);
-  } catch {
-    // A console URL that will not parse is a configuration error, not a
-    // reason to strand somebody mid-sign-in.
+  const base = consoleOrigin(consoleUrl);
+  if (base === undefined) {
+    // A console URL this code cannot build a destination from is a
+    // configuration error, not a reason to strand somebody mid-sign-in. The
+    // startup check refuses it, so reaching here means something constructed
+    // the API directly.
     return path;
   }
 
@@ -149,6 +149,35 @@ export function returnToUrl(path: string, consoleUrl: string | undefined): strin
   } catch {
     return base.origin;
   }
+}
+
+/**
+ * The console's URL, if it is one a browser can be sent to.
+ *
+ * Stricter than `new URL` on purpose, because `new URL` is more permissive
+ * than it looks. `localhost:8788` — the obvious thing to write, and wrong only
+ * by a missing scheme — parses happily as a URL whose *scheme* is `localhost`
+ * and whose path is opaque. Its origin is the string `"null"`, and resolving a
+ * path against it throws. An earlier version of this function took that at
+ * face value and emitted `null` as the `Location` header, which is a worse
+ * failure than the one it replaced.
+ *
+ * So: an absolute http or https URL with a real origin, or nothing.
+ */
+export function consoleOrigin(consoleUrl: string): URL | undefined {
+  let parsed: URL;
+  try {
+    parsed = new URL(consoleUrl);
+  } catch {
+    return undefined;
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return undefined;
+  // Belt and braces: every http(s) URL has a real origin, but this is the
+  // property actually depended on below, so it is the property checked.
+  if (parsed.origin === 'null' || parsed.origin === '') return undefined;
+
+  return parsed;
 }
 
 export function addAuthRoutes(router: Router, options: AuthRouteOptions): Router {

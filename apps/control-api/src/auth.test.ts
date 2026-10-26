@@ -6,7 +6,7 @@ import { encodeBase64Url } from '@arc-control/operator-identity';
 import { SimulationConnector } from '@arc-control/connector-simulation';
 import { MemoryStore } from '@arc-control/store';
 import { createControlApi, type ControlApi } from './server.js';
-import { returnToUrl, safeReturnTo } from './auth-routes.js';
+import { consoleOrigin, returnToUrl, safeReturnTo } from './auth-routes.js';
 
 /**
  * Signing in, end to end, against a stub identity provider on loopback.
@@ -177,9 +177,32 @@ describe('where sign-in returns an operator to', () => {
     assert.equal(returnToUrl(safeReturnTo('//evil.example.com'), undefined), '/');
   });
 
-  /** A console URL that will not parse must not strand somebody mid-sign-in. */
-  it('falls back to a path when the configured console URL is unusable', () => {
-    assert.equal(returnToUrl(safeReturnTo('/approvals'), 'not a url'), '/approvals');
+  /**
+   * A console URL this code cannot build a destination from must not strand
+   * somebody mid-sign-in.
+   *
+   * `'not a url'` was the only case here before, and it was the easy one: it
+   * throws on parse. The ones that matter are the values `new URL` accepts
+   * without complaint. `localhost:8788` is wrong only by a missing scheme and
+   * parses as a URL whose *scheme* is `localhost`, with origin `"null"` —
+   * which an earlier version of this function put straight into the `Location`
+   * header, so sign-in redirected the operator to the literal string `null`.
+   */
+  for (const unusable of ['not a url', '', 'localhost:8788', 'console.internal:8788', 'ftp://console.example.com']) {
+    it(`falls back to a path when the console URL is ${JSON.stringify(unusable)}`, () => {
+      const destination = returnToUrl(safeReturnTo('/approvals'), unusable);
+
+      assert.equal(destination, '/approvals');
+      assert.ok(!destination.includes('null'), 'a redirect to "null" is worse than no redirect');
+    });
+  }
+
+  it('accepts only http and https for the console', () => {
+    assert.notEqual(consoleOrigin('http://console:8788'), undefined);
+    assert.notEqual(consoleOrigin('https://arc.example.com'), undefined);
+    assert.equal(consoleOrigin('ftp://console:8788'), undefined);
+    assert.equal(consoleOrigin('javascript:alert(1)'), undefined);
+    assert.equal(consoleOrigin('localhost:8788'), undefined);
   });
 
   it('discards any path on the configured console URL', () => {

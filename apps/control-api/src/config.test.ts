@@ -200,6 +200,34 @@ describe('configurations that are allowed with a warning', () => {
  * those as *configured* is how the compose file this repository ships came to
  * refuse to start.
  */
+describe('a console URL that is not a URL', () => {
+  /**
+   * Refused at startup because both things built from it fail quietly:
+   * notification links go nowhere, and a completed sign-in cannot find its way
+   * back to the console.
+   */
+  for (const value of ['localhost:8788', 'arc-control.example.com', 'ftp://arc.example.com']) {
+    it(`refuses ARC_CONSOLE_URL=${value}`, () => {
+      const error = refusal({ ...LOOPBACK, ARC_OPERATOR_TOKEN: 'a-real-token', ARC_CONSOLE_URL: value });
+
+      assert.match(error.message, /ARC_CONSOLE_URL/);
+      assert.match(error.message, /absolute http or https URL/);
+      // A refusal an operator cannot act on is just an outage.
+      assert.match(error.message, /include the scheme/);
+    });
+  }
+
+  it('accepts one with a scheme', () => {
+    const config = loadConfig({
+      ...LOOPBACK,
+      ARC_OPERATOR_TOKEN: 'a-real-token',
+      ARC_CONSOLE_URL: 'https://arc-control.example.com',
+    });
+
+    assert.equal(config.options.consoleUrl, 'https://arc-control.example.com');
+  });
+});
+
 describe('a blank setting is an unset setting', () => {
   it('starts with the whole identity block present but empty', () => {
     const config = loadConfig({
