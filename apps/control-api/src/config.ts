@@ -214,6 +214,17 @@ export function loadConfig(env: Env = process.env): LoadedConfig {
     warnings.push(
       'ARC_CONSOLE_URL is unset, so notifications can say what happened but not where to act on it.',
     );
+
+    // Worth saying separately, because it is not a cosmetic gap: the sign-in
+    // flow is entered from the console and has to end back there. With no
+    // console address, this API ends it on its own origin and the operator
+    // lands on JSON instead of the page they asked for.
+    if (issuer !== undefined) {
+      warnings.push(
+        'ARC_CONSOLE_URL is also how a completed sign-in finds its way back to the console. Without it an ' +
+          'operator who signs in lands on this API rather than on the page they came from.',
+      );
+    }
   }
 
   if (refusals.length > 0) {

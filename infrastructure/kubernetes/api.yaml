@@ -46,7 +46,10 @@ spec:
               value: "8787"
             - name: ARC_DATA_DIR
               value: /var/lib/arc-control
-            # Where notifications send people to act on what they report.
+            # Where people reach the console. Notifications use it to say
+            # where to act, and a completed sign-in uses it to send the
+            # operator back where they came from — without it they land here,
+            # on an API that serves JSON.
             - name: ARC_CONSOLE_URL
               value: https://arc-control.example.com
             # Assessments, approval expiry and sweeps run unattended. Off

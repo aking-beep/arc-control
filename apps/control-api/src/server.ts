@@ -201,6 +201,7 @@ export function createControlApi(options: ControlApiOptions): ControlApi {
     ...(oidc ? { oidc } : {}),
     ...(options.roles ? { roleOptions: options.roles } : {}),
     ...(options.secureCookies !== undefined ? { secureCookies: options.secureCookies } : {}),
+    ...(options.consoleUrl ? { consoleUrl: options.consoleUrl } : {}),
   });
 
   const server = createServer((request, response) => {

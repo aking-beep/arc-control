@@ -156,6 +156,23 @@ async function route(
   const notice = url.searchParams.get('notice');
   const kind = url.searchParams.get('kind');
 
+  /**
+   * Liveness, answered before anything else and without reaching the API.
+   *
+   * This has to come before the `whoami` below, which is a network call. A
+   * probe that waits on the API answers the wrong question twice over: the
+   * console is alive whether or not the API is, and a brief API outage would
+   * otherwise stall the probe past its timeout and have the orchestrator
+   * restart a perfectly healthy console — turning one service's blip into two
+   * services down. It would also redirect an unauthenticated probe to a
+   * sign-in page, which is not a liveness answer in any case.
+   */
+  if (path === '/healthz') {
+    response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    response.end(JSON.stringify({ status: 'ok', apiBase: options.apiBase }));
+    return;
+  }
+
   // Built per request, because the credential is per request: the browser's
   // own session cookie, forwarded to the API. A client built once at startup
   // could only ever hold the shared token.
@@ -317,10 +334,6 @@ async function route(
         return;
       case '/settings':
         sendHtml(response, 200, await settingsPage(context));
-        return;
-      case '/healthz':
-        response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-        response.end(JSON.stringify({ status: 'ok', apiBase: options.apiBase }));
         return;
       default:
         break;

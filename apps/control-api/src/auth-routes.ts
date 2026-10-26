@@ -33,6 +33,16 @@ export interface AuthRouteOptions {
    * way round for a flag that otherwise sends session cookies in clear text.
    */
   readonly secureCookies?: boolean;
+  /**
+   * Where the console lives, when it is not this origin.
+   *
+   * The sign-in flow is entered from the console and must end back at it. The
+   * API serves JSON, so landing an operator here at the end of it means
+   * landing them on a 404 or a blob of JSON — which is what happened before
+   * this existed, on the default deployment, where the console and the API are
+   * two services on two ports.
+   */
+  readonly consoleUrl?: string;
 }
 
 interface LoginState {
@@ -85,6 +95,34 @@ export function safeReturnTo(value: string | null): string {
   if (value.startsWith('//')) return '/';
   if (value.includes('\\')) return '/';
   return value;
+}
+
+/**
+ * The absolute address to send an operator to when the flow is finished.
+ *
+ * `safeReturnTo` has already reduced the request's own value to a path on this
+ * origin: one leading slash, no second slash, no backslash. That is what keeps
+ * this closed — the origin here is never taken from the request, only from the
+ * deployment's own configuration, so no value a visitor can supply changes
+ * where they end up. What remains is to put that path on the right origin,
+ * because the console is usually not this one.
+ *
+ * With no console configured this returns the path unchanged, which is correct
+ * for a single-origin deployment and the long-standing behaviour.
+ */
+export function returnToUrl(path: string, consoleUrl: string | undefined): string {
+  if (consoleUrl === undefined || consoleUrl === '') return path;
+
+  try {
+    // `new URL` resolves the path against the console's origin and discards
+    // any path the console URL itself carried, which is what we want: the
+    // path is already absolute from the root.
+    return new URL(path, consoleUrl).toString();
+  } catch {
+    // A console URL that will not parse is a configuration error, not a
+    // reason to strand somebody mid-sign-in.
+    return path;
+  }
 }
 
 export function addAuthRoutes(router: Router, options: AuthRouteOptions): Router {
@@ -222,7 +260,7 @@ export function addAuthRoutes(router: Router, options: AuthRouteOptions): Router
       data: { sessionId: session.id, issuer: claims.iss, subject: claims.sub, roles, assurance: 'authenticated' },
     });
 
-    return redirect(pending.returnTo, {
+    return redirect(returnToUrl(pending.returnTo, options.consoleUrl), {
       'set-cookie': [
         cookie(SESSION_COOKIE, sessionCookie, { maxAgeSeconds: 12 * 60 * 60, secure }),
         clearCookie(LOGIN_COOKIE, secure),

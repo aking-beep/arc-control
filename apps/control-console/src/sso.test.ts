@@ -116,12 +116,28 @@ describe('the console under single sign-on', () => {
   let store: MemoryStore;
   let apiBase: string;
   let consoleBase: string;
+  let consolePort: number;
 
   type ApiUnderTest = ControlApi;
 
   before(async () => {
     provider = identityProvider();
     await provider.listen();
+
+    /**
+     * The console's port, reserved before either service exists.
+     *
+     * The two have to know about each other: the console needs the API's
+     * address to reach it, and the API needs the console's to send an operator
+     * back there when sign-in finishes. Something has to be decided first, so
+     * a throwaway listener claims a free port and hands it over.
+     */
+    const reserved = createServer();
+    await new Promise<void>((resolve) => reserved.listen(0, '127.0.0.1', () => resolve()));
+    const reservedAddress = reserved.address();
+    consolePort = typeof reservedAddress === 'object' && reservedAddress ? reservedAddress.port : 0;
+    await new Promise<void>((resolve) => reserved.close(() => resolve()));
+    consoleBase = `http://127.0.0.1:${String(consolePort)}`;
 
     store = new MemoryStore();
     api = createControlApi({
@@ -139,6 +155,9 @@ describe('the console under single sign-on', () => {
         redirectUri: 'http://127.0.0.1:1/auth/callback',
       },
       roles: { roleClaim: 'groups', roleMap: { 'arc-finance': ['finance-manager'] } },
+      // Where to send an operator once they are signed in. The API serves
+      // JSON, so ending the flow on its own origin strands them.
+      consoleUrl: consoleBase,
     });
 
     api.gateway.addConnector(new SimulationConnector({ handlers: { 'stripe.refund': () => ({ ok: true }) } }));
@@ -177,8 +196,7 @@ describe('the console under single sign-on', () => {
 
     // No operator token: the console must work on the session alone.
     app = createConsole({ apiBase });
-    const consoleAddress = await app.listen(0);
-    consoleBase = `http://${consoleAddress.host}:${consoleAddress.port}`;
+    await app.listen(consolePort);
   });
 
   after(async () => {
@@ -197,9 +215,17 @@ describe('the console under single sign-on', () => {
     });
   });
 
-  /** Signs in against the API and returns the session cookie. */
-  async function signIn(): Promise<string> {
-    const login = await fetch(`${apiBase}/auth/login`, { redirect: 'manual' });
+  /**
+   * Signs in against the API, returning the session cookie and where the API
+   * sent the browser afterwards.
+   */
+  async function signInFrom(returnTo?: string): Promise<{ cookie: string; landedAt: string }> {
+    const loginUrl =
+      returnTo === undefined
+        ? `${apiBase}/auth/login`
+        : `${apiBase}/auth/login?returnTo=${encodeURIComponent(returnTo)}`;
+
+    const login = await fetch(loginUrl, { redirect: 'manual' });
     const authorize = new URL(login.headers.get('location') ?? '');
     const loginCookie = (login.headers.getSetCookie?.() ?? [])[0]?.split(';')[0] ?? '';
 
@@ -216,7 +242,12 @@ describe('the console under single sign-on', () => {
       value.startsWith('arc_operator_session='),
     );
     assert.ok(cookie, 'the callback must set a session cookie');
-    return cookie.split(';')[0]!;
+    return { cookie: cookie.split(';')[0]!, landedAt: callback.headers.get('location') ?? '' };
+  }
+
+  /** Signs in against the API and returns the session cookie. */
+  async function signIn(): Promise<string> {
+    return (await signInFrom()).cookie;
   }
 
   /**
@@ -343,6 +374,67 @@ describe('the console under single sign-on', () => {
       );
     } finally {
       await split.close();
+    }
+  });
+
+  /**
+   * The round trip, end to end. This is the assertion that was missing: the
+   * earlier version checked that an unauthenticated visitor was sent *to*
+   * sign-in and never that sign-in brought them back, so it passed while the
+   * API ended the flow on its own origin and dropped the operator onto a blob
+   * of JSON. On the shipped Compose file, where the console and the API are
+   * two services on two ports, that was the default path.
+   */
+  it('ends sign-in back at the console, on the page the visitor wanted', async () => {
+    const wanted = '/approvals?status=pending';
+
+    // Where the console sends someone with no session.
+    const bounced = await fetch(`${consoleBase}${wanted}`, { redirect: 'manual' });
+    assert.equal(bounced.status, 302);
+    const signInUrl = bounced.headers.get('location') ?? '';
+
+    // Follow that, exactly as a browser would.
+    const login = new URL(signInUrl);
+    const { cookie, landedAt } = await signInFrom(login.searchParams.get('returnTo') ?? '/');
+
+    assert.ok(
+      landedAt.startsWith(consoleBase),
+      `sign-in finished at ${landedAt}, which is not the console`,
+    );
+    assert.equal(new URL(landedAt).pathname + new URL(landedAt).search, wanted);
+
+    // And the page they wanted actually renders for them now.
+    const arrived = await fetch(landedAt, { headers: { cookie } });
+    assert.equal(arrived.status, 200);
+    assert.match(await arrived.text(), /Approvals/);
+  });
+
+  /** An open redirect would turn the sign-in flow into a phishing primitive. */
+  it('will not send an operator to an origin the request chose', async () => {
+    for (const hostile of ['https://evil.example.com/steal', '//evil.example.com/steal', '/\\evil.example.com']) {
+      const { landedAt } = await signInFrom(hostile);
+      assert.ok(
+        landedAt.startsWith(consoleBase),
+        `a returnTo of ${hostile} sent the operator to ${landedAt}`,
+      );
+    }
+  });
+
+  /**
+   * Liveness is about this process, not the API's. A probe that waits on the
+   * API restarts a healthy console during someone else's outage, and a probe
+   * with no session would be answered with a redirect to sign in.
+   */
+  it('answers the liveness probe without a session and without reaching the API', async () => {
+    const stranded = createConsole({ apiBase: 'http://127.0.0.1:1' });
+    const address = await stranded.listen(0);
+
+    try {
+      const response = await fetch(`http://${address.host}:${address.port}/healthz`, { redirect: 'manual' });
+      assert.equal(response.status, 200, 'the probe must not depend on the API or on being signed in');
+      assert.equal(((await response.json()) as { status: string }).status, 'ok');
+    } finally {
+      await stranded.close();
     }
   });
 

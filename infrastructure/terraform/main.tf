@@ -428,11 +428,22 @@ resource "kubernetes_deployment_v1" "console" {
           # Under single sign-on the console carries no credential of its own:
           # it forwards the visitor's session, asks the API who that is, and
           # shows that answer, so the name on an approval is the one the API
-          # verified. These three are the fallback path, and are empty
-          # whenever single sign-on is configured.
+          # verified. These three are the fallback path.
+          #
+          # From the Secret, never inline. An inline `value` is readable by
+          # anyone who can `describe` the pod or read the Deployment, which is
+          # a wider audience than the Secret's — and this token lets its holder
+          # claim any identity. The Secret's key is empty when single sign-on
+          # is configured, and an empty setting reads as unset.
           env {
-            name  = "ARC_OPERATOR_TOKEN"
-            value = local.sso_enabled ? "" : local.operator_token
+            name = "ARC_OPERATOR_TOKEN"
+
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret_v1.operator.metadata[0].name
+                key  = "operator-token"
+              }
+            }
           }
 
           env {
