@@ -26,22 +26,7 @@ function refusal(env: Record<string, string | undefined>): ArcError {
 }
 
 describe('configurations that are refused', () => {
-  /**
-   * The one that matters most: reachable from the network, with a shared token
-   * as the only operator credential. On loopback that is a reasonable way to
-   * try the product; exposed, it is the configuration somebody is still
-   * running a year later.
-   */
-  it('refuses a shared token as the only credential on an exposed interface', () => {
-    const error = refusal({ ARC_HOST: '0.0.0.0', ARC_OPERATOR_TOKEN: 'token' });
-
-    assert.match(error.message, /reachable from outside this machine/);
-    assert.match(error.message, /no approval it records can be attributed to a person/);
-    assert.match(error.message, /ARC_OIDC_ISSUER/, 'and says how to fix it properly');
-    assert.match(error.message, /ARC_ALLOW_SHARED_TOKEN/, 'and how to accept it knowingly');
-  });
-
-  it('allows the same configuration on loopback, where it is a fair way to try it', () => {
+  it('allows a shared token on loopback, where it is a fair way to try the product', () => {
     const config = loadConfig({ ...LOOPBACK, ARC_OPERATOR_TOKEN: 'token' });
     assert.equal(config.options.operatorToken, 'token');
   });
@@ -53,6 +38,22 @@ describe('configurations that are refused', () => {
       ARC_ALLOW_SHARED_TOKEN: 'true',
     });
     assert.equal(config.options.allowSharedToken, true);
+  });
+
+  /**
+   * Still a refusal, because here the signal is unambiguous: this sends
+   * session cookies in clear text whatever the network turns out to look
+   * like, and nobody disables it deliberately outside local development.
+   */
+  it('refuses insecure cookies on a non-loopback interface', () => {
+    const error = refusal({
+      ARC_HOST: '0.0.0.0',
+      ARC_OPERATOR_TOKEN: 't',
+      ARC_ALLOW_SHARED_TOKEN: 'true',
+      ARC_SECURE_COOKIES: 'false',
+    });
+    assert.match(error.message, /plain HTTP/);
+    assert.match(error.message, /local development only/);
   });
 
   /**
@@ -91,12 +92,6 @@ describe('configurations that are refused', () => {
     }
   });
 
-  it('refuses insecure cookies on an exposed interface', () => {
-    const error = refusal({ ARC_HOST: '0.0.0.0', ARC_OPERATOR_TOKEN: 't', ARC_ALLOW_SHARED_TOKEN: 'true', ARC_SECURE_COOKIES: 'false' });
-    assert.match(error.message, /plain HTTP/);
-    assert.match(error.message, /local development only/);
-  });
-
   it('allows insecure cookies on loopback, which is what they are for', () => {
     const config = loadConfig({ ...LOOPBACK, ARC_SECURE_COOKIES: 'false' });
     assert.equal(config.options.secureCookies, false);
@@ -112,8 +107,8 @@ describe('configurations that are refused', () => {
     const error = refusal({
       ARC_HOST: '0.0.0.0',
       ARC_PORT: 'nonsense',
-      ARC_OPERATOR_TOKEN: 'token',
       ARC_SESSION_SECRET: 'short',
+      ARC_SECURE_COOKIES: 'false',
     });
 
     const listed = (error.details.refusals as readonly string[]).length;
@@ -173,6 +168,24 @@ describe('configurations that are allowed with a warning', () => {
       ARC_OIDC_ROLE_MAP: 'arc-finance=finance-manager',
     });
     assert.ok(!lines.some((line) => /approve nothing/.test(line)));
+  });
+
+  /**
+   * This was a refusal and it was wrong: a container must bind `0.0.0.0` or
+   * nothing outside it can connect, so every containerized deployment tripped
+   * it — including this repository's own image, whose smoke test built a
+   * working container, ran every test inside it, and then failed because the
+   * process would not start.
+   *
+   * Refusing on a signal that cannot tell `docker run` from an open port
+   * teaches people to set the override reflexively, after which the override
+   * means nothing.
+   */
+  it('warns rather than refuses when a token is the only credential on a non-loopback bind', () => {
+    const lines = loadConfig({ ARC_HOST: '0.0.0.0', ARC_OPERATOR_TOKEN: 'token' }).warnings;
+
+    assert.ok(lines.some((line) => /cannot be attributed to a person|attributed to a person/.test(line)));
+    assert.ok(lines.some((line) => /ARC_OIDC_ISSUER/.test(line)), 'and names the fix');
   });
 
   it('warns when the scheduler is switched off', () => {

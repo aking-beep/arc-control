@@ -124,26 +124,40 @@ export function loadConfig(env: Env = process.env): LoadedConfig {
   }
 
   /**
-   * The refusal that matters most.
+   * Token-only on a non-loopback interface: warned about loudly, not refused.
    *
-   * A deployment reachable from the network whose only operator credential is
-   * a shared token has no individual accountability at all, and the token is
-   * one leaked environment variable away from being everyone's. On loopback
-   * that is a reasonable way to try the product; on an exposed interface it is
-   * the configuration somebody will still be running in a year.
+   * This was a refusal, and it was wrong — the bind address is the wrong
+   * signal. A container has to bind `0.0.0.0` or nothing outside it can
+   * connect, so every containerized deployment tripped it, including the
+   * image this repository ships: the smoke test built a working image, ran
+   * all its tests inside it, and then failed because the process refused to
+   * start.
+   *
+   * Whether a listener is genuinely reachable is decided by port publishing,
+   * ingress and a network policy, none of which ARC can see from in here.
+   * Refusing on a signal that cannot distinguish `docker run` from an open
+   * port teaches people to set the override reflexively, which is worse than
+   * not having the check: the override then carries no meaning.
+   *
+   * So this is said loudly instead, and the honest enforcement of it lives
+   * where it can be accurate — the console states the mode on every page, and
+   * ARC-AI-004 reports what the approvals can actually support.
    */
   const tokenOnly = operatorToken !== undefined && issuer === undefined && proxySecret === undefined;
   if (tokenOnly && exposed && allowSharedToken !== true) {
-    refusals.push(
-      `This deployment binds ${host}, which is reachable from outside this machine, and its only operator ` +
-        'credential is the shared token in ARC_OPERATOR_TOKEN. Anyone holding that token can claim any identity, ' +
-        'so no approval it records can be attributed to a person. Configure ARC_OIDC_ISSUER for single sign-on, ' +
-        'or set ARC_ALLOW_SHARED_TOKEN=true to accept this knowingly.',
+    warnings.push(
+      `This deployment binds ${host} and its only operator credential is the shared token in ` +
+        'ARC_OPERATOR_TOKEN. Anyone holding that token can claim any identity, so no approval it records can be ' +
+        'attributed to a person. If anything beyond this host can reach the listener, configure ARC_OIDC_ISSUER ' +
+        'before relying on an approval record.',
     );
   }
 
   const secureCookies = bool(env.ARC_SECURE_COOKIES);
   if (secureCookies === false && exposed) {
+    // Still a refusal, because here the signal is unambiguous: this sends
+    // session cookies in clear text whatever the network topology turns out
+    // to be, and nobody disables it on purpose outside local development.
     refusals.push(
       `ARC_SECURE_COOKIES=false sends session cookies over plain HTTP, and this deployment binds ${host}. ` +
         'That setting exists for local development only.',

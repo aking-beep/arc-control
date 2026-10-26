@@ -87,10 +87,13 @@ the token stops being accepted unless you set `ARC_ALLOW_SHARED_TOKEN=true`
 deliberately. Anyone holding it can claim any identity, so an approval it
 records establishes that the workflow ran — **not who ran it**.
 
-ARC will **refuse to start** with the token as the only credential on an
-interface reachable from the network. That configuration has no individual
-accountability at all, and it is the one a deployment is still running a year
-later. Set `ARC_ALLOW_SHARED_TOKEN=true` to accept it knowingly.
+ARC warns loudly at startup when the token is the only credential and the
+listener is not on loopback. It does not refuse: a container has to bind
+`0.0.0.0` or nothing outside it can connect, and whether that is genuinely
+reachable depends on port publishing, ingress and a network policy that ARC
+cannot see from inside the process. The accurate enforcement is elsewhere — the
+console states the mode on every page, and ARC-AI-004 reports what the
+approvals can actually support.
 
 ### What a control narrative may claim
 
