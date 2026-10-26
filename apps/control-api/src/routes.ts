@@ -159,6 +159,52 @@ export function buildRoutes(options: RouteOptions): Router {
     });
   });
 
+  /**
+   * Readiness, which is a different question from liveness.
+   *
+   * Liveness asks "is this process alive"; `/health` answers that and stays
+   * 200 through a degraded assurance layer on purpose. Readiness asks "should
+   * traffic go here", and the honest answer is no while the store cannot be
+   * written to — an orchestrator that cannot tell those apart either restarts
+   * a healthy process or routes agents at one that will fail every write.
+   *
+   * The check is a real read against the store rather than a flag, because the
+   * failure this is meant to catch is a volume that has gone away, and a flag
+   * set at startup would still say yes.
+   */
+  router.get('/health/ready', async () => {
+    const checks: Record<string, unknown> = {};
+    let ready = true;
+
+    try {
+      await gateway.policies.list();
+      checks.store = 'ok';
+    } catch (cause) {
+      ready = false;
+      checks.store = describeCause(cause);
+    }
+
+    try {
+      const head = await gateway.audit.head();
+      checks.audit = head === undefined ? 'empty' : `sequence ${String(head.sequence)}`;
+    } catch (cause) {
+      ready = false;
+      checks.audit = describeCause(cause);
+    }
+
+    // Deliberately not part of readiness: a failing control, an unreachable
+    // connector and a broken webhook are all conditions an operator must see
+    // and none of them is a reason to stop sending authorization decisions
+    // here. Enforcement fails closed by denying, not by refusing traffic.
+    return withStatus(ready ? 200 : 503, {
+      ready,
+      checks,
+      notice: ready
+        ? null
+        : 'This instance cannot reach its own store. Authorization requests sent here will fail.',
+    });
+  });
+
   // --- the agent surface --------------------------------------------------
 
   /**

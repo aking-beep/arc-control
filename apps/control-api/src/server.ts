@@ -84,6 +84,8 @@ export interface ControlApi {
   readonly assurance: AssuranceEngine;
   readonly notifier: Notifier;
   readonly scheduler: Scheduler;
+  /** How this deployment authenticates operators, for the startup banner. */
+  readonly operatorModes: readonly string[];
   readonly server: Server;
   listen(port: number, host?: string): Promise<{ port: number; host: string }>;
   close(): Promise<void>;
@@ -216,6 +218,7 @@ export function createControlApi(options: ControlApiOptions): ControlApi {
     assurance,
     notifier,
     scheduler,
+    operatorModes: operators.modes,
     server,
     listen: (port, host = '127.0.0.1') =>
       new Promise((resolve, reject) => {

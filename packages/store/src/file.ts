@@ -107,8 +107,18 @@ export class FileStore implements ControlStore {
   }
 
   /** Opens a store, creating the directory and replaying any existing data. */
-  static async open(directory: string): Promise<FileStore> {
-    await mkdir(directory, { recursive: true });
+  /**
+   * Opens a data directory.
+   *
+   * `readOnly` skips the version stamp and the directory creation, so reading
+   * a directory does not modify it. That matters for exactly one reason and it
+   * is the product's central claim: verifying evidence must not alter it. An
+   * auditor checking a backup, or `arc backup verify` checking its own
+   * digests, would otherwise invalidate the thing it was asked to check —
+   * which is how the first version of that command failed.
+   */
+  static async open(directory: string, options: { readonly readOnly?: boolean } = {}): Promise<FileStore> {
+    if (options.readOnly !== true) await mkdir(directory, { recursive: true });
 
     const auditPath = join(directory, 'audit.jsonl');
     const headPath = join(directory, 'audit.head.json');
@@ -154,7 +164,7 @@ export class FileStore implements ControlStore {
     // optional, and nothing is rewritten. That is the entire migration, and it
     // is reversible — a 1.x build reading this directory ignores the files it
     // does not know about.
-    await stampSchemaVersion(directory);
+    if (options.readOnly !== true) await stampSchemaVersion(directory);
 
     return new FileStore(directory, collections, audit);
   }
