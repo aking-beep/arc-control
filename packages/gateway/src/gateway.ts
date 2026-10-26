@@ -631,19 +631,50 @@ export class Gateway {
 
     const execution = evidence.execution ? await this.#store.executions.get(evidence.execution.id) : undefined;
 
+    // Where a release-time revalidation changed the answer, it is the answer.
+    // Reading `evidence.decision` alone would pair `outcome: 'denied'` with
+    // the submission-time `REQUIRE_APPROVAL` that the human was asked about,
+    // report no error, and hand back an approval id that is still live — so a
+    // caller branching on `decision.effect` would go on waiting for an
+    // approval that cannot authorize anything. A retry has to be told what
+    // `resume` told the caller who released it.
+    const superseded = evidence.revalidation && evidence.revalidation.verdict !== 'proceeded'
+      ? evidence.revalidation
+      : undefined;
+
+    const decision = superseded
+      ? {
+          effect: superseded.effect,
+          ...(superseded.policyId ? { policyId: superseded.policyId } : {}),
+          ...(superseded.ruleId ? { ruleId: superseded.ruleId } : {}),
+          reason: superseded.reason,
+        }
+      : {
+          effect: evidence.decision.effect,
+          ...(evidence.decision.policyId ? { policyId: evidence.decision.policyId } : {}),
+          ...(evidence.decision.ruleId ? { ruleId: evidence.decision.ruleId } : {}),
+          reason: evidence.decision.reason,
+        };
+
+    const error = superseded
+      ? {
+          code: superseded.verdict === 'denied' ? 'policy_denied' : 'approval_required',
+          message: superseded.reason,
+        }
+      : execution?.error;
+
+    // A denial names no approval to wait on, on this path as on the live one:
+    // the grant on file is not what the caller should act against.
+    const approvalId = evidence.outcome === 'denied' ? undefined : evidence.approval?.id;
+
     return {
       actionId: original.id,
       outcome: evidence.outcome as ActionResult['outcome'],
-      decision: {
-        effect: evidence.decision.effect,
-        ...(evidence.decision.policyId ? { policyId: evidence.decision.policyId } : {}),
-        ...(evidence.decision.ruleId ? { ruleId: evidence.decision.ruleId } : {}),
-        reason: evidence.decision.reason,
-      },
+      decision,
       evidenceId: evidence.id,
       ...(execution?.result !== undefined ? { result: execution.result } : {}),
-      ...(evidence.approval ? { approvalId: evidence.approval.id } : {}),
-      ...(execution?.error ? { error: execution.error } : {}),
+      ...(approvalId ? { approvalId } : {}),
+      ...(error ? { error } : {}),
       completedAt: evidence.createdAt,
     };
   }
@@ -803,15 +834,44 @@ export class Gateway {
     revalidation: Revalidation,
   ): Promise<ActionResult> {
     const record = revalidation.record;
-    const evidence = await this.#recordEvidence({
-      principal,
-      tool,
-      action,
-      decision,
-      outcome: 'denied',
-      approval,
-      revalidation: record,
+
+    // The denial is claimed under the approvals lock, and only while the grant
+    // is still unspent. A policy denial does not consume the grant, so without
+    // this a caller whose revalidation denied could write a `denied` record for
+    // an action that a concurrent caller had meanwhile released and executed —
+    // telling its own caller `denied` about a refund that happened, and leaving
+    // two records competing to describe one action. `ApprovalEngine.consume`
+    // takes the same lock, so the two are mutually exclusive: either this
+    // denial is recorded while the grant is unspent and any execution is
+    // evidenced after it, or the grant is already gone and this caller is told
+    // that instead of being told a falsehood.
+    //
+    // Today the executing path happens to write last in every interleaving we
+    // can construct, because it does strictly more work after the shared
+    // snapshot. That is an accident of await counts, not a property, and
+    // evidence integrity is not something to leave resting on one.
+    const evidence = await this.#store.approvals.transact(async () => {
+      const current = await this.#store.approvals.get(approval.id);
+      if (current?.consumedAt) return undefined;
+
+      return this.#recordEvidence({
+        principal,
+        tool,
+        action,
+        decision,
+        outcome: 'denied',
+        approval,
+        revalidation: record,
+      });
     });
+
+    if (!evidence) {
+      throw new ArcError(
+        'conflict',
+        'this approval was released by another caller while current policy was being re-checked',
+        { details: { approvalId: approval.id, actionId: action.id } },
+      );
+    }
 
     await this.audit.append({
       type: 'action.denied',

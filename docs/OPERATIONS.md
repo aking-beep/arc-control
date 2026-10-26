@@ -11,7 +11,7 @@ for.
 ### Local, reproducible
 
 ```bash
-npm install && npm run build && npm run verify     # 668 tests, 82 properties, 14 steps
+npm install && npm run build && npm run verify     # 671 tests, 82 properties, 14 steps
 
 export ARC_OPERATOR_TOKEN="$(openssl rand -hex 32)"
 ARC_DATA_DIR=./data ARC_SEED_DEMO=true npm run api  # terminal 1

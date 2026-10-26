@@ -276,7 +276,7 @@ posture rather than your deployment. Ask us about it separately.
 
 | | |
 |---|---|
-| Unit and integration tests | 668 |
+| Unit and integration tests | 671 |
 | Security and reliability properties | 82, in a separate eval suite |
 | End-to-end demonstration | 14 steps, real gateway and real HTTP |
 | Independent adversarial harness | [arc-control-sandbox](https://github.com/aking-beep/arc-control-sandbox) — a synthetic enterprise we do not control, which found two authorization defects our own suite missed |

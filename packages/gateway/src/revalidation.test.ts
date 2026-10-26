@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { ArcError, type EvidenceRecord, type Policy } from '@arc-control/schemas';
+import { ArcError, type Decision, type EvidenceRecord, type Policy, type PolicyInput } from '@arc-control/schemas';
 import { MemoryStore } from '@arc-control/store';
+import { PolicyEngine } from '@arc-control/policy-engine';
 import { Gateway } from './gateway.js';
 import { RecordingConnector } from './harness.test-support.js';
 import { heldApprovalSatisfies } from './revalidation.js';
@@ -442,6 +443,143 @@ describe('a policy that now demands different authority', () => {
     const released = await gateway.resume(approvalId);
     assert.equal(released.outcome, 'denied');
     assert.match(released.error!.message, /names no approvers/);
+    assert.equal(connector.callCount('stripe.refund'), 0);
+  });
+});
+
+/**
+ * Two findings from the review of this change, both about what happens *after*
+ * a release-time refusal rather than during it.
+ */
+describe('what a refused release leaves behind', () => {
+  it('tells a retry what the release decided, not what the submission did', async () => {
+    const { gateway, connector, apiKey, publish } = await setup();
+
+    const request = { tool: 'stripe.refund', parameters: { amount: 1850 }, idempotencyKey: 'refused-1' };
+    const held = await gateway.handle(apiKey, request);
+    await gateway.approvals.vote({
+      approvalId: held.approvalId!,
+      approver: { identifier: 'cfo@example.com', roles: ['finance-manager'] },
+      vote: 'approve',
+    });
+
+    await publish(SUSPENDED);
+    const released = await gateway.resume(held.approvalId!);
+    const retried = await gateway.handle(apiKey, request);
+
+    // Reading only `evidence.decision` paired `outcome: denied` with the
+    // submission-time REQUIRE_APPROVAL the human was asked about, reported no
+    // error, and handed back an approval id that was still live — so a caller
+    // branching on `decision.effect` would go on waiting for an approval that
+    // can no longer authorize anything.
+    assert.deepEqual(retried.decision, released.decision);
+    assert.deepEqual(retried.error, released.error);
+    assert.equal(retried.decision.effect, 'DENY');
+    assert.equal(retried.decision.policyId, 'REFUNDS-FROZEN');
+    assert.equal(retried.error?.code, 'policy_denied');
+    assert.equal(retried.approvalId, undefined, 'a denial names no approval to wait on');
+    assert.equal(connector.callCount('stripe.refund'), 0);
+  });
+
+  it('tells a retry which approval to wait on after a supersession', async () => {
+    const { gateway, connector, apiKey, publish } = await setup();
+
+    const request = { tool: 'stripe.refund', parameters: { amount: 1850 }, idempotencyKey: 'superseded-1' };
+    const held = await gateway.handle(apiKey, request);
+    await gateway.approvals.vote({
+      approvalId: held.approvalId!,
+      approver: { identifier: 'cfo@example.com', roles: ['finance-manager'] },
+      vote: 'approve',
+    });
+
+    await publish({
+      ...FINANCE,
+      version: 2,
+      rules: [
+        {
+          id: 'needs-cfo',
+          when: { always: true },
+          effect: 'REQUIRE_APPROVAL',
+          reason: 'only the CFO may approve this now',
+          approval: { approvers: ['user:cfo-only@example.com'], minApprovals: 1 },
+        },
+      ],
+    });
+
+    const released = await gateway.resume(held.approvalId!);
+    const retried = await gateway.handle(apiKey, request);
+
+    assert.equal(retried.outcome, 'pending_approval');
+    assert.equal(retried.approvalId, released.approvalId, 'the new request, not the spent grant');
+    assert.notEqual(retried.approvalId, held.approvalId);
+    assert.equal(retried.decision.ruleId, 'needs-cfo');
+    assert.equal(retried.error?.code, 'approval_required');
+    assert.equal(connector.callCount('stripe.refund'), 0);
+  });
+
+  it('writes no denial once another caller has spent the grant', async () => {
+    const connector = new RecordingConnector(() => ({ refundId: 're_1' }));
+    const store = new MemoryStore();
+
+    // Stands in for a concurrent release that consumed the grant in the window
+    // between this caller's releasability check and its policy snapshot. The
+    // stamp happens inside `evaluate`, which `#revalidate` calls under the
+    // policy lock, so the interleaving is exact rather than a race the test
+    // hopes to hit. `MemoryCollection.put` mutates before its first await, so
+    // the row is consumed by the time revalidation returns.
+    let approvalId: string | undefined;
+    class ConsumesMidRevalidation extends PolicyEngine {
+      #calls = 0;
+      override evaluate(policies: readonly Policy[], input: PolicyInput): Decision {
+        const decision = super.evaluate(policies, input);
+        this.#calls += 1;
+        if (this.#calls <= 1 || approvalId === undefined) return decision;
+
+        void store.approvals
+          .get(approvalId)
+          .then((request) =>
+            request ? store.approvals.put(request.id, { ...request, consumedAt: '2026-01-01T00:00:00.000Z' }) : undefined,
+          );
+
+        return { ...decision, effect: 'DENY', policyId: 'REFUNDS-FROZEN', ruleId: 'freeze', reason: 'refunds are suspended' };
+      }
+    }
+
+    const gateway = new Gateway({ store, policyEngine: new ConsumesMidRevalidation() });
+    gateway.addConnector(connector);
+    await gateway.tools.register({
+      name: 'stripe.refund',
+      description: 'Refund a charge.',
+      effect: 'irreversible',
+      riskTier: 'critical',
+      connector: 'recording',
+      parameters: [{ name: 'amount', type: 'number', required: true, minimum: 0 }],
+    });
+    await gateway.admin.publishPolicy(FINANCE, { identifier: 'ops@example.com', via: 'api' });
+    const agent = await gateway.agents.register({
+      name: 'finance-agent',
+      owner: 'agent-owner@example.com',
+      roles: ['finance'],
+    });
+    const { apiKey } = await gateway.agents.issueKey(agent.id);
+
+    const held = await gateway.handle(apiKey, { tool: 'stripe.refund', parameters: { amount: 1850 } });
+    approvalId = held.approvalId!;
+    await gateway.approvals.vote({
+      approvalId,
+      approver: { identifier: 'cfo@example.com', roles: ['finance-manager'] },
+      vote: 'approve',
+    });
+
+    await assert.rejects(
+      () => gateway.resume(approvalId!),
+      (error: ArcError) => error.code === 'conflict' && /released by another caller/.test(error.message),
+    );
+
+    // The record must not carry a denial about an action another caller is
+    // releasing. One action, one description of what happened to it.
+    const outcomes = (await evidenceFor(gateway, held.actionId)).map((record) => record.outcome);
+    assert.deepEqual(outcomes, ['pending_approval']);
     assert.equal(connector.callCount('stripe.refund'), 0);
   });
 });
