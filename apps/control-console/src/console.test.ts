@@ -396,6 +396,7 @@ const FINDING: Json = {
   detail: 'agent "ops-agent" is missing: governance record',
   subject: 'arc_ag_2222',
   subjectKind: 'agent',
+  dueAt: '2026-10-10T06:00:00.000Z',
   evidenceIds: [],
   occurrences: 3,
   firstSeenAt: '2026-10-18T06:00:00.000Z',
@@ -410,6 +411,7 @@ const SUMMARY: Json = {
   controls: 9,
   controlsEnabled: 9,
   openFindings: { critical: 0, high: 1, medium: 0, low: 0, info: 0 },
+  remediation: { open: 1, overdue: 1, dueSoon: 0, noDeadline: 0, unassigned: 1 },
   risks: { total: 2, accepted: 0, overdueReview: 0 },
   lastRun: { id: 'arc_run_1111', finishedAt: '2026-10-20T06:00:01.000Z', requestedBy: 'ops@example.com' },
   attestedOrUnassessable: 3,
@@ -507,6 +509,7 @@ const BASE_ROUTES: Record<string, Json | { status: number; body: Json }> = {
   '/v1/risks/arc_rsk_1111': RISK_REVIEWED,
   '/v1/risks/arc_rsk_2222': RISK_UNREVIEWED,
   '/v1/findings?status=open': { findings: [FINDING] },
+  '/v1/findings?overdue=true': { findings: [FINDING] },
   '/v1/findings': { findings: [FINDING] },
   '/v1/findings/arc_fnd_1111': FINDING,
   '/v1/evidence?limit=100': { evidence: [EVIDENCE] },
@@ -596,6 +599,17 @@ describe('Every section renders from the API', () => {
  */
 function prose(page: string): string {
   return page.replace(/\s+/g, ' ');
+}
+
+/**
+ * What a reader actually sees: tags stripped, whitespace collapsed.
+ *
+ * Needed for anything spanning an element boundary — adjacent table headers
+ * render as `> Owner </th><th ...> Due </th>`, so asserting on the visible
+ * sequence means removing the markup between them.
+ */
+function visible(page: string): string {
+  return page.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 // --- the 2.0 governance sections tell the truth ---------------------------
@@ -727,6 +741,62 @@ describe('The governance sections never invent a figure', () => {
     assert.equal((page.match(/arc_fnd_1111|ops-agent/g) ?? []).length >= 1, true);
   });
 
+/**
+   * The remediation half of the findings register. A due date the queue does
+   * not show, and a lateness nothing computes, is not a deadline — an
+   * operator would have to read every row and do arithmetic against today.
+   */
+  it('shows how late an overdue finding is, not just its date', async () => {
+    const { context } = contextFor(routes());
+    const page = await findingsPage(context);
+
+    const text = prose(page);
+    assert.match(text, /\d+d overdue/, 'the queue says how late, not just when');
+    assert.ok(visible(page).includes('Owner Due Status'), 'and the table has a due column at all');
+  });
+
+  it('reports the remediation state above the queue', async () => {
+    const { context } = contextFor(routes());
+    const text = prose(await findingsPage(context));
+
+    assert.ok(text.includes('overdue'));
+    assert.ok(text.includes('no deadline set'));
+    assert.ok(text.includes('unassigned'));
+    assert.ok(
+      text.includes('it does not notify anyone, so this page is the notification'),
+      'and is honest that ARC surfaces rather than notifies',
+    );
+  });
+
+  it('offers an overdue filter that asks the API for overdue findings', async () => {
+    const { context, calls } = contextFor(routes(), 'status=overdue');
+    const page = await findingsPage(context);
+
+    assert.ok(calls.some((call) => call.includes('/v1/findings?overdue=true')), 'the filter reaches the API');
+    assert.ok(page.includes('aria-current="true"'), 'and renders as the active chip');
+  });
+
+  /**
+   * An unscheduled finding is a different gap from a late one. If it counted
+   * as overdue the figure would be alarming and useless; if it were silently
+   * fine, work could be hidden by never setting a date.
+   */
+  it('says plainly that a finding with no deadline is not overdue', async () => {
+    const { context } = contextFor(routes({ '/v1/findings?overdue=true': { findings: [] } }), 'status=overdue');
+    const text = prose(await findingsPage(context));
+
+    assert.ok(text.includes('No finding is past its deadline'));
+    assert.ok(text.includes('unscheduled work is a different gap from late work'));
+  });
+
+  it('marks a finding with no deadline as none set rather than leaving it blank', async () => {
+    const { context } = contextFor(
+      routes({ '/v1/findings?status=open': { findings: [{ ...FINDING, dueAt: undefined }] } }),
+    );
+    const page = await findingsPage(context);
+    assert.ok(page.includes('none set'), 'a blank cell would read as fine');
+  });
+
   it('states on the settings page that operator identity is not authenticated', async () => {
     const { context } = contextFor(routes());
     const page = await settingsPage(context);
@@ -772,7 +842,7 @@ describe('The governance sections never invent a figure', () => {
 
     assert.ok(page.includes('href="/assurance/assessments/arc_asm_1111"'));
     assert.ok(page.includes('unassigned'), 'an unassigned finding says so');
-    assert.ok(page.includes('no deadline set'));
+    assert.match(prose(page), /\d+d overdue/, 'and a late one says how late');
   });
 
   it('says an empty activity timeline is empty rather than filling it', async () => {

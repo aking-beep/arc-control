@@ -113,6 +113,24 @@ export interface AssuranceSummary {
   readonly controls: number;
   readonly controlsEnabled: number;
   readonly openFindings: Readonly<Record<FindingSeverity, number>>;
+  /**
+   * Remediation state, which is what a findings queue is actually for.
+   *
+   * A due date that nothing surfaces is not a deadline, so `overdue` is
+   * computed here rather than left for a reader to work out by comparing two
+   * columns. `unassigned` is reported beside it because an overdue finding
+   * with no owner is a different problem from an overdue one with an owner:
+   * the first has nobody to chase.
+   */
+  readonly remediation: {
+    readonly open: number;
+    readonly overdue: number;
+    /** Open findings due within the next seven days. */
+    readonly dueSoon: number;
+    /** Open findings with no deadline set at all. */
+    readonly noDeadline: number;
+    readonly unassigned: number;
+  };
   readonly risks: { readonly total: number; readonly accepted: number; readonly overdueReview: number };
   readonly lastRun?: { readonly id: string; readonly finishedAt: string; readonly requestedBy: string };
   /**
@@ -579,11 +597,27 @@ export class AssuranceEngine {
 
   // --- findings ----------------------------------------------------------
 
-  async listFindings(filter: { readonly status?: FindingStatus; readonly controlId?: string } = {}): Promise<readonly Finding[]> {
+  /**
+   * Findings, ranked by severity then recency.
+   *
+   * `overdue: true` narrows to open findings past their deadline. It implies
+   * open-or-in-progress regardless of any `status` passed, because a resolved
+   * finding that happened to miss its date is history, not work.
+   */
+  async listFindings(
+    filter: {
+      readonly status?: FindingStatus;
+      readonly controlId?: string;
+      readonly overdue?: boolean;
+    } = {},
+  ): Promise<readonly Finding[]> {
     const all = await this.#store.findings.list();
+    const now = this.#now().getTime();
+
     return all
       .filter((finding) => (filter.status ? finding.status === filter.status : true))
       .filter((finding) => (filter.controlId ? finding.controlId === filter.controlId : true))
+      .filter((finding) => (filter.overdue === true ? isOverdue(finding, now) : true))
       .slice()
       .sort((a, b) => severityRank(a.severity) - severityRank(b.severity) || Date.parse(b.lastSeenAt) - Date.parse(a.lastSeenAt));
   }
@@ -836,12 +870,23 @@ export class AssuranceEngine {
     const totals = emptyTotals();
     for (const assessment of latest) totals[assessment.status] += 1;
 
-    const openFindings: Record<FindingSeverity, number> = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
-    for (const finding of findings) {
-      if (finding.status === 'open' || finding.status === 'in_progress') openFindings[finding.severity] += 1;
-    }
-
     const now = this.#now().getTime();
+
+    const openFindings: Record<FindingSeverity, number> = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+    const outstanding = findings.filter((finding) => isOpen(finding));
+    for (const finding of outstanding) openFindings[finding.severity] += 1;
+
+    const remediation = {
+      open: outstanding.length,
+      overdue: outstanding.filter((finding) => isOverdue(finding, now)).length,
+      dueSoon: outstanding.filter((finding) => {
+        if (!finding.dueAt) return false;
+        const due = Date.parse(finding.dueAt);
+        return due >= now && due <= now + 7 * 86_400_000;
+      }).length,
+      noDeadline: outstanding.filter((finding) => finding.dueAt === undefined).length,
+      unassigned: outstanding.filter((finding) => !finding.owner).length,
+    };
     const lastRun = runs[0];
 
     return {
@@ -855,6 +900,7 @@ export class AssuranceEngine {
       controls: controls.length,
       controlsEnabled: controls.filter((control) => control.enabled).length,
       openFindings,
+      remediation,
       risks: {
         total: risks.length,
         accepted: risks.filter((risk) => risk.status === 'accepted').length,
@@ -882,6 +928,22 @@ function describeTotals(totals: Readonly<Record<ControlStatus, number>>): string
 
 function severityRank(severity: FindingSeverity): number {
   return ['critical', 'high', 'medium', 'low', 'info'].indexOf(severity);
+}
+
+/** Still work: raised and not yet closed by any route. */
+export function isOpen(finding: Finding): boolean {
+  return finding.status === 'open' || finding.status === 'in_progress';
+}
+
+/**
+ * Past its deadline and still open.
+ *
+ * A finding with no deadline is never overdue — it is unscheduled, which is a
+ * different gap and reported separately. Conflating them would let an
+ * organization hide work by simply not setting dates.
+ */
+export function isOverdue(finding: Finding, now: number = Date.now()): boolean {
+  return isOpen(finding) && finding.dueAt !== undefined && Date.parse(finding.dueAt) < now;
 }
 
 export type { Action, Agent, ApprovalRequest, EvidenceRecord, Policy, ControlObservation };

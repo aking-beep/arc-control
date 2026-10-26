@@ -271,15 +271,23 @@ export function addAssuranceRoutes(router: Router, options: AssuranceRouteOption
 
   // --- findings -----------------------------------------------------------
 
+  /**
+   * Findings, with `?overdue=true` for the remediation queue.
+   *
+   * `overdue` implies open-or-in-progress whatever `status` says: a resolved
+   * finding that happened to miss its date is history, not work.
+   */
   router.get('/v1/findings', async (context) => {
     operators.authenticate(context);
     const status = context.query.get('status');
     const controlId = context.query.get('controlId');
+    const overdue = context.query.get('overdue') === 'true';
 
     return {
       findings: await assurance.listFindings({
         ...(status ? { status: status as never } : {}),
         ...(controlId ? { controlId } : {}),
+        ...(overdue ? { overdue: true } : {}),
       }),
     };
   });
