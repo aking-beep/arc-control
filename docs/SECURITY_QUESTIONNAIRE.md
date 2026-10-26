@@ -54,19 +54,44 @@ read evidence, approve anything, see other agents, or reach any governance
 route. A test presents a valid agent key to all 35 governance routes and
 asserts 401 on every one.
 
-**How do operators authenticate?** **A single shared bearer token, with
-identity taken from a request header.** This is the most important limitation in
-the product and we state it first rather than last:
+**How do operators authenticate?** OpenID Connect single sign-on against your
+identity provider: authorization code with PKCE, ID token signatures verified
+against the provider's published keys, server-side sessions, and roles taken
+from verified claims rather than from any request header. An operator cannot
+widen their own authority by setting a header.
 
-- Anyone holding the token can claim any identity.
-- An approval therefore establishes that the approval workflow ran — **not who
-  ran it**.
-- Deploy the console behind an identity-aware proxy that sets the identity
-  header from an authenticated session. The token then authenticates the proxy.
-- SSO (OIDC) and RBAC are the next release. They replace this module entirely.
+Three modes exist, and ARC records which one identified each person, because a
+real deployment runs more than one at once:
 
-The product says this itself: on the Settings page, as a stated limitation on
-the approval control, and in every evidence bundle.
+| Mode | How | Recorded as |
+|---|---|---|
+| Single sign-on | ARC verifies an ID token against the provider's keys | `authenticated` |
+| Identity-aware proxy | A proxy ARC is configured to trust asserts it, with a shared secret | `asserted_by_proxy` |
+| Shared token | The caller states a name alongside a token | `claimed` |
+
+The shared token is retained so a 2.0 deployment survives an upgrade, and it is
+a fallback rather than a bypass: configure either other mode and it stops being
+accepted unless you opt in explicitly. ARC **refuses to start** with the token
+as its only credential on an interface reachable from the network.
+
+**Can an approval be attributed to a named person?** Where that person signed
+in, yes. ARC does not assert this generally, because it is not generally true:
+each ARC-AI-004 assessment computes the attribution of the votes it examined
+and states it, naming the issuer where it can and counting what it cannot
+attribute where it cannot. A mixed window is reported as mixed. A vote recorded
+before 2.1 reads as `claimed`, since that is what the deployment which wrote it
+could support.
+
+**Can access be revoked immediately?** Yes. Sessions are server-side, so
+sign-out and administrative revocation take effect on the next request rather
+than when a token expires. Revocation is keyed on the provider's subject rather
+than the email, because an address can be reassigned and offboarding has to
+catch the person who left. There is an idle timeout as well as a lifetime.
+
+**What happens if the identity provider is down?** Operators cannot sign in.
+Enforcement is unaffected — agents keep being authorized — and ARC reports
+`identity_provider_unavailable` (503) rather than an authentication failure, so
+an on-call rota can tell an outage from a bad credential.
 
 **Is there RBAC?** Not per-operator. The boundary that exists and is enforced
 is between *agents* and *operators*, and it is absolute. Policy-level
@@ -272,17 +297,25 @@ a commit. We would rather say that than imply otherwise.
 Stated together, because a buyer should not have to assemble this list
 themselves:
 
-1. Operator identity is not authenticated. SSO and RBAC are next.
-2. Per-operator RBAC does not exist. Agent-versus-operator does, absolutely.
+1. **Role-based access control is coarse.** Roles gate who may approve what,
+   through policy approver selectors. There is no per-object permission model
+   and no delegation.
+2. **One writer.** `transact` is an in-process mutex, so exactly one process
+   may write. No HA, no multi-region, and a restart is a brief outage in which
+   enforcement denies rather than mis-authorizes. A Postgres-backed store with
+   a cross-process lock is the upgrade path and is not built.
 3. The audit log is tamper-evident, not tamper-proof, and cannot detect
-   truncation without an external anchor.
-4. Single-node storage. No HA, no multi-region.
-5. No penetration test has been performed.
-6. ARC cannot see an action that bypassed it. ARC-AI-009 is attestation-based
-   for exactly this reason.
-7. ARC observes authorization and evidence. It does not observe model
+   truncation without an external anchor you hold.
+4. No penetration test has been performed.
+5. ARC cannot see an action that bypassed it. ARC-AI-009 is attestation-based
+   for exactly this reason, and reports `not_assessable` without a current
+   attestation rather than passing.
+6. ARC observes authorization and evidence. It does not observe model
    behaviour — no accuracy, bias, drift or output quality.
-8. No performance figures, because none have been measured.
+7. Notifications go to a webhook or a chat workspace. There is no email or
+   paging integration, and no on-call escalation.
+8. Performance is measured on a single container (see OPERATIONS.md) and has
+   not been load-tested against a production workload.
 9. Framework mappings are drafts until your team reviews them.
 10. Simulated connector effects in the demo seed are labelled as simulated,
     everywhere they appear.

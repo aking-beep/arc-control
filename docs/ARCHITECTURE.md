@@ -150,14 +150,20 @@ policy governing it would not be governed.*
 **Operators** present the operator token and manage everything else — agents,
 tools, policy, approvals, evidence, audit.
 
-v0.1 authenticates operators with one shared token and takes their identity
-from a request header. That is adequate for a pilot behind an existing
-identity-aware proxy and inadequate for anything else: the token carries no
-individual accountability, and a caller who holds it can claim any identity.
-`apps/control-api/src/operator.ts` is the seam that real RBAC and SSO replace in
-v0.5. Because the claimed identity is recorded on every approval and in the
-audit log, a disputed approval can at least be traced to the token and the
-claim that was made.
+2.1 authenticates operators through OpenID Connect and keeps sessions
+server-side; `packages/operator-identity` holds the relying party, the session
+manager and the role mapping, and `apps/control-api/src/operator.ts` resolves
+one request to one person.
+
+The design decision worth knowing is that **the provenance of an identity is
+recorded alongside it**. A deployment mid-migration runs single sign-on, a
+trusted proxy and the legacy token at once, and if all three produced the same
+record a reader could not tell a verified approval from an asserted one — so
+the strongest claim the whole set could support would be its weakest member.
+Every vote therefore carries `authenticated`, `asserted_by_proxy` or `claimed`,
+in the approval record, the evidence export and the audit chain. That is what
+lets ARC-AI-004 report the truth about one deployment instead of carrying a
+caveat written for all of them.
 
 ---
 
@@ -166,14 +172,23 @@ claim that was made.
 `ControlStore` is an interface, with two implementations shipped:
 
 - **`MemoryStore`** — for tests, evals and examples.
-- **`FileStore`** — newline-delimited JSON in one directory. Mutable
-  collections are snapshot files rewritten atomically; the audit log is a true
-  append-only file, so a record that has been written is never rewritten. This
-  is the single-node target: enough for a pilot, an air-gapped install or a
-  laptop, and small enough to read with `cat`.
+- **`FileStore`** — newline-delimited JSON in one directory. Every collection
+  is an append-only log, compacted once it holds more dead weight than live
+  records; the audit log is append-only and never compacted, so a record that
+  has been written is never rewritten. Small enough to read with `cat`.
 
-A clustered store (Postgres, with the audit chain anchored externally) is v0.5
-work. The interface exists now so that change does not reach the gateway.
+  A write appends one line. 2.0 rewrote the whole collection file on every
+  mutation, which is fine for policies and wrong for evidence: the cost of
+  recording the ten-thousandth action was proportional to the nine thousand
+  before it. Per-record cost is now flat — see the capacity table in
+  OPERATIONS.md.
+
+**One writer, not one node.** `transact` is an in-process mutex, so two
+replicas would each hold their own and break both the single-use approval
+guarantee and the audit chain's single-writer assumption. A clustered store
+(Postgres, with a cross-process lock and the chain anchored externally) is the
+upgrade path and is not built. The interface exists now so that change does not
+reach the gateway.
 
 ---
 

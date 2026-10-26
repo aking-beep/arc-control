@@ -115,11 +115,23 @@ demanded, and the approval was consumed so it cannot be replayed.
 The vote-timing check is the one this control exists for. A vote timestamped
 after the action ran is the signature of an approval applied retrospectively.
 
-What a pass does not tell you:
+What a pass does and does not tell you about **who** approved it depends on
+the deployment, so each assessment computes it from the votes it examined
+rather than this catalogue asserting one answer for every installation:
 
-- **Who** approved it. Approver identity comes from a configured console header
-  rather than an authenticated user in this release, so the control establishes
-  that the workflow ran, not who ran it.
+- Where every approver signed in through your identity provider, the result
+  says these approvals are attributable to individuals, and names the issuer
+  that vouched for them.
+- Where an approver's identity was asserted by a trusted proxy, the result says
+  so: the attribution is sound only while the network path to that proxy is.
+- Where an approver's identity was claimed alongside a shared token, the result
+  says how many votes it cannot attribute. For those, the control establishes
+  that the workflow ran and not who ran it.
+- A vote recorded before 2.1 reads as claimed, because that is what the
+  deployment which wrote it could support.
+
+A mixed window is reported as mixed, with counts, rather than rounded up to its
+strongest member.
 
 ## ARC-AI-005 · Relevant actions and denials leave audit evidence
 
