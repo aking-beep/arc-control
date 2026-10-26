@@ -273,7 +273,12 @@ export class Gateway {
     // the grant: an operator who disables a tool, tries to resume, then
     // re-enables it should still have their approval. The race protection
     // still comes from `consume`, which remains the single serializing step.
-    const pending = await this.approvals.require(approvalId);
+    // Releasability first. The gate checks below audit a refused *approved*
+    // release, so a grant that was never approved — still pending, rejected,
+    // expired, cancelled or already spent — has to be rejected on its own
+    // terms before them, or the caller is told the wrong reason and the chain
+    // records a release that was never authorized to begin with.
+    const pending = await this.approvals.requireReleasable(approvalId);
 
     const action = await this.#store.actions.get(pending.actionId);
     if (!action) throw new ArcError('not_found', `no action with id ${pending.actionId}`);

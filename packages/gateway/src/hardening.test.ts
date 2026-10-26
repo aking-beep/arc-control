@@ -403,6 +403,137 @@ describe('releasing an approved action re-checks the gates', () => {
  * which sets the status unconditionally — so both the `/resume` and
  * `/activate` API routes could undo a retirement.
  */
+/**
+ * The release gates audit "an approved action was refused at release". That
+ * sentence has to be true when it is written.
+ *
+ * Checking the gates before spending the grant (above) created a precedence
+ * bug: `require` only checks that an approval exists, so a request that was
+ * never approved — still pending, rejected, expired, or already spent — hit
+ * the gate checks first. On a disabled tool the caller was told
+ * `tool_disabled` instead of `approval_required`, and the chain gained a
+ * record claiming an approved release was blocked when nothing had been
+ * approved. A false statement in an append-only log is worse than a confusing
+ * error, because ARC-AI-004 assesses approvals from exactly these records.
+ */
+describe('a grant that was never approved is refused on its own terms', () => {
+  const HOLD: Policy = {
+    id: 'HOLD-002',
+    version: 1,
+    name: 'Hold refunds for a human',
+    enabled: true,
+    match: {},
+    rules: [
+      {
+        id: 'hold',
+        when: { always: true },
+        effect: 'REQUIRE_APPROVAL',
+        reason: 'needs a human',
+        approval: { approvers: ['role:finance-manager'], minApprovals: 1 },
+      },
+    ],
+    fallback: { effect: 'DENY', reason: 'no rule matched' },
+  };
+
+  /** Raises a held action and leaves it unvoted. */
+  async function unvoted(gateway: Gateway, apiKey: string): Promise<string> {
+    const result = await gateway.handle(apiKey, { tool: 'stripe.refund', parameters: { amount: 100 } });
+    assert.equal(result.outcome, 'pending_approval');
+    return result.approvalId!;
+  }
+
+  it('reports the approval state, not the kill switch, for a pending grant', async () => {
+    const { gateway, apiKey, refund } = await setup({}, HOLD);
+    const approvalId = await unvoted(gateway, apiKey);
+
+    await gateway.admin.setToolDisabled(refund.id, true, { identifier: 'ops@example.com' });
+
+    await assert.rejects(
+      () => gateway.resume(approvalId),
+      (error: ArcError) => error.code === 'approval_required',
+    );
+  });
+
+  it('does not claim an approved release was blocked when nothing was approved', async () => {
+    const { gateway, apiKey, refund } = await setup({}, HOLD);
+    const approvalId = await unvoted(gateway, apiKey);
+    await gateway.admin.setToolDisabled(refund.id, true, { identifier: 'ops@example.com' });
+
+    await assert.rejects(() => gateway.resume(approvalId));
+
+    const audit = await gateway.audit.read({ limit: 50 });
+    assert.equal(
+      audit.filter((record) => /approved action was refused at release/.test(record.summary)).length,
+      0,
+      'the chain must not record a release of something never approved',
+    );
+  });
+
+  it('reports the rejection, not the kill switch, for a rejected grant', async () => {
+    const { gateway, apiKey, refund } = await setup({}, HOLD);
+    const approvalId = await unvoted(gateway, apiKey);
+
+    await gateway.approvals.vote({
+      approvalId,
+      approver: { identifier: 'cfo@example.com', roles: ['finance-manager'] },
+      vote: 'reject',
+    });
+    await gateway.admin.setToolDisabled(refund.id, true, { identifier: 'ops@example.com' });
+
+    await assert.rejects(
+      () => gateway.resume(approvalId),
+      (error: ArcError) => error.code === 'approval_rejected',
+    );
+  });
+
+  it('reports the conflict, not the kill switch, for a grant already spent', async () => {
+    const { gateway, apiKey, refund } = await setup({}, HOLD);
+    const approvalId = await unvoted(gateway, apiKey);
+
+    await gateway.approvals.vote({
+      approvalId,
+      approver: { identifier: 'cfo@example.com', roles: ['finance-manager'] },
+      vote: 'approve',
+    });
+    assert.equal((await gateway.resume(approvalId)).outcome, 'executed');
+
+    await gateway.admin.setToolDisabled(refund.id, true, { identifier: 'ops@example.com' });
+
+    await assert.rejects(
+      () => gateway.resume(approvalId),
+      (error: ArcError) => error.code === 'conflict',
+    );
+  });
+
+  /**
+   * And the gate still wins over a healthy grant, which is the whole point of
+   * the checks: a real approved release on a disabled tool must still refuse.
+   */
+  it('still refuses an approved grant when the tool is disabled', async () => {
+    const { gateway, apiKey, refund, connector } = await setup({}, HOLD);
+    const approvalId = await unvoted(gateway, apiKey);
+
+    await gateway.approvals.vote({
+      approvalId,
+      approver: { identifier: 'cfo@example.com', roles: ['finance-manager'] },
+      vote: 'approve',
+    });
+    await gateway.admin.setToolDisabled(refund.id, true, { identifier: 'ops@example.com' });
+
+    await assert.rejects(
+      () => gateway.resume(approvalId),
+      (error: ArcError) => error.code === 'tool_disabled',
+    );
+    assert.equal(connector.callCount('stripe.refund'), 0);
+
+    const audit = await gateway.audit.read({ limit: 50 });
+    assert.ok(
+      audit.some((record) => /approved action was refused at release/.test(record.summary)),
+      'and here the chain should say exactly that, because it is true',
+    );
+  });
+});
+
 describe('retirement is final through every path', () => {
   it('refuses to reactivate a retired agent through setAgentStatus', async () => {
     const { gateway, agent } = await setup();

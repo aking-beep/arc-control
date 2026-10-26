@@ -184,38 +184,30 @@ export class ApprovalEngine {
   async consume(approvalId: string): Promise<ApprovalRequest> {
     return this.#store.approvals.transact(async () => {
       const request = await this.#expireIfDue(await this.require(approvalId));
-
-      if (request.consumedAt) {
-        throw new ArcError('conflict', 'this approval has already authorized an execution', {
-          details: { approvalId: request.id, consumedAt: request.consumedAt },
-        });
-      }
-
-      switch (request.status) {
-        case 'approved':
-          break;
-        case 'pending':
-          throw new ArcError('approval_required', 'this action is still waiting for approval', {
-            details: { approvalId: request.id, approvals: request.votes.length },
-          });
-        case 'rejected':
-          throw new ArcError('approval_rejected', 'a named approver rejected this action', {
-            details: { approvalId: request.id },
-          });
-        case 'expired':
-          throw new ArcError('approval_expired', 'the approval window for this action has closed', {
-            details: { approvalId: request.id, expiresAt: request.expiresAt },
-          });
-        case 'cancelled':
-          throw new ArcError('conflict', 'this approval request was cancelled', {
-            details: { approvalId: request.id },
-          });
-      }
+      assertReleasable(request);
 
       const consumed: ApprovalRequest = { ...request, consumedAt: this.#now().toISOString() };
       await this.#store.approvals.put(consumed.id, consumed);
       return consumed;
     });
+  }
+
+  /**
+   * Reads a request and throws unless it is a grant that may still be
+   * released, without consuming it.
+   *
+   * A caller that must do work before spending the grant — re-checking the
+   * kill switch and the agent's status at release time — needs to know the
+   * grant is real *first*, or it reports its own refusal for an approval
+   * nobody ever approved and writes that into the audit chain. It shares
+   * `assertReleasable` with `consume` rather than restating the rules, and
+   * `consume` still re-checks inside the transaction, so this is an early
+   * answer rather than a second authority.
+   */
+  async requireReleasable(approvalId: string): Promise<ApprovalRequest> {
+    const request = await this.#expireIfDue(await this.require(approvalId));
+    assertReleasable(request);
+    return request;
   }
 
   async cancel(approvalId: string, reason: string): Promise<ApprovalRequest> {
@@ -279,5 +271,42 @@ export class ApprovalEngine {
     };
     await this.#store.approvals.put(expired.id, expired);
     return expired;
+  }
+}
+
+/**
+ * The one definition of "this grant may still authorize an execution".
+ *
+ * Used by `consume`, inside its transaction, and by `requireReleasable`
+ * ahead of it. Kept in one place because two copies of these five cases
+ * would eventually disagree, and the disagreement would be a grant released
+ * on a status that should have refused it.
+ */
+function assertReleasable(request: ApprovalRequest): void {
+  if (request.consumedAt) {
+    throw new ArcError('conflict', 'this approval has already authorized an execution', {
+      details: { approvalId: request.id, consumedAt: request.consumedAt },
+    });
+  }
+
+  switch (request.status) {
+    case 'approved':
+      return;
+    case 'pending':
+      throw new ArcError('approval_required', 'this action is still waiting for approval', {
+        details: { approvalId: request.id, approvals: request.votes.length },
+      });
+    case 'rejected':
+      throw new ArcError('approval_rejected', 'a named approver rejected this action', {
+        details: { approvalId: request.id },
+      });
+    case 'expired':
+      throw new ArcError('approval_expired', 'the approval window for this action has closed', {
+        details: { approvalId: request.id, expiresAt: request.expiresAt },
+      });
+    case 'cancelled':
+      throw new ArcError('conflict', 'this approval request was cancelled', {
+        details: { approvalId: request.id },
+      });
   }
 }
