@@ -132,6 +132,40 @@ a specific one and few enough to serve properly.
 - A security review, including the questionnaire, and the findings.
 - Permission to be a reference, or a redacted case study, on success.
 
+### What we should pay for before selling this on its audit trail
+
+**An independent security review of the operator authentication path.** This is
+a recommendation against our own interest and it is the honest one.
+
+The 2.1 authentication work — OpenID Connect sign-in, sessions, the redirect
+back to the console, the assurance recorded against every vote — went through
+four rounds of automated review. The first round found six defects in the
+original implementation. The next three found four more, every one of them
+introduced *while fixing the previous round*, and every one in the
+authentication path:
+
+- a sign-in flow that returned the operator to the API instead of the console,
+  which was the default configuration this repository ships;
+- the shared operator token written into a pod spec, readable by anyone who
+  could describe the pod;
+- an open redirect reachable through a tab character in `returnTo`;
+- a malformed console URL producing a redirect to the literal string `null`.
+
+All are fixed, each with a regression test that fails when the fix is reverted.
+That is not the point. The point is the rate: on a surface where a defect means
+an approval attributed to the wrong person, four of eleven findings were
+self-inflicted inside one working session, and three of our own verification
+steps returned a convincing wrong answer along the way.
+
+The product's entire proposition is that an approval record means what it says.
+A buyer whose reason for wanting ARC is the audit trail is relying on exactly
+this code. Our test suite and an automated reviewer are not a substitute for
+somebody whose job is attacking it, and we should not present the attribution
+guarantee as settled until that has happened.
+
+This does not block a pilot. It blocks the sentence "approvals are
+cryptographically attributable to individuals" appearing in a contract.
+
 ### What we are testing
 
 | Hypothesis | Falsified if |
@@ -140,7 +174,7 @@ a specific one and few enough to serve properly.
 | `not_assessable` is reassuring, not alarming. | Partners ask us to make it pass, or stop running assessments because the output looks bad. |
 | Offline bundle verification matters to a real auditor. | Nobody runs `arc bundle verify`, or the auditor wants a PDF instead. |
 | The nine controls are the right nine. | Partners add more than three of their own before finding value. |
-| The operator-token limitation is survivable for a pilot. | A partner cannot deploy without SSO. |
+| Single sign-on is enough to make the audit trail worth buying. | A partner's security review finds defects in the authentication path, or will not accept it without an independent one. |
 | Agents are registered honestly. | Partners register tools they do not use, or route around ARC for the awkward ones. |
 
 That last row is the real risk to the whole thesis and the hardest to observe,
