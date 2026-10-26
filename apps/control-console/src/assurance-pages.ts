@@ -14,6 +14,7 @@
  * plausible numbers is worse than no dashboard, because somebody will
  * screenshot it.
  */
+import { daysUntil, dueState } from '@arc-control/schemas';
 import { count, shortId, timestamp } from './format.js';
 import {
   backLink,
@@ -75,27 +76,41 @@ function when(iso: unknown): Trusted {
  * different gap from a late one, and a blank cell reads as "fine".
  */
 function dueCell(dueAt: unknown, now: number): Trusted {
-  if (typeof dueAt !== 'string' || !dueAt) {
-    return raw(html`<span class="badge muted">none set</span>`);
-  }
+  const value = typeof dueAt === 'string' ? dueAt : undefined;
 
-  const due = Date.parse(dueAt);
-  if (Number.isNaN(due)) return muted(String(dueAt));
+  // Classified by `dueState`, which the engine also uses, so this cell cannot
+  // disagree with the count above it or with the filter that selected the row.
+  // The day figures below are for reading only; they never decide the state.
+  switch (dueState(value, now)) {
+    case 'unscheduled':
+      return raw(html`<span class="badge muted">none set</span>`);
 
-  const days = Math.round((due - now) / 86_400_000);
-  if (days < 0) {
-    return raw(
-      html`<span class="badge deny">${String(Math.abs(days))}d overdue</span>
-        <span class="tnum muted">${timestamp(dueAt)}</span>`,
-    );
+    case 'unreadable':
+      return muted(String(dueAt));
+
+    case 'overdue': {
+      // Truncating gives 0 for anything less than a full day late, which would
+      // read as "not late at all", so under a day says only that it is late.
+      const late = Math.abs(daysUntil(value!, now));
+      const label = late >= 1 ? `${String(late)}d overdue` : 'overdue';
+      return raw(
+        html`<span class="badge deny">${label}</span>
+          <span class="tnum muted">${timestamp(value!)}</span>`,
+      );
+    }
+
+    case 'due_soon': {
+      const days = daysUntil(value!, now);
+      const label = days >= 1 ? `due in ${String(days)}d` : 'due today';
+      return raw(
+        html`<span class="badge approval">${label}</span>
+          <span class="tnum muted">${timestamp(value!)}</span>`,
+      );
+    }
+
+    default:
+      return raw(html`<span class="tnum muted">${timestamp(value!)}</span>`);
   }
-  if (days <= 7) {
-    return raw(
-      html`<span class="badge approval">due in ${String(days)}d</span>
-        <span class="tnum muted">${timestamp(dueAt)}</span>`,
-    );
-  }
-  return raw(html`<span class="tnum muted">${timestamp(dueAt)}</span>`);
 }
 
 function links(ids: readonly string[], href: (id: string) => string, separator = ' '): Trusted {

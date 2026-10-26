@@ -789,6 +789,56 @@ describe('The governance sections never invent a figure', () => {
     assert.ok(text.includes('unscheduled work is a different gap from late work'));
   });
 
+  /**
+   * The queue and the counts above it must agree. They did not: the cell
+   * rounded the remaining time to whole days before choosing a badge, so a
+   * finding a few hours past its deadline rendered as "due in 0d" — in the
+   * table the overdue filter had just selected it for, under a heading
+   * counting it as overdue. Both sides now classify through `dueState`.
+   *
+   * These assert on the cell's own markup rather than the page text, because
+   * the remediation summary above the queue also prints the word "overdue" and
+   * a page-wide search would pass whatever the row said.
+   */
+  async function dueCellFor(dueAt: string): Promise<string> {
+    const { context } = contextFor(
+      routes({ '/v1/findings?status=open': { findings: [{ ...FINDING, dueAt }] } }),
+    );
+    const page = await findingsPage(context);
+    const badge = /<span class="badge (deny|approval|muted)">([^<]*)<\/span>\s*<span class="tnum muted">/.exec(page);
+    return badge ? `${badge[1]}:${badge[2]}` : 'none';
+  }
+
+  const fromNow = (ms: number): string => new Date(Date.now() + ms).toISOString();
+
+  it('shows a finding hours past its deadline as overdue, not as due today', async () => {
+    assert.equal(await dueCellFor(fromNow(-6 * 3_600_000)), 'deny:overdue');
+  });
+
+  it('does not invent a day of lateness that has not elapsed', async () => {
+    assert.equal(await dueCellFor(fromNow(-60_000)), 'deny:overdue', 'a minute late is not "1d overdue"');
+  });
+
+  it('says how late it is once whole days have passed', async () => {
+    assert.equal(await dueCellFor(fromNow(-3 * 86_400_000 - 3_600_000)), 'deny:3d overdue');
+  });
+
+  it('counts down in days for a deadline inside the window', async () => {
+    assert.equal(await dueCellFor(fromNow(3 * 86_400_000 + 3_600_000)), 'approval:due in 3d');
+  });
+
+  it('calls a deadline later today due today rather than due in 0d', async () => {
+    assert.equal(await dueCellFor(fromNow(6 * 3_600_000)), 'approval:due today');
+  });
+
+  /**
+   * The other side of the same boundary: the engine's due-soon window is seven
+   * days, so a deadline outside it wears no badge at all.
+   */
+  it('does not mark a deadline beyond the due-soon window as due soon', async () => {
+    assert.equal(await dueCellFor(fromNow(8 * 86_400_000)), 'none');
+  });
+
   it('marks a finding with no deadline as none set rather than leaving it blank', async () => {
     const { context } = contextFor(
       routes({ '/v1/findings?status=open': { findings: [{ ...FINDING, dueAt: undefined }] } }),

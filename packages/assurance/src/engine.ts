@@ -26,6 +26,8 @@
  */
 import {
   digest,
+  dueState,
+  isFindingOpen,
   newId,
   rateRisk,
   type Action,
@@ -879,11 +881,7 @@ export class AssuranceEngine {
     const remediation = {
       open: outstanding.length,
       overdue: outstanding.filter((finding) => isOverdue(finding, now)).length,
-      dueSoon: outstanding.filter((finding) => {
-        if (!finding.dueAt) return false;
-        const due = Date.parse(finding.dueAt);
-        return due >= now && due <= now + 7 * 86_400_000;
-      }).length,
+      dueSoon: outstanding.filter((finding) => isDueSoon(finding, now)).length,
       noDeadline: outstanding.filter((finding) => finding.dueAt === undefined).length,
       unassigned: outstanding.filter((finding) => !finding.owner).length,
     };
@@ -932,7 +930,7 @@ function severityRank(severity: FindingSeverity): number {
 
 /** Still work: raised and not yet closed by any route. */
 export function isOpen(finding: Finding): boolean {
-  return finding.status === 'open' || finding.status === 'in_progress';
+  return isFindingOpen(finding);
 }
 
 /**
@@ -943,7 +941,12 @@ export function isOpen(finding: Finding): boolean {
  * organization hide work by simply not setting dates.
  */
 export function isOverdue(finding: Finding, now: number = Date.now()): boolean {
-  return isOpen(finding) && finding.dueAt !== undefined && Date.parse(finding.dueAt) < now;
+  return isOpen(finding) && dueState(finding.dueAt, now) === 'overdue';
+}
+
+/** Open, not yet late, and inside the shared due-soon horizon. */
+export function isDueSoon(finding: Finding, now: number = Date.now()): boolean {
+  return isOpen(finding) && dueState(finding.dueAt, now) === 'due_soon';
 }
 
 export type { Action, Agent, ApprovalRequest, EvidenceRecord, Policy, ControlObservation };
