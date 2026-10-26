@@ -16,6 +16,7 @@
  */
 import {
   canonicalize,
+  classifyAction,
   digest,
   newId,
   type Action,
@@ -30,6 +31,7 @@ import {
 } from '@arc-control/schemas';
 import { buildPolicyInput, PolicyEngine } from '@arc-control/policy-engine';
 import type { ControlStore } from '@arc-control/store';
+import type { ClassificationOptions } from './gateway.js';
 
 // --- diffing ---------------------------------------------------------------
 
@@ -234,7 +236,29 @@ function summarise(decision: Decision): SimulatedDecision {
   };
 }
 
-function inputFor(agent: Agent, tool: Tool, parameters: Readonly<Record<string, unknown>>, at: Date): PolicyInput {
+/**
+ * Builds the evaluation input for a simulated action.
+ *
+ * `risk` is classified here with the same function and the same configuration
+ * the gateway uses. Omitting it meant a candidate rule reading
+ * `$.action.risk.*` evaluated against an absent value in simulation and a real
+ * one in production — so a rule could look safe here and decide differently
+ * live, which is worse than having no simulator.
+ *
+ * `source` is deliberately *not* supplied. The gateway records it in the
+ * decision context but does not store it on the action, so a replay cannot
+ * recover what it was. Guessing `internal` — which is what this did — made
+ * every replayed action look like an internal call. An absent value simply
+ * does not match, which fails closed for an ALLOW rule; the limitation is
+ * stated on the replay result.
+ */
+function inputFor(
+  agent: Agent,
+  tool: Tool,
+  parameters: Readonly<Record<string, unknown>>,
+  at: Date,
+  classification: ClassificationOptions = {},
+): PolicyInput {
   const action: Action = {
     id: 'arc_act_simulation',
     agentId: agent.id,
@@ -249,6 +273,18 @@ function inputFor(agent: Agent, tool: Tool, parameters: Readonly<Record<string, 
   };
 
   return buildPolicyInput({
+    risk: classifyAction({
+      effect: tool.effect,
+      riskTier: tool.riskTier,
+      parameters,
+      environment: agent.environment,
+      ...(classification.monetaryEscalationThreshold !== undefined
+        ? { monetaryEscalationThreshold: classification.monetaryEscalationThreshold }
+        : {}),
+      ...(classification.productionEnvironments
+        ? { productionEnvironments: classification.productionEnvironments }
+        : {}),
+    }),
     principal: {
       agentId: agent.id,
       agentName: agent.name,
@@ -263,7 +299,6 @@ function inputFor(agent: Agent, tool: Tool, parameters: Readonly<Record<string, 
     tool,
     action,
     requestedAt: at,
-    source: 'internal',
   });
 }
 
@@ -272,6 +307,13 @@ export interface SimulateOptions {
   /** The document being proposed. Not published, not stored. */
   readonly candidate: Policy;
   readonly engine?: PolicyEngine;
+  /**
+   * The gateway's risk-classification configuration, so simulation classifies
+   * the way production does. Pass `gateway.classification`; omitting it means
+   * a configured monetary threshold is not applied here and a candidate rule
+   * reading `$.action.risk.class` could decide differently live.
+   */
+  readonly classification?: ClassificationOptions;
 }
 
 /**
@@ -294,7 +336,7 @@ export async function simulateHypothetical(
 
   const policies = await options.store.policies.list();
   const at = options.subject.at ?? new Date();
-  const input = inputFor(agent, tool, options.subject.parameters, at);
+  const input = inputFor(agent, tool, options.subject.parameters, at, options.classification);
 
   const current = engine.evaluate(policies, input);
   const candidate = engine.evaluate(withCandidate(policies, options.candidate), input);
@@ -365,7 +407,7 @@ export async function simulateAgainstHistory(
     }
 
     const at = new Date(action.requestedAt);
-    const input = inputFor(agent, tool, action.parameters, at);
+    const input = inputFor(agent, tool, action.parameters, at, options.classification);
 
     const current = engine.evaluate(policies, input);
     const candidate = engine.evaluate(candidateSet, input);
@@ -393,6 +435,7 @@ export async function simulateAgainstHistory(
       'A replay re-decides traffic that already happened. It cannot predict traffic the change itself would cause.',
       'Actions that never reached the gateway are invisible to it, so a replay says nothing about bypass.',
       'Parameters are replayed as recorded. A sensitive parameter that was redacted before storage is replayed redacted, which can change the decision.',
+      'The request source is not stored on an action, so a rule reading $.context.source does not match in a replay. Risk classification is applied, and matches production when the same classification configuration is passed.',
     ],
   };
 }

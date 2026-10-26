@@ -119,8 +119,12 @@ export function addAssuranceRoutes(router: Router, options: AssuranceRouteOption
 
     const result = await assurance.run({
       requestedBy: operator.identifier,
-      ...(body.from ? { from: new Date(body.from) } : {}),
-      ...(body.to ? { to: new Date(body.to) } : {}),
+      // Validated, not coerced. `new Date('nonsense')` is an Invalid Date:
+      // the window filter then matches nothing and the run persists as a
+      // completed assessment over a window that cannot exist — a green
+      // report built on no data at all.
+      ...(body.from ? { from: parseDate(String(body.from), 'from') } : {}),
+      ...(body.to ? { to: parseDate(String(body.to), 'to') } : {}),
       ...(Array.isArray(body.controlIds) ? { controlIds: body.controlIds.map(String) } : {}),
     });
 
@@ -403,6 +407,7 @@ export function addAssuranceRoutes(router: Router, options: AssuranceRouteOption
       return simulateHypothetical({
         store: gateway.store,
         candidate,
+        classification: gateway.classification,
         subject: {
           agentName: String(subject.agentName),
           tool: String(subject.tool),
@@ -414,6 +419,7 @@ export function addAssuranceRoutes(router: Router, options: AssuranceRouteOption
     return simulateAgainstHistory({
       store: gateway.store,
       candidate,
+      classification: gateway.classification,
       ...windowFrom(context.query, body),
       ...(typeof body.limit === 'number' ? { limit: body.limit } : {}),
     });

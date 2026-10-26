@@ -1,4 +1,5 @@
 import {
+  ACTING_AGENT_STATUS,
   ArcError,
   classifyAction,
   digest,
@@ -140,6 +141,18 @@ export class Gateway {
    * informs policy and is recorded in evidence; nothing consults it to permit
    * anything.
    */
+  /**
+   * How this gateway is configured to classify risk.
+   *
+   * Exposed because policy simulation has to classify the same way the
+   * gateway does, or a candidate rule reading `$.action.risk.*` could look
+   * safe in simulation and decide differently in production — which would
+   * make the simulator worse than useless.
+   */
+  get classification(): ClassificationOptions {
+    return this.#classification;
+  }
+
   #classify(tool: Tool, action: Action): ActionRiskAssessment {
     return classifyAction({
       effect: tool.effect,
@@ -248,18 +261,64 @@ export class Gateway {
    * to resume it.
    */
   async resume(approvalId: string): Promise<ActionResult> {
-    const approval = await this.approvals.consume(approvalId);
+    // The gates are re-checked here, and that is the whole point of this
+    // block. An approval is a grant from the past; between the vote and the
+    // release an operator may have hit the kill switch on the tool or
+    // suspended the agent, and a held action that executes anyway makes both
+    // controls a lie. `submit` gets these checks from `tools.resolve` and
+    // `agents.authenticate`; this path reached neither, so it had to ask
+    // again explicitly.
+    //
+    // They run *before* the approval is consumed, so a refusal does not burn
+    // the grant: an operator who disables a tool, tries to resume, then
+    // re-enables it should still have their approval. The race protection
+    // still comes from `consume`, which remains the single serializing step.
+    const pending = await this.approvals.require(approvalId);
 
-    const action = await this.#store.actions.get(approval.actionId);
-    if (!action) throw new ArcError('not_found', `no action with id ${approval.actionId}`);
+    const action = await this.#store.actions.get(pending.actionId);
+    if (!action) throw new ArcError('not_found', `no action with id ${pending.actionId}`);
 
-    const decision = await this.#store.decisions.get(approval.decisionId);
-    if (!decision) throw new ArcError('not_found', `no decision with id ${approval.decisionId}`);
+    const decision = await this.#store.decisions.get(pending.decisionId);
+    if (!decision) throw new ArcError('not_found', `no decision with id ${pending.decisionId}`);
 
-    const tool = await this.tools.get(action.toolId);
-    if (!tool) throw new ArcError('unknown_tool', `tool ${action.toolId} is no longer registered`);
+    // Resolved by name, exactly as `submit` resolves it, so the kill switch is
+    // enforced by the same code on both paths rather than by a copy.
+    let tool: Tool;
+    try {
+      tool = await this.tools.resolve(action.tool);
+    } catch (cause) {
+      const error = toArcError(cause, 'unknown_tool');
+      await this.audit.append({
+        type: 'action.denied',
+        organizationId: action.organizationId,
+        actor: 'system',
+        subject: action.id,
+        summary: `an approved action was refused at release: ${error.message}`,
+        data: { code: error.code, approvalId, tool: action.tool, details: error.details },
+      });
+      throw error;
+    }
 
     const agent = await this.agents.require(action.agentId);
+    if (agent.status !== ACTING_AGENT_STATUS) {
+      const error = new ArcError(
+        'agent_suspended',
+        `agent "${agent.name}" is ${agent.status} and cannot act, so this approved action will not be released`,
+        { details: { agentId: agent.id, status: agent.status, approvalId } },
+      );
+      await this.audit.append({
+        type: 'action.denied',
+        organizationId: action.organizationId,
+        actor: 'system',
+        subject: action.id,
+        summary: `an approved action was refused at release: ${error.message}`,
+        data: { code: error.code, approvalId, status: agent.status },
+      });
+      throw error;
+    }
+
+    // Only now is the grant spent.
+    const approval = await this.approvals.consume(approvalId);
     const principal = this.agents.toPrincipal(agent, 'approval-resumed');
 
     await this.audit.append({
