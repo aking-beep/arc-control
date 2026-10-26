@@ -1,5 +1,12 @@
 import { digest } from '@arc-control/schemas';
-import type { Agent, AgentRegistration, Policy, Tool, ToolRegistration } from '@arc-control/schemas';
+import type {
+  Agent,
+  AgentGovernance,
+  AgentRegistration,
+  Policy,
+  Tool,
+  ToolRegistration,
+} from '@arc-control/schemas';
 import type { AgentRegistry, IssuedCredential } from '@arc-control/agent-identity';
 import type { AuditLog } from '@arc-control/audit';
 import type { ToolRegistry } from '@arc-control/execution';
@@ -50,6 +57,139 @@ export class Administration {
       data: { name: agent.name, owner: agent.owner, roles: agent.roles, kind: agent.kind, via: actor.via },
     });
     return agent;
+  }
+
+  /**
+   * Retires an agent and revokes its credentials.
+   *
+   * Separate from `setAgentStatus` because it is not a status change that can
+   * be undone — the registry refuses to revive a retired agent, so an operator
+   * who wants it back must register it again and be seen doing so.
+   */
+  async retireAgent(agentId: string, actor: Actor): Promise<Agent> {
+    const { agent, revoked } = await this.#deps.agents.retire(agentId);
+
+    await this.#deps.audit.append({
+      type: 'agent.retired',
+      organizationId: agent.organizationId,
+      actor: actor.identifier,
+      subject: agent.id,
+      summary: `${actor.identifier} retired agent "${agent.name}" and revoked ${revoked.length} credential(s)`,
+      data: { revokedCredentialIds: revoked, via: actor.via },
+    });
+
+    return agent;
+  }
+
+  /** Records an agent's governance record, or a completed permission review. */
+  async setAgentGovernance(agentId: string, governance: AgentGovernance, actor: Actor): Promise<Agent> {
+    const agent = await this.#deps.agents.setGovernance(agentId, governance);
+
+    await this.#deps.audit.append({
+      type: 'agent.updated',
+      organizationId: agent.organizationId,
+      actor: actor.identifier,
+      subject: agent.id,
+      summary: `${actor.identifier} recorded the governance record for "${agent.name}"`,
+      data: {
+        purpose: governance.purpose,
+        criticality: governance.criticality,
+        lastReviewedAt: governance.lastReviewedAt,
+        lastReviewedBy: governance.lastReviewedBy,
+        via: actor.via,
+      },
+    });
+
+    return agent;
+  }
+
+  /**
+   * The per-tool kill switch.
+   *
+   * Audited with the reason, because "who turned off stripe.refund and why" is
+   * the first thing asked after the incident and the hardest thing to
+   * reconstruct from memory.
+   */
+  async setToolDisabled(
+    toolId: string,
+    disabled: boolean,
+    actor: Actor,
+    reason?: string,
+  ): Promise<Tool> {
+    const tool = await this.#deps.tools.setDisabled(toolId, disabled, {
+      identifier: actor.identifier,
+      ...(reason ? { reason } : {}),
+    });
+
+    await this.#deps.audit.append({
+      type: disabled ? 'tool.disabled' : 'tool.enabled',
+      organizationId: 'default',
+      actor: actor.identifier,
+      subject: tool.id,
+      summary: `${actor.identifier} ${disabled ? 'disabled' : 're-enabled'} tool "${tool.name}"${reason ? `: ${reason}` : ''}`,
+      data: { toolId: tool.id, name: tool.name, reason, via: actor.via },
+    });
+
+    return tool;
+  }
+
+  /**
+   * The connector-level kill switch: disables every tool that connector runs.
+   *
+   * Implemented by flipping the tools rather than by holding a list of
+   * suspended connectors, so it survives a restart. The gap, audited along
+   * with everything else: a tool registered on that connector afterwards is
+   * not covered, so re-run this after registering anything new.
+   */
+  async setConnectorDisabled(
+    connectorName: string,
+    disabled: boolean,
+    actor: Actor,
+    reason?: string,
+  ): Promise<readonly Tool[]> {
+    const affected = await this.#deps.tools.setConnectorDisabled(connectorName, disabled, {
+      identifier: actor.identifier,
+      ...(reason ? { reason } : {}),
+    });
+
+    await this.#deps.audit.append({
+      type: disabled ? 'connector.disabled' : 'connector.enabled',
+      organizationId: 'default',
+      actor: actor.identifier,
+      subject: connectorName,
+      summary: `${actor.identifier} ${disabled ? 'disabled' : 're-enabled'} connector "${connectorName}", affecting ${affected.length} tool(s)${reason ? `: ${reason}` : ''}`,
+      data: {
+        connector: connectorName,
+        tools: affected.map((tool) => tool.name),
+        reason,
+        via: actor.via,
+        limitation: 'a tool registered on this connector after this change is not covered by it',
+      },
+    });
+
+    return affected;
+  }
+
+  /** Issues a replacement credential and revokes the old one, in that order. */
+  async rotateKey(credentialId: string, actor: Actor, options: { expiresAt?: string } = {}): Promise<IssuedCredential> {
+    const { issued, revoked } = await this.#deps.agents.rotateKey(credentialId, options);
+    const agent = await this.#deps.agents.require(issued.credential.agentId);
+
+    await this.#deps.audit.append({
+      type: 'credential.rotated',
+      organizationId: agent.organizationId,
+      actor: actor.identifier,
+      subject: agent.id,
+      summary: `${actor.identifier} rotated a credential for "${agent.name}"`,
+      data: {
+        issuedCredentialId: issued.credential.id,
+        revokedCredentialId: revoked.id,
+        displayPrefix: issued.credential.displayPrefix,
+        via: actor.via,
+      },
+    });
+
+    return issued;
   }
 
   async setAgentStatus(agentId: string, status: 'active' | 'suspended', actor: Actor): Promise<Agent> {
@@ -131,7 +271,7 @@ export class Administration {
    */
   async publishPolicy(policy: Policy, actor: Actor): Promise<Policy> {
     const previous = await this.#deps.policies.get(policy.id);
-    const stored = await this.#deps.policies.publish(policy);
+    const stored = await this.#deps.policies.publish(policy, { identifier: actor.identifier, via: actor.via ?? 'api' });
 
     await this.#deps.audit.append({
       type: previous ? 'policy.updated' : 'policy.created',
@@ -156,7 +296,10 @@ export class Administration {
   }
 
   async setPolicyEnabled(policyId: string, enabled: boolean, actor: Actor): Promise<Policy> {
-    const policy = await this.#deps.policies.setEnabled(policyId, enabled);
+    const policy = await this.#deps.policies.setEnabled(policyId, enabled, {
+      identifier: actor.identifier,
+      via: actor.via ?? 'api',
+    });
     await this.#deps.audit.append({
       type: enabled ? 'policy.updated' : 'policy.disabled',
       organizationId: 'default',

@@ -1,11 +1,13 @@
-import { ArcError, type ActionRequest, type ChainExpectation, type Policy } from '@arc-control/schemas';
+import { ArcError, type ActionRequest, type AgentGovernance, type ChainExpectation, type Policy } from '@arc-control/schemas';
 import type { Gateway } from '@arc-control/gateway';
+import type { AssuranceEngine } from '@arc-control/assurance';
 import { scanManifest, type McpServerManifest } from '@arc-control/mcp-security';
 import { Router, withStatus, type RequestContext } from './http.js';
 import type { OperatorAuth } from './operator.js';
 
 export interface RouteOptions {
   readonly gateway: Gateway;
+  readonly assurance: AssuranceEngine;
   readonly operators: OperatorAuth;
   readonly version: string;
   /** Reported on `/health` so the console can label a demonstration as one. */
@@ -24,11 +26,27 @@ export interface RouteOptions {
  *  - **Operators** present the operator token and manage everything else.
  */
 export function buildRoutes(options: RouteOptions): Router {
-  const { gateway, operators } = options;
+  const { gateway, assurance, operators } = options;
   const router = new Router();
 
   // --- health -------------------------------------------------------------
 
+  /**
+   * Health, with enforcement and assurance reported separately.
+   *
+   * `status` describes **enforcement only**, and that is deliberate rather
+   * than sloppy. A caller gating traffic on this endpoint wants to know
+   * whether authorization is working; folding assurance into the same figure
+   * would make a stale control assessment look like a reason to stop sending
+   * actions, and — far worse — would teach operators to treat a degraded
+   * reading as routine.
+   *
+   * Assurance is reported in its own object, with its own status, so a
+   * dashboard can show both and nobody has to guess which one went red.
+   * Authorization does not depend on assurance: the engine holds no path into
+   * a decision, so there is no failure here that can open the gateway. The
+   * reverse is not true, and `assurance.dependsOnEnforcement` says so.
+   */
   router.get('/health', async () => {
     const [agents, tools, policies, auditCount] = await Promise.all([
       gateway.agents.list(),
@@ -44,11 +62,53 @@ export function buildRoutes(options: RouteOptions): Router {
       })),
     );
 
+    const enforcementOk = connectors.every((connector) => connector.healthy);
+    const disabledTools = tools.filter((tool) => tool.disabled === true);
+
+    // Assurance is read defensively. A thrown error here must not be able to
+    // make the enforcement reading look unhealthy, so it is caught and
+    // reported as the assurance layer's own problem.
+    let assuranceReport: Record<string, unknown>;
+    try {
+      const summary = await assurance.summary();
+      assuranceReport = {
+        status: 'ok',
+        controls: summary.controls,
+        controlsEnabled: summary.controlsEnabled,
+        lastRun: summary.lastRun,
+        totals: summary.totals,
+        openFindings: summary.openFindings,
+        attestedOrUnassessable: summary.attestedOrUnassessable,
+        window: summary.window,
+      };
+    } catch (cause) {
+      assuranceReport = {
+        status: 'unavailable',
+        reason: cause instanceof Error ? cause.message : String(cause),
+      };
+    }
+
     return {
-      status: connectors.every((connector) => connector.healthy) ? 'ok' : 'degraded',
+      status: enforcementOk ? 'ok' : 'degraded',
       version: options.version,
       operatorAuthConfigured: operators.configured,
       demoSeed: options.demoSeed === true,
+
+      enforcement: {
+        status: enforcementOk ? 'ok' : 'degraded',
+        failureMode: 'closed',
+        policyFallbackEffect: 'DENY',
+        rateLimiting: gateway.rateLimiter.configured ? 'configured' : 'off',
+        connectors,
+        disabledTools: disabledTools.map((tool) => tool.name),
+      },
+
+      assurance: {
+        ...assuranceReport,
+        dependsOnEnforcement: true,
+        enforcementDependsOnAssurance: false,
+      },
+
       counts: {
         agents: agents.length,
         tools: tools.length,
@@ -57,6 +117,29 @@ export function buildRoutes(options: RouteOptions): Router {
       },
       connectors,
     };
+  });
+
+  /**
+   * Enforcement health alone.
+   *
+   * Separate from `/health` so a load balancer or a deployment gate has
+   * something to probe that cannot be turned red by the assurance layer. It
+   * reads nothing from assurance at all.
+   */
+  router.get('/health/enforcement', async () => {
+    const connectors = await Promise.all(
+      gateway.tools.connectors().map(async (connector) => ({
+        name: connector.name,
+        ...(connector.health ? await connector.health() : { healthy: true }),
+      })),
+    );
+
+    const healthy = connectors.every((connector) => connector.healthy);
+    return withStatus(healthy ? 200 : 503, {
+      status: healthy ? 'ok' : 'degraded',
+      failureMode: 'closed',
+      connectors,
+    });
   });
 
   // --- the agent surface --------------------------------------------------
@@ -172,6 +255,87 @@ export function buildRoutes(options: RouteOptions): Router {
     return { credentials: await gateway.agents.listKeys(context.params.id!) };
   });
 
+  /** Records an agent's governance record, or a completed permission review. */
+  router.post('/v1/agents/:id/governance', async (context) => {
+    const operator = operators.authenticate(context);
+    const body = await context.body<Record<string, unknown>>();
+    requireFields(body, ['purpose', 'criticality']);
+
+    const criticality = String(body.criticality);
+    if (!['low', 'medium', 'high', 'business_critical'].includes(criticality)) {
+      throw new ArcError('invalid_request', 'criticality must be low, medium, high or business_critical');
+    }
+
+    const governance: AgentGovernance = {
+      purpose: String(body.purpose),
+      criticality: criticality as AgentGovernance['criticality'],
+      ...(body.department ? { department: String(body.department) } : {}),
+      ...(body.deploymentRef ? { deploymentRef: String(body.deploymentRef) } : {}),
+      ...(Array.isArray(body.dataClassification)
+        ? { dataClassification: body.dataClassification.map(String) }
+        : {}),
+      ...(typeof body.reviewIntervalDays === 'number' ? { reviewIntervalDays: body.reviewIntervalDays } : {}),
+      ...(body.lastReviewedAt ? { lastReviewedAt: String(body.lastReviewedAt) } : {}),
+      ...(body.lastReviewedBy ? { lastReviewedBy: String(body.lastReviewedBy) } : {}),
+      ...(body.reviewDueAt ? { reviewDueAt: String(body.reviewDueAt) } : {}),
+      ...(body.reviewNote ? { reviewNote: String(body.reviewNote) } : {}),
+    };
+
+    return gateway.admin.setAgentGovernance(context.params.id!, governance, {
+      identifier: operator.identifier,
+      via: 'api',
+    });
+  });
+
+  /** Clears a draft agent to act, or brings a suspended one back. */
+  router.post('/v1/agents/:id/activate', async (context) => {
+    const operator = operators.authenticate(context);
+    return gateway.admin.setAgentStatus(context.params.id!, 'active', {
+      identifier: operator.identifier,
+      via: 'api',
+    });
+  });
+
+  /**
+   * Retires an agent permanently and revokes every credential it holds.
+   *
+   * Not reversible: the registry refuses to revive a retired agent, so an
+   * operator who wants it back registers a new one and is seen doing so.
+   */
+  router.post('/v1/agents/:id/retire', async (context) => {
+    const operator = operators.authenticate(context);
+    return gateway.admin.retireAgent(context.params.id!, { identifier: operator.identifier, via: 'api' });
+  });
+
+  // --- credential inventory -----------------------------------------------
+
+  router.get('/v1/credentials', async (context) => {
+    operators.authenticate(context);
+    return {
+      credentials: await gateway.agents.credentialInventory({
+        expiringWithinDays: positiveInt(context.query.get('expiringWithinDays'), 14),
+      }),
+    };
+  });
+
+  /** Issues a replacement credential and revokes the old one, in that order. */
+  router.post('/v1/credentials/:id/rotate', async (context) => {
+    const operator = operators.authenticate(context);
+    const body = await context.body<{ expiresAt?: string }>().catch(() => ({}) as { expiresAt?: string });
+
+    const issued = await gateway.admin.rotateKey(
+      context.params.id!,
+      { identifier: operator.identifier, via: 'api' },
+      body.expiresAt ? { expiresAt: body.expiresAt } : {},
+    );
+
+    return withStatus(201, {
+      credential: issued.credential,
+      apiKey: issued.apiKey,
+      notice: 'This key is shown once. ARC Control stores only a salted hash and cannot recover it.',
+    });
+  });
+
   // --- tools --------------------------------------------------------------
 
   router.get('/v1/tools', async (context) => {
@@ -189,6 +353,59 @@ export function buildRoutes(options: RouteOptions): Router {
       { identifier: operator.identifier, via: 'api' },
     );
     return withStatus(201, tool);
+  });
+
+  /**
+   * The per-tool kill switch.
+   *
+   * Takes a reason, because the first question on finding a tool switched off
+   * is why and the second is who. Both are audited.
+   */
+  router.post('/v1/tools/:id/disable', async (context) => {
+    const operator = operators.authenticate(context);
+    const body = await context.body<{ reason?: string }>().catch(() => ({}) as { reason?: string });
+    return gateway.admin.setToolDisabled(
+      context.params.id!,
+      true,
+      { identifier: operator.identifier, via: 'api' },
+      body.reason ? String(body.reason) : undefined,
+    );
+  });
+
+  router.post('/v1/tools/:id/enable', async (context) => {
+    const operator = operators.authenticate(context);
+    return gateway.admin.setToolDisabled(context.params.id!, false, {
+      identifier: operator.identifier,
+      via: 'api',
+    });
+  });
+
+  /** The connector-level kill switch: disables every tool that connector runs. */
+  router.post('/v1/connectors/:name/disable', async (context) => {
+    const operator = operators.authenticate(context);
+    const body = await context.body<{ reason?: string }>().catch(() => ({}) as { reason?: string });
+    const affected = await gateway.admin.setConnectorDisabled(
+      context.params.name!,
+      true,
+      { identifier: operator.identifier, via: 'api' },
+      body.reason ? String(body.reason) : undefined,
+    );
+
+    return {
+      connector: context.params.name,
+      disabled: affected.map((tool) => tool.name),
+      notice:
+        'A tool registered on this connector after this call is not covered by it. Re-run this after registering anything new.',
+    };
+  });
+
+  router.post('/v1/connectors/:name/enable', async (context) => {
+    const operator = operators.authenticate(context);
+    const affected = await gateway.admin.setConnectorDisabled(context.params.name!, false, {
+      identifier: operator.identifier,
+      via: 'api',
+    });
+    return { connector: context.params.name, enabled: affected.map((tool) => tool.name) };
   });
 
   // --- policies -----------------------------------------------------------

@@ -3,13 +3,20 @@ import type {
   AgentCredential,
   Agent,
   ApprovalRequest,
+  AssessmentRun,
   AuditRecord,
   ChainExpectation,
   ChainVerification,
+  ControlAssessment,
+  ControlDefinition,
   Decision,
   EvidenceRecord,
   ExecutionAttempt,
+  Finding,
+  HumanAttestation,
   Policy,
+  PolicyVersionRecord,
+  Risk,
   Tool,
 } from '@arc-control/schemas';
 
@@ -62,6 +69,23 @@ export interface ControlStore {
   readonly evidence: Collection<EvidenceRecord>;
   readonly audit: AuditLogStore;
 
+  // --- 2.0: governance and assurance ------------------------------------
+  //
+  // These are ordinary collections rather than a separate database, and that
+  // is a deliberate constraint: an assessment result is only as trustworthy
+  // as its link to the enforcement record it rests on, and keeping both in
+  // one store means that link is a local read rather than a join across a
+  // boundary that can be out of date or unavailable.
+
+  readonly risks: Collection<Risk>;
+  readonly controls: Collection<ControlDefinition>;
+  readonly assessments: Collection<ControlAssessment>;
+  readonly assessmentRuns: Collection<AssessmentRun>;
+  readonly findings: Collection<Finding>;
+  readonly attestations: Collection<HumanAttestation>;
+  /** Append-only history of every policy document ever published. */
+  readonly policyVersions: Collection<PolicyVersionRecord>;
+
   /**
    * The head of the audit chain as this store recorded it, when the
    * implementation keeps that separately from the log.
@@ -72,6 +96,13 @@ export interface ControlStore {
    * alone cannot do, since a truncated chain is internally valid.
    */
   recordedAuditHead?(): Promise<ChainExpectation | undefined>;
+
+  /**
+   * Object-model version this store's data was written by, when the
+   * implementation records it. Absent for an in-memory store and for a 1.x
+   * data directory, and absence is itself the answer: it means version 1.
+   */
+  schemaVersion?(): Promise<number>;
 
   /** Flushes anything buffered and releases handles. */
   close(): Promise<void>;

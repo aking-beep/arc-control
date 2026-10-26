@@ -94,12 +94,42 @@ export interface NavGroup {
  * package serves it. Section names are the ones the prototype kept from the
  * previous flat navigation, so no existing URL changed.
  */
+/**
+ * The 2.0 navigation.
+ *
+ * Grouped by what a security or platform team does rather than by which
+ * object a page happens to show: an operator arrives either because something
+ * needs them (Operate), because they are changing what agents may do
+ * (Inventory, Govern), because they are answering for it (Assure, Record), or
+ * because they are configuring ARC itself (Admin).
+ *
+ * The 1.0 sections are all still here. Tools, Access and Audit were not in
+ * the 2.0 proposal, but each is a working page with tests and a place in the
+ * published showcase, and removing a working answer to "what can this agent
+ * reach?" to hit a nav count would be a loss, not a tidy-up.
+ */
 export const NAVIGATION: readonly NavGroup[] = [
-  { label: 'Operate', items: [{ href: '/', label: 'Overview' }, { href: '/approvals', label: 'Approvals' }] },
+  {
+    label: 'Operate',
+    items: [
+      { href: '/', label: 'Overview' },
+      { href: '/approvals', label: 'Approvals' },
+      { href: '/activity', label: 'Activity' },
+    ],
+  },
   { label: 'Inventory', items: [{ href: '/agents', label: 'Agents' }, { href: '/tools', label: 'Tools' }] },
   { label: 'Govern', items: [{ href: '/policies', label: 'Policies' }, { href: '/access', label: 'Access' }] },
+  {
+    label: 'Assure',
+    items: [
+      { href: '/assurance', label: 'Assurance' },
+      { href: '/risks', label: 'Risks' },
+      { href: '/findings', label: 'Findings' },
+      { href: '/security', label: 'Security' },
+    ],
+  },
   { label: 'Record', items: [{ href: '/evidence', label: 'Evidence' }, { href: '/audit', label: 'Audit' }] },
-  { label: 'Assure', items: [{ href: '/security', label: 'Security' }, { href: '/reports', label: 'Reports' }] },
+  { label: 'Admin', items: [{ href: '/reports', label: 'Reports' }, { href: '/settings', label: 'Settings' }] },
 ];
 
 export type BannerKind = 'info' | 'success' | 'error';
@@ -433,6 +463,47 @@ export function severityBadge(severity: unknown): Trusted {
 }
 
 /** A dot plus its text, never the dot alone. */
+/**
+ * A control assessment status.
+ *
+ * `not_assessable` is deliberately not styled like a near-miss or a warning.
+ * It is a distinct answer — the question could not be answered — and a reader
+ * scanning a column of badges must not be able to mistake it for "almost
+ * passing" or for a transient problem that will clear itself.
+ */
+export function controlStatusBadge(status: unknown): Trusted {
+  switch (String(status)) {
+    case 'pass':
+      return badge('allow', 'Pass');
+    case 'fail':
+      return badge('deny', 'Fail');
+    case 'attested':
+      return badge('approval', 'Attested');
+    case 'not_applicable':
+      return badge('muted', 'Not applicable');
+    case 'not_assessable':
+      return badge('info', 'Not assessable');
+    default:
+      return badge('muted', String(status ?? 'unknown'));
+  }
+}
+
+/** A risk severity band. */
+export function riskSeverityBadge(severity: unknown): Trusted {
+  switch (String(severity)) {
+    case 'critical':
+      return badge('deny', 'Critical');
+    case 'high':
+      return badge('failed', 'High');
+    case 'moderate':
+      return badge('approval', 'Moderate');
+    case 'low':
+      return badge('muted', 'Low');
+    default:
+      return badge('muted', String(severity ?? 'unrated'));
+  }
+}
+
 export function statusDot(ok: boolean, label: string): Trusted {
   return raw(html`<span class="status-dot ${ok ? 'ok' : 'bad'}">
     <span class="dot" aria-hidden="true"></span>${label}</span

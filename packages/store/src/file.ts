@@ -1,16 +1,24 @@
 import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { SCHEMA_VERSION } from '@arc-control/schemas';
 import type {
   Action,
   ChainExpectation,
   Agent,
   AgentCredential,
   ApprovalRequest,
+  AssessmentRun,
   AuditRecord,
+  ControlAssessment,
+  ControlDefinition,
   Decision,
   EvidenceRecord,
   ExecutionAttempt,
+  Finding,
+  HumanAttestation,
   Policy,
+  PolicyVersionRecord,
+  Risk,
   Tool,
 } from '@arc-control/schemas';
 import { MemoryAuditLog, MemoryCollection } from './memory.js';
@@ -37,6 +45,14 @@ export class FileStore implements ControlStore {
   readonly evidence: Collection<EvidenceRecord>;
   readonly audit: AuditLogStore;
 
+  readonly risks: Collection<Risk>;
+  readonly controls: Collection<ControlDefinition>;
+  readonly assessments: Collection<ControlAssessment>;
+  readonly assessmentRuns: Collection<AssessmentRun>;
+  readonly findings: Collection<Finding>;
+  readonly attestations: Collection<HumanAttestation>;
+  readonly policyVersions: Collection<PolicyVersionRecord>;
+
   private constructor(
     private readonly directory: string,
     collections: {
@@ -49,6 +65,13 @@ export class FileStore implements ControlStore {
       approvals: Collection<ApprovalRequest>;
       executions: Collection<ExecutionAttempt>;
       evidence: Collection<EvidenceRecord>;
+      risks: Collection<Risk>;
+      controls: Collection<ControlDefinition>;
+      assessments: Collection<ControlAssessment>;
+      assessmentRuns: Collection<AssessmentRun>;
+      findings: Collection<Finding>;
+      attestations: Collection<HumanAttestation>;
+      policyVersions: Collection<PolicyVersionRecord>;
     },
     audit: AuditLogStore,
   ) {
@@ -61,6 +84,13 @@ export class FileStore implements ControlStore {
     this.approvals = collections.approvals;
     this.executions = collections.executions;
     this.evidence = collections.evidence;
+    this.risks = collections.risks;
+    this.controls = collections.controls;
+    this.assessments = collections.assessments;
+    this.assessmentRuns = collections.assessmentRuns;
+    this.findings = collections.findings;
+    this.attestations = collections.attestations;
+    this.policyVersions = collections.policyVersions;
     this.audit = audit;
   }
 
@@ -94,7 +124,22 @@ export class FileStore implements ControlStore {
       approvals: await openCollection<ApprovalRequest>(directory, 'approvals'),
       executions: await openCollection<ExecutionAttempt>(directory, 'executions'),
       evidence: await openCollection<EvidenceRecord>(directory, 'evidence'),
+      risks: await openCollection<Risk>(directory, 'risks'),
+      controls: await openCollection<ControlDefinition>(directory, 'controls'),
+      assessments: await openCollection<ControlAssessment>(directory, 'assessments'),
+      assessmentRuns: await openCollection<AssessmentRun>(directory, 'assessment-runs'),
+      findings: await openCollection<Finding>(directory, 'findings'),
+      attestations: await openCollection<HumanAttestation>(directory, 'attestations'),
+      policyVersions: await openCollection<PolicyVersionRecord>(directory, 'policy-versions'),
     };
+
+    // Stamp the directory with the model version. A 1.x directory has no
+    // marker, which is how an upgrade is recognised: the new collections open
+    // empty, every 1.x record still parses because the added fields are all
+    // optional, and nothing is rewritten. That is the entire migration, and it
+    // is reversible — a 1.x build reading this directory ignores the files it
+    // does not know about.
+    await stampSchemaVersion(directory);
 
     return new FileStore(directory, collections, audit);
   }
@@ -130,9 +175,49 @@ export class FileStore implements ControlStore {
     }
   }
 
+  /**
+   * The model version recorded in the directory, defaulting to 1.
+   *
+   * A 1.x directory carries no marker file, so its absence is not an error —
+   * it is the version. Reported rather than acted upon: this build reads both,
+   * and a store that silently upgraded data on open would make a downgrade
+   * impossible to perform safely.
+   */
+  async schemaVersion(): Promise<number> {
+    try {
+      const raw = JSON.parse(await readFile(join(this.directory, 'schema.json'), 'utf8')) as { version?: unknown };
+      return typeof raw.version === 'number' ? raw.version : 1;
+    } catch {
+      return 1;
+    }
+  }
+
   async close(): Promise<void> {
     /* every write is already flushed */
   }
+}
+
+/**
+ * Writes the model-version marker, preserving the version a directory was
+ * first created at so an upgrade is visible rather than overwritten.
+ */
+async function stampSchemaVersion(directory: string): Promise<void> {
+  const path = join(directory, 'schema.json');
+
+  let createdWith = SCHEMA_VERSION as number;
+  let createdAt = new Date().toISOString();
+  try {
+    const existing = JSON.parse(await readFile(path, 'utf8')) as { createdWith?: unknown; createdAt?: unknown };
+    if (typeof existing.createdWith === 'number') createdWith = existing.createdWith;
+    if (typeof existing.createdAt === 'string') createdAt = existing.createdAt;
+  } catch {
+    /* no marker yet: a fresh directory, or one written by 1.x */
+  }
+
+  const body = JSON.stringify({ version: SCHEMA_VERSION, createdWith, createdAt, openedAt: new Date().toISOString() }, null, 2);
+  const temporary = `${path}.tmp`;
+  await writeFile(temporary, `${body}\n`, 'utf8');
+  await rename(temporary, path);
 }
 
 /** A collection that persists a full snapshot after each mutation. */

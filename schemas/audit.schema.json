@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.arctransformationgroup.com/arc-control/v0.1/audit.schema.json",
+  "$id": "https://schemas.arctransformationgroup.com/arc-control/v2.0/audit.schema.json",
   "title": "ARC Control Audit Record",
   "description": "The audit log is append-only and hash-chained: every record carries the digest of its predecessor, so editing a record breaks the link every later record depends on, and removing one leaves a sequence gap. Verification needs nothing but the records themselves.",
   "type": "object",

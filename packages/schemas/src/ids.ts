@@ -17,6 +17,14 @@ export const ID_PREFIXES = {
   audit: 'arc_aud',
   credential: 'arc_cred',
   request: 'arc_req',
+  // 2.0 — governance, risk and assurance objects.
+  risk: 'arc_rsk',
+  assessment: 'arc_asm',
+  assessmentRun: 'arc_run',
+  finding: 'arc_fnd',
+  attestation: 'arc_att',
+  bundle: 'arc_bnd',
+  policyVersion: 'arc_pv',
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

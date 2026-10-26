@@ -117,6 +117,14 @@ export class ToolRegistry {
   }
 
   /** Resolves a tool by name, refusing an unknown one. */
+  /**
+   * Resolves a tool by name for execution.
+   *
+   * A disabled tool is refused here, at the same stage an unregistered one is
+   * — before any policy is consulted. That is the whole value of the switch:
+   * nothing downstream can re-enable it, so flipping a tool off is a decision
+   * no rule ordering, fallback effect or policy edit can undo.
+   */
   async resolve(name: string): Promise<Tool> {
     const tool = await this.getByName(name);
     if (!tool) {
@@ -124,7 +132,84 @@ export class ToolRegistry {
         details: { tool: name },
       });
     }
+
+    if (tool.disabled === true) {
+      throw new ArcError('tool_disabled', `tool "${name}" is disabled and cannot be invoked`, {
+        details: {
+          tool: name,
+          disabledAt: tool.disabledAt,
+          disabledBy: tool.disabledBy,
+          reason: tool.disabledReason,
+        },
+      });
+    }
+
     return tool;
+  }
+
+  /**
+   * The per-tool kill switch.
+   *
+   * Takes a reason when disabling, because the first question on finding a
+   * tool switched off at 3am is why, and the second is who.
+   */
+  async setDisabled(
+    toolId: string,
+    disabled: boolean,
+    actor: { readonly identifier: string; readonly reason?: string },
+  ): Promise<Tool> {
+    return this.#store.tools.transact(async () => {
+      const tool = await this.#store.tools.get(toolId);
+      if (!tool) throw new ArcError('not_found', `no tool with id ${toolId}`);
+
+      const timestamp = this.#now().toISOString();
+      const updated: Tool = disabled
+        ? {
+            ...tool,
+            disabled: true,
+            disabledAt: timestamp,
+            disabledBy: actor.identifier,
+            ...(actor.reason ? { disabledReason: actor.reason } : {}),
+            updatedAt: timestamp,
+          }
+        : {
+            ...tool,
+            disabled: false,
+            disabledAt: undefined,
+            disabledBy: undefined,
+            disabledReason: undefined,
+            updatedAt: timestamp,
+          };
+
+      await this.#store.tools.put(updated.id, updated);
+      return updated;
+    });
+  }
+
+  /**
+   * Disables every tool a connector executes.
+   *
+   * This is the connector-level kill switch, and it works by flipping the
+   * tools rather than by holding a list of suspended connector names, so it
+   * survives a restart — a connector switch that forgot itself on reboot
+   * would be worse than none.
+   *
+   * The limitation, stated because it is real: a tool registered on that
+   * connector *afterwards* is not disabled. Registering a tool takes an
+   * operator credential and is audited, so this is a narrow gap, but it is a
+   * gap. Re-run the switch after registering anything new.
+   */
+  async setConnectorDisabled(
+    connectorName: string,
+    disabled: boolean,
+    actor: { readonly identifier: string; readonly reason?: string },
+  ): Promise<readonly Tool[]> {
+    const affected = await this.#store.tools.filter((tool) => tool.connector === connectorName);
+    const updated: Tool[] = [];
+    for (const tool of affected) {
+      updated.push(await this.setDisabled(tool.id, disabled, actor));
+    }
+    return updated;
   }
 
   /**

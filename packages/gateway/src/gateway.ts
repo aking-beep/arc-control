@@ -1,5 +1,6 @@
 import {
   ArcError,
+  classifyAction,
   digest,
   newId,
   redactParameters,
@@ -7,6 +8,7 @@ import {
   type Action,
   type ActionRequest,
   type ActionResult,
+  type ActionRiskAssessment,
   type AgentPrincipal,
   type ApprovalRequest,
   type Decision,
@@ -23,7 +25,22 @@ import { buildEvidence } from '@arc-control/evidence';
 import { Executor, ToolRegistry, type Connector } from '@arc-control/execution';
 import { buildPolicyInput, PolicyEngine } from '@arc-control/policy-engine';
 import { PolicyStore } from './policies.js';
+import { RateLimiter, type RateLimitOptions } from './rate-limit.js';
 import { Administration } from './admin.js';
+
+export interface ClassificationOptions {
+  /**
+   * Amount at or above which a monetary action escalates a risk class.
+   *
+   * No default: ARC cannot know whether 500 is a lot for this organization,
+   * and inventing a number would make the classifier confidently wrong for
+   * everyone it does not fit. Unset means monetary amounts are recorded as a
+   * factor without escalating.
+   */
+  readonly monetaryEscalationThreshold?: number;
+  /** Environments treated as production. Defaults to `['production']`. */
+  readonly productionEnvironments?: readonly string[];
+}
 
 export interface GatewayOptions {
   readonly store: ControlStore;
@@ -31,6 +48,9 @@ export interface GatewayOptions {
   readonly executor?: Executor;
   readonly defaultOrganizationId?: string;
   readonly defaultEnvironment?: string;
+  /** Runaway protection. Off unless configured; see `RateLimiter`. */
+  readonly rateLimit?: RateLimitOptions;
+  readonly classification?: ClassificationOptions;
   readonly now?: () => Date;
 }
 
@@ -67,12 +87,15 @@ export class Gateway {
   readonly audit: AuditLog;
   /** Audited administration: registering agents and tools, publishing policy. */
   readonly admin: Administration;
+  /** Runaway protection, checked before an action is recorded. */
+  readonly rateLimiter: RateLimiter;
 
   readonly #store: ControlStore;
   readonly #policyEngine: PolicyEngine;
   readonly #executor: Executor;
   readonly #organizationId: string;
   readonly #environment: string;
+  readonly #classification: ClassificationOptions;
   readonly #now: () => Date;
 
   constructor(options: GatewayOptions) {
@@ -104,6 +127,32 @@ export class Gateway {
 
     this.#policyEngine = options.policyEngine ?? new PolicyEngine(shared);
     this.#executor = options.executor ?? new Executor(shared);
+    this.#classification = options.classification ?? {};
+    this.rateLimiter = new RateLimiter(this.#store, { ...(options.rateLimit ?? {}), ...shared });
+  }
+
+  /**
+   * Classifies an action's risk.
+   *
+   * Pure and deterministic, so it is recomputed where it is needed rather than
+   * threaded through every call path: policy evaluation and evidence writing
+   * both call this with the same tool and action and cannot disagree. It
+   * informs policy and is recorded in evidence; nothing consults it to permit
+   * anything.
+   */
+  #classify(tool: Tool, action: Action): ActionRiskAssessment {
+    return classifyAction({
+      effect: tool.effect,
+      riskTier: tool.riskTier,
+      parameters: action.parameters,
+      environment: action.environment,
+      ...(this.#classification.monetaryEscalationThreshold !== undefined
+        ? { monetaryEscalationThreshold: this.#classification.monetaryEscalationThreshold }
+        : {}),
+      ...(this.#classification.productionEnvironments
+        ? { productionEnvironments: this.#classification.productionEnvironments }
+        : {}),
+    });
   }
 
   addConnector(connector: Connector): this {
@@ -146,6 +195,31 @@ export class Gateway {
         data: { code: error.code, details: error.details, source },
       });
       throw error;
+    }
+
+    // Runaway protection sits here on purpose: after the tool is known, so a
+    // tighter ceiling for irreversible tools can apply, and before the action
+    // is recorded, so a refused action does not itself count toward the limit
+    // and compound the problem.
+    if (this.rateLimiter.configured) {
+      const verdict = await this.rateLimiter.check(principal, tool);
+      if (!verdict.allowed) {
+        const error = new ArcError('rate_limited', 'rate limit exceeded');
+        try {
+          RateLimiter.refuse(principal, verdict);
+        } catch (cause) {
+          const refusal = cause instanceof ArcError ? cause : error;
+          await this.audit.append({
+            type: 'action.denied',
+            organizationId: principal.organizationId,
+            actor: principal.agentId,
+            subject: request.tool,
+            summary: `refused before policy evaluation: ${refusal.message}`,
+            data: { code: refusal.code, details: refusal.details, source },
+          });
+          throw refusal;
+        }
+      }
     }
 
     const action = await this.#recordAction(principal, request, tool, source);
@@ -323,7 +397,7 @@ export class Gateway {
     source: ActionSource,
   ): Promise<Decision> {
     const policies: readonly Policy[] = await this.policies.list();
-    const input = buildPolicyInput({ principal, tool, action, source });
+    const input = buildPolicyInput({ principal, tool, action, source, risk: this.#classify(tool, action) });
     const decision = this.#policyEngine.evaluate(policies, input);
 
     await this.#store.decisions.put(decision.id, decision);
@@ -510,7 +584,11 @@ export class Gateway {
     approval?: ApprovalRequest;
     execution?: ExecutionAttempt;
   }): Promise<EvidenceRecord> {
-    const record = buildEvidence({ ...input, now: this.#now() });
+    const record = buildEvidence({
+      ...input,
+      risk: this.#classify(input.tool, input.action),
+      now: this.#now(),
+    });
     await this.#store.evidence.put(record.id, record);
 
     await this.audit.append({

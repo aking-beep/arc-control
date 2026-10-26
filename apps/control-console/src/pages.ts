@@ -66,17 +66,17 @@ export interface PageContext {
   readonly banner?: Banner;
 }
 
-type Rec = Record<string, unknown>;
+export type Rec = Record<string, unknown>;
 
-function rec(value: unknown): Rec {
+export function rec(value: unknown): Rec {
   return (value ?? {}) as Rec;
 }
 
-function list(value: unknown): readonly Rec[] {
+export function list(value: unknown): readonly Rec[] {
   return Array.isArray(value) ? (value as Rec[]) : [];
 }
 
-function strings(value: unknown): readonly string[] {
+export function strings(value: unknown): readonly string[] {
   return Array.isArray(value) ? value.map((item) => String(item)) : [];
 }
 
@@ -96,7 +96,7 @@ const AUDIT_FAMILIES = ['agent', 'credential', 'tool', 'policy', 'action', 'appr
 
 // --- the shell ------------------------------------------------------------
 
-interface Chrome {
+export interface Chrome {
   readonly health: Rec;
   readonly pendingApprovals: number;
 }
@@ -109,7 +109,7 @@ interface Chrome {
  * health endpoint is having a bad day, and a rail without a count is a smaller
  * failure than a blank page.
  */
-async function chrome(context: PageContext): Promise<Chrome> {
+export async function chrome(context: PageContext): Promise<Chrome> {
   const [health, approvals] = await Promise.all([
     context.client.health().catch(() => ({}) as Rec),
     context.client
@@ -121,7 +121,7 @@ async function chrome(context: PageContext): Promise<Chrome> {
   return { health: rec(health), pendingApprovals: approvals.length };
 }
 
-function page(
+export function page(
   context: PageContext,
   active: string,
   title: string,

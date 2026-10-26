@@ -1,4 +1,5 @@
 import {
+  type ActionRiskAssessment,
   digest,
   newId,
   redactParameters,
@@ -20,6 +21,8 @@ export interface EvidenceInput {
   readonly outcome: ActionOutcome;
   readonly approval?: ApprovalRequest;
   readonly execution?: ExecutionAttempt;
+  /** Risk classification as of decision time, recorded for the auditor. */
+  readonly risk?: ActionRiskAssessment;
   readonly now?: Date;
 }
 
@@ -113,6 +116,7 @@ export function buildEvidence(input: EvidenceInput): EvidenceRecord {
         }
       : {}),
 
+    ...(input.risk ? { risk: input.risk } : {}),
     outcome: input.outcome,
     obligations: decision.obligations,
     createdAt,

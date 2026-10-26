@@ -1,6 +1,6 @@
 {
   "name": "@arc-control/sdk-typescript",
-  "version": "0.1.0",
+  "version": "2.0.0",
   "description": "TypeScript client for the ARC Control API.",
   "license": "Apache-2.0",
   "type": "module",
@@ -21,6 +21,6 @@
     "clean": "tsc -b --clean"
   },
   "dependencies": {
-    "@arc-control/schemas": "0.1.0"
+    "@arc-control/schemas": "2.0.0"
   }
 }

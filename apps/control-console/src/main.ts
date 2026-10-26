@@ -39,7 +39,7 @@ async function main(): Promise<void> {
 
   process.stdout.write(
     [
-      'ARC Control Console 0.1.0',
+      'ARC Control Console 2.0.0',
       `  console   http://${address.host}:${address.port}`,
       `  api       ${apiBase}`,
       `  identity  ${process.env.ARC_OPERATOR_IDENTITY ?? 'operator@localhost'}`,

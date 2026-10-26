@@ -32,6 +32,16 @@ async function main(): Promise<void> {
 
   const lines: string[] = [];
 
+  // Install any baseline control the store does not already have. Idempotent
+  // and non-destructive: a control an operator disabled or retuned keeps those
+  // edits across restarts and upgrades, and only genuinely absent ones are
+  // added. Done here rather than inside `createControlApi` so building the API
+  // stays free of writes.
+  const seeded = await api.assurance.seedBaseline();
+  if (seeded.added.length > 0) {
+    lines.push('', `Installed ${seeded.added.length} baseline control(s): ${seeded.added.join(', ')}`);
+  }
+
   if (demoSeed) {
     const { apiKeys } = await seedDemo(api.gateway);
     lines.push('', 'Demo agents (simulated effects, real control path):');
@@ -48,6 +58,7 @@ async function main(): Promise<void> {
       `  listening     http://${address.host}:${address.port}`,
       `  store         ${dataDir ? `file (${dataDir})` : 'memory (nothing is persisted)'}`,
       `  operator auth ${operatorToken ? 'enabled' : 'DISABLED — operator endpoints will refuse every request'}`,
+      `  assurance     ${seeded.added.length + seeded.kept.length} control(s) in the library`,
       ...lines,
       '',
     ].join('\n'),

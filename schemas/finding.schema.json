@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arctransformationgroup.com/arc-control/v2.0/finding.schema.json",
+  "title": "ARC Control Finding",
+  "description": "A failed control, against a specific subject. Findings are reconciled across assessment runs rather than replaced: a repeat increments `occurrences`, and a subject that stops failing is resolved with the assessment that cleared it named in the resolution. `resolved`, `accepted` and `false_positive` stay distinct — fixed, chosen to live with, and never true are three different statements, and collapsing them makes the register useless for arguing about any of them.",
+  "type": "object",
+  "required": [
+    "id",
+    "organizationId",
+    "controlId",
+    "assessmentId",
+    "severity",
+    "status",
+    "title",
+    "detail",
+    "subject",
+    "subjectKind",
+    "evidenceIds",
+    "occurrences",
+    "firstSeenAt",
+    "lastSeenAt",
+    "createdAt",
+    "updatedAt"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": "string", "pattern": "^arc_fnd_[0-9a-f]{32}$" },
+    "organizationId": { "type": "string" },
+    "controlId": { "type": "string" },
+    "assessmentId": { "type": "string", "pattern": "^arc_asm_[0-9a-f]{32}$" },
+    "severity": { "enum": ["info", "low", "medium", "high", "critical"] },
+    "status": { "enum": ["open", "in_progress", "resolved", "accepted", "false_positive"] },
+    "title": { "type": "string" },
+    "detail": { "type": "string" },
+    "subject": { "type": "string" },
+    "subjectKind": {
+      "enum": ["agent", "tool", "policy", "action", "evidence", "approval", "audit", "connector", "system"]
+    },
+    "owner": { "type": "string" },
+    "dueAt": { "type": "string", "format": "date-time" },
+    "evidenceIds": { "type": "array", "items": { "type": "string", "pattern": "^arc_ev_[0-9a-f]{32}$" } },
+    "resolution": {
+      "type": "object",
+      "required": ["by", "at", "note"],
+      "additionalProperties": false,
+      "properties": {
+        "by": { "type": "string", "description": "`system` when an assessment stopped observing the failure." },
+        "at": { "type": "string", "format": "date-time" },
+        "note": { "type": "string" }
+      }
+    },
+    "occurrences": { "type": "integer", "minimum": 1 },
+    "firstSeenAt": { "type": "string", "format": "date-time" },
+    "lastSeenAt": { "type": "string", "format": "date-time" },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" }
+  }
+}

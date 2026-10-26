@@ -34,6 +34,8 @@
  */
 import { createControlApi, seedDemo } from '@arc-control/control-api';
 import { createConsole } from '@arc-control/control-console';
+import { verifyBundle } from '@arc-control/evidence';
+import { digest } from '@arc-control/schemas';
 import { MemoryStore } from '@arc-control/store';
 
 const OPERATOR_TOKEN = 'demo-operator-token';
@@ -114,6 +116,21 @@ async function main() {
         'x-arc-operator': OPERATOR_IDENTITY,
         'x-arc-operator-roles': OPERATOR_ROLES.join(','),
       },
+    });
+    return { status: response.status, body: await response.json() };
+  };
+
+  /** The operator surface for writes. */
+  const operatorPost = async (path, body) => {
+    const response = await fetch(`${apiBase}${path}`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${OPERATOR_TOKEN}`,
+        'x-arc-operator': OPERATOR_IDENTITY,
+        'x-arc-operator-roles': OPERATOR_ROLES.join(','),
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(body ?? {}),
     });
     return { status: response.status, body: await response.json() };
   };
@@ -363,6 +380,148 @@ async function main() {
       'naming truncation as the problem',
     );
 
+    // -- 10 ----------------------------------------------------------------
+    heading('Assurance assesses the controls against what actually happened');
+
+    const seeded = await api.assurance.seedBaseline();
+    field('controls installed', seeded.added.length + seeded.kept.length);
+
+    const run = await operatorPost('/v1/assurance/runs', {});
+    field('HTTP', run.status);
+    field('run', run.body.run.id);
+    field('window', `${run.body.run.window.from} → ${run.body.run.window.to}`);
+    field('actions in window', run.body.run.window.actionsConsidered);
+    field('totals', JSON.stringify(run.body.run.totals));
+
+    check(run.status === 201, 'the run is created');
+    check(run.body.assessments.length === 9, 'all nine baseline controls were evaluated');
+    check(
+      run.body.run.window.from < run.body.run.window.to,
+      'and the run states the data window it covers, without which a status cannot be read',
+    );
+
+    say('');
+    say('What each control established:');
+    for (const assessment of run.body.assessments) {
+      say(`  ${assessment.controlId}  ${String(assessment.status).padEnd(15)} ${assessment.summary.slice(0, 74)}`);
+    }
+
+    // This is the point of the whole module: the figures are not all green,
+    // and the ones that are not green are not failures either.
+    const byControl = new Map(run.body.assessments.map((a) => [a.controlId, a]));
+
+    check(
+      byControl.get('ARC-AI-003').status === 'pass',
+      'nothing executed without a decision that permitted it — provable from the evidence, so it passes',
+    );
+    check(
+      byControl.get('ARC-AI-004').status === 'pass',
+      'the approval was cast before execution by someone holding the required role, so the approval control passes',
+    );
+    check(
+      byControl.get('ARC-AI-006').status === 'not_assessable',
+      'the chain is internally consistent but unanchored, which is NOT a pass: truncation cannot be ruled out',
+    );
+    check(
+      byControl.get('ARC-AI-009').status === 'not_assessable',
+      'whether a connector can be bypassed is outside ARC\u2019s records, so it reports that rather than guessing',
+    );
+    check(
+      byControl.get('ARC-AI-001').status === 'fail',
+      'the demo agents carry no governance record, and that is reported as a failure rather than waved through',
+    );
+
+    // -- 11 ----------------------------------------------------------------
+    heading('A control ARC cannot decide takes a human attestation, recorded as such');
+
+    const attested = await operatorPost('/v1/assurance/controls/ARC-AI-009/attest', {
+      statement: 'Reviewed VPC routes and connector credential scopes: no agent-reachable credential permits direct access.',
+      validForDays: 90,
+      reference: 'SECOPS-1184',
+    });
+    field('HTTP', attested.status);
+    field('attested by', attested.body.attestedBy);
+    field('expires', attested.body.expiresAt);
+
+    check(attested.status === 201, 'the attestation is recorded');
+    check(attested.body.expiresAt > attested.body.attestedAt, 'and it expires: a statement nobody revisits is not assurance');
+
+    const reassessed = await operatorPost('/v1/assurance/runs', { controlIds: ['ARC-AI-009'] });
+    field('ARC-AI-009 now', reassessed.body.assessments[0].status);
+    check(
+      reassessed.body.assessments[0].status === 'attested',
+      'the control now reports attested — a human statement, kept distinguishable from a check ARC performed',
+    );
+
+    // -- 12 ----------------------------------------------------------------
+    heading('The evidence bundle verifies without ARC, and stops verifying if altered');
+
+    const exported = await operatorPost('/v1/evidence/bundles', { scope: { kind: 'window' } });
+    field('HTTP', exported.status);
+    field('bundle', exported.body.manifest.id);
+    field('counts', JSON.stringify(exported.body.manifest.counts));
+    field('content digest', exported.body.manifest.contentDigest);
+
+    check(exported.status === 201, 'the bundle is exported');
+
+    const onDisk = JSON.parse(JSON.stringify(exported.body));
+    const verified = verifyBundle(onDisk);
+    field('verifies offline', verified.valid);
+    field('records checked', verified.entriesChecked);
+
+    check(verified.valid === true, 'and verifies from its own bytes, with no store, no network and no ARC instance');
+    check(
+      verified.limitations.some((l) => l.problem === 'chain_unanchored'),
+      'reporting the missing external anchor as a limitation rather than folding it into the verdict',
+    );
+
+    // The tamper an attacker would actually attempt: not adding a record, but
+    // rewriting one so the decision reads as having been within authority —
+    // and recomputing the bundle digest so the obvious check passes.
+    const rewritten = JSON.parse(JSON.stringify(exported.body));
+    const target = rewritten.evidence[0];
+    check(target !== undefined, 'the bundle carries at least one evidence record to rewrite');
+    say(`Rewriting evidence ${target.record.id}:`);
+    say(`  before  ${target.record.decision.effect} — ${target.record.decision.reason}`);
+    target.record.decision.effect = 'ALLOW';
+    target.record.decision.reason = 'within autonomous refund authority';
+    target.record.approval = undefined;
+    target.digest = digest(target.record);
+    say(`  after   ${target.record.decision.effect} — ${target.record.decision.reason} (bundle digest recomputed)`);
+    const caught = verifyBundle(rewritten);
+
+    field('tampered verdict', caught.valid);
+    check(caught.valid === false, 'a rewritten decision does not verify');
+    check(
+      caught.failures.some((f) => /integrity digest ARC Control stored with it/.test(f.detail)),
+      'caught by the digest ARC wrote at storage time, even though the bundle digest was recomputed to match',
+    );
+
+    // -- 13 ----------------------------------------------------------------
+    heading('The governance sections render, and say what they do not know');
+
+    for (const path of ['/assurance', '/risks', '/findings', '/activity', '/settings']) {
+      const rendered = await page(path);
+      check(rendered.status === 200, `the console serves ${path}`);
+    }
+
+    const assurancePage = await page('/assurance');
+    check(assurancePage.html.includes('Covering'), 'the assurance page states its data window');
+    check(assurancePage.html.includes('Not assessable'), 'and shows unassessable controls as exactly that');
+    check(
+      !/\d+(\.\d+)?\s*%/.test(assurancePage.html.slice(assurancePage.html.indexOf('id="main"'))),
+      'and reports no percentage: a single coverage figure invites a target, and a target invites gaming it',
+    );
+
+    const settings = await page('/settings');
+    check(
+      settings.html.replace(/\s+/g, ' ').includes('Operator identity is not authenticated in this release'),
+      'and Settings states plainly that the operator identity is a configured header, not an authenticated user',
+    );
+
+    const risks = await page('/risks');
+    check(risks.html.includes('No risks are recorded'), 'an empty risk register says so rather than shipping a starter list');
+
     // -- for contrast --------------------------------------------------------
     // Not one of the nine steps: three more attempts, to show that a refusal is
     // recorded as durably as an execution, and that a declared tool is not a
@@ -433,13 +592,16 @@ async function main() {
       [
         '',
         '═'.repeat(78),
-        ' AUTHORIZE → EXECUTE → PROVE',
+        ' AUTHORIZE → EXECUTE → PROVE → ASSURE',
         '═'.repeat(78),
         '',
         ' AUTHORIZE  policy decided, the rule is cited, a human was required and asked',
         ' EXECUTE    the approval released the action once, and was consumed doing it',
         ' PROVE      one evidence record per attempt, digests over each, in a chain',
         '            that verifies — and says what its verification does not cover',
+        ' ASSURE     nine controls evaluated against those records, with three of',
+        '            them reporting not assessable or attested rather than passing,',
+        '            and a bundle that verifies with ARC switched off',
         '',
         ' Nothing here was persisted. To walk the same path in a browser, see',
         ' "Run the full stack" in README.md: export an operator token, start the API',

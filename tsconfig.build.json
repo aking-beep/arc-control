@@ -7,6 +7,7 @@
     { "path": "packages/policy-engine" },
     { "path": "packages/approvals" },
     { "path": "packages/evidence" },
+    { "path": "packages/assurance" },
     { "path": "packages/audit" },
     { "path": "packages/execution" },
     { "path": "packages/gateway" },

@@ -1,10 +1,12 @@
 import { createServer, type Server } from 'node:http';
-import { Gateway } from '@arc-control/gateway';
+import { Gateway, type RateLimitOptions } from '@arc-control/gateway';
+import { AssuranceEngine } from '@arc-control/assurance';
 import type { ControlStore } from '@arc-control/store';
+import { addAssuranceRoutes } from './assurance-routes.js';
 import { buildRoutes } from './routes.js';
 import { OperatorAuth } from './operator.js';
 
-export const API_VERSION = '0.1.0';
+export const API_VERSION = '2.0.0';
 
 export interface ControlApiOptions {
   readonly store: ControlStore;
@@ -18,10 +20,15 @@ export interface ControlApiOptions {
    * them describe their own systems.
    */
   readonly demoSeed?: boolean;
+  /** Runaway protection. Off unless configured. */
+  readonly rateLimit?: RateLimitOptions;
+  /** Amount at or above which a monetary action escalates its risk class. */
+  readonly monetaryEscalationThreshold?: number;
 }
 
 export interface ControlApi {
   readonly gateway: Gateway;
+  readonly assurance: AssuranceEngine;
   readonly server: Server;
   listen(port: number, host?: string): Promise<{ port: number; host: string }>;
   close(): Promise<void>;
@@ -37,15 +44,48 @@ export function createControlApi(options: ControlApiOptions): ControlApi {
     store: options.store,
     ...(options.defaultOrganizationId ? { defaultOrganizationId: options.defaultOrganizationId } : {}),
     ...(options.defaultEnvironment ? { defaultEnvironment: options.defaultEnvironment } : {}),
+    ...(options.rateLimit ? { rateLimit: options.rateLimit } : {}),
+    ...(options.monetaryEscalationThreshold !== undefined
+      ? { classification: { monetaryEscalationThreshold: options.monetaryEscalationThreshold } }
+      : {}),
+  });
+
+  /**
+   * The assurance engine reads the same store the gateway writes.
+   *
+   * It is given the audit log's `append` and a chain verifier, and nothing
+   * else that can write: there is no path from assurance into a decision, so
+   * a broken assurance layer can fail to report but can never fail open.
+   *
+   * `verifyChain` asks the store for its recorded head where it has one, which
+   * is what lets ARC-AI-006 distinguish a chain checked against an external
+   * anchor from one checked only against itself. A FileStore's head marker is
+   * ARC's own copy, so it counts as internal: `externallyAnchored` stays false
+   * unless an operator supplies a head from outside, which is the honest
+   * reading and the reason that control reports not_assessable by default.
+   */
+  const assurance = new AssuranceEngine({
+    store: options.store,
+    audit: (event) => gateway.audit.append(event),
+    organizationId: options.defaultOrganizationId ?? 'default',
+    fallbackEffect: 'DENY',
+    verifyChain: async () => {
+      const expectation = await options.store.recordedAuditHead?.();
+      const verification = await gateway.audit.verify(expectation);
+      return { verification, externallyAnchored: false };
+    },
   });
 
   const operators = new OperatorAuth(options.operatorToken ? { token: options.operatorToken } : {});
   const router = buildRoutes({
     gateway,
+    assurance,
     operators,
     version: API_VERSION,
     demoSeed: options.demoSeed === true,
   });
+
+  addAssuranceRoutes(router, { gateway, assurance, operators, version: API_VERSION });
 
   const server = createServer((request, response) => {
     void router.handle(request, response).catch((cause: unknown) => {
@@ -59,6 +99,7 @@ export function createControlApi(options: ControlApiOptions): ControlApi {
 
   return {
     gateway,
+    assurance,
     server,
     listen: (port, host = '127.0.0.1') =>
       new Promise((resolve, reject) => {

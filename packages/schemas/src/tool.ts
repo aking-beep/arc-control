@@ -43,6 +43,20 @@ export interface Tool {
   readonly connectorConfig: Readonly<Record<string, unknown>>;
   readonly parameters: readonly ParameterSpec[];
   readonly labels: Readonly<Record<string, string>>;
+  /**
+   * The per-tool kill switch.
+   *
+   * A disabled tool is refused at resolution, before policy evaluation — the
+   * same stage an unregistered tool is refused at. That placement is
+   * deliberate: it means disabling a tool cannot be undone by a policy, by a
+   * rule ordering accident, or by an ALLOW fallback. Absent rather than
+   * `false` on a tool that has never been disabled, so the flag's presence is
+   * itself a record that somebody touched it.
+   */
+  readonly disabled?: boolean;
+  readonly disabledAt?: string;
+  readonly disabledBy?: string;
+  readonly disabledReason?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
 }

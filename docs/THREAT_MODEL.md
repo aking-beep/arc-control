@@ -359,6 +359,81 @@ code can detect a liar.
 
 ---
 
+## T14 — A governance layer that flatters the product
+
+**The threat.** The assurance module reports a control as passing when nothing
+verified it. Nobody attacks anything; the product simply converts an
+unexamined risk into a documented assurance, and the customer discovers it when
+an auditor or an incident disagrees.
+
+This is the highest-likelihood threat in this document, because it needs no
+adversary — only a default that resolves ambiguity in the product's favour.
+
+**The defence.** The status vocabulary has no way to express the convenient
+answer. `not_assessable` is a first-class result meaning "the question was
+asked and could not be answered", and there is no path through the evaluators
+that reports success for want of anything to look at:
+
+- An empty window reports an empty window.
+- A control whose answer lies outside ARC's records (ARC-AI-009) requires a
+  dated attestation and reports `attested`, never `pass`.
+- An expired attestation reverts the control rather than carrying its answer
+  forward.
+- An internally valid but unanchored audit chain is `not_assessable`, because
+  ARC verifying its own log against its own copy of the head proves nothing.
+- An evaluator that throws reports `not_assessable`, so a bug in assurance code
+  cannot manufacture a pass.
+- A control with no implemented evaluator reports `not_assessable`.
+- Residual risk is absent until a named human reviews it.
+- Framework mappings ship `proposed`; coverage counts only reviewed ones.
+- No page or payload emits a coverage percentage or a compliance score.
+
+**Asserted by.** `evals/assurance/honesty.eval.mjs`, every item above as a
+named property; plus a console test that strips the page shell and asserts no
+percentage, no "compliance score" and no "compliant" survives anywhere in the
+governance sections.
+
+**What is not defended.** An operator can disable a control, attest one
+falsely, or accept a risk outright. All three are audited and visible, and none
+of them changes what policy decides — an eval does exactly those three things
+and asserts the denied action stays denied. ARC records who said what; it
+cannot make them say something true.
+
+---
+
+## T15 — Evidence altered between export and audit
+
+**The threat.** A bundle is exported honestly and rewritten before it reaches
+the auditor, so a denial reads as an authorization. The sophisticated version
+recomputes the bundle's own digests to match.
+
+**The defence.** Verification recomputes every digest from the bundle's bytes,
+with no store, no network and no ARC instance — so an auditor can check it on a
+machine they control, against a party with an interest in the answer.
+
+Evidence records and assessments carry **two** digests. The bundle digest,
+computed at export, catches alteration afterwards. The record's own integrity
+digest, written when ARC stored it, catches alteration that a recomputed bundle
+digest would accept — the exporter did not control it, so rewriting the bundle
+does not help.
+
+A bundle also reports what it cannot establish, separately from what is wrong
+with it: recomputation proves the records are unaltered since export, not that
+ARC recorded them faithfully at the time. Closing that needs the audit head
+anchored outside ARC, and a bundle without an anchor says so in its own
+limitations.
+
+**Asserted by.** `packages/evidence/src/bundle.test.ts` — naive tamper,
+digest-recomputing tamper, record removal, unsupported schema, anchor
+disagreement, and a JSON round-trip proving the verifier needs nothing live.
+Also step 12 of the walkthrough, which performs the attack and shows it caught.
+
+**What is not defended.** An attacker who controls ARC's storage at the moment
+a record is written can write a false record with a correct digest. No digest
+scheme fixes that; it is the same limit as T11.
+
+---
+
 ## What ARC Control does not defend against
 
 Stated plainly, because a threat model that only lists wins is marketing.
