@@ -70,6 +70,10 @@ export type AuditEventType =
   // only record that a stale approval was checked against today's rules.
   | 'action.replayed'
   | 'action.revalidated'
+  // A lifecycle change the registry refused — reviving a retired agent, or
+  // issuing it a key. The attempt is the signal, so it is kept, not just
+  // returned to the caller as a 409.
+  | 'agent.transition_refused'
   // 2.3 — portfolio capabilities (ADR-0002). Budgets change what agents may
   // do, spend is the input they decide on, and a refused registration or
   // activation is a control working — all three belong in the chain.

@@ -82,7 +82,8 @@
         "spend.incident",
         "mcp.registration_refused",
         "agent.activation_refused",
-        "tool.registration_refused"
+        "tool.registration_refused",
+        "agent.transition_refused"
       ]
     },
     "organizationId": { "type": "string" },

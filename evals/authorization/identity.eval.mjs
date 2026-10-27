@@ -1,5 +1,5 @@
 import { expect } from '../harness.mjs';
-import { buildHarness, refund, tamperKey } from '../fixtures.mjs';
+import { buildHarness, refund, SEED_ACTOR, tamperKey } from '../fixtures.mjs';
 
 /**
  * Identity is the first gate. If an action can reach a tool without being
@@ -101,6 +101,28 @@ export default {
 
         const denied = await gateway.handle(apiKey, refund(4200));
         expect.equal(denied.outcome, 'denied', 'resuming must not grant anything policy did not already permit');
+      },
+    },
+    {
+      name: 'a retired agent cannot be revived or credentialled by any path',
+      async run() {
+        const { gateway, connector, agent, apiKey } = await buildHarness();
+        await gateway.admin.retireAgent(agent.id, SEED_ACTOR);
+
+        for (const [label, attempt] of [
+          ['registry.resume', () => gateway.agents.resume(agent.id)],
+          ['registry.activate', () => gateway.agents.activate(agent.id)],
+          ['registry.suspend', () => gateway.agents.suspend(agent.id)],
+          ['admin.setAgentStatus', () => gateway.admin.setAgentStatus(agent.id, 'active', SEED_ACTOR)],
+          ['admin.issueKey', () => gateway.admin.issueKey(agent.id, SEED_ACTOR)],
+        ]) {
+          await expect.rejects(attempt, 'conflict', `${label} must refuse a retired agent`);
+        }
+
+        const current = await gateway.agents.require(agent.id);
+        expect.equal(current.status, 'retired', 'retirement must be terminal');
+        await expect.rejects(() => gateway.handle(apiKey, refund(10)), 'unauthenticated', 'its old key must not work');
+        expect.equal(connector.callCount(), 0, 'and nothing may have executed');
       },
     },
     {
