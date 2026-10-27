@@ -2,6 +2,7 @@ import type { SpendRecord } from '@arc-control/schemas';
 import type { ControlStore } from '@arc-control/store';
 import type { SpendLedger } from './ledger.js';
 import { periodStart, roundUsd } from './periods.js';
+import { isAmount } from './validate.js';
 import type { SpendProvider } from './providers/provider.js';
 
 /** When today's spend is a runaway rather than a busy day. */
@@ -39,7 +40,9 @@ export function detectSpikes(records: readonly SpendRecord[], now: Date, rule: S
     if (record.agentId === undefined) continue;
     const at = Date.parse(record.occurredAt);
     if (at >= today) todayByAgent.set(record.agentId, (todayByAgent.get(record.agentId) ?? 0) + record.amountUsd);
-    else if (at >= baselineStart) {
+    // Only verified spend sets the baseline. Anything reported can be
+    // padded to make tomorrow's runaway look ordinary.
+    else if (at >= baselineStart && record.verified) {
       baselineByAgent.set(record.agentId, (baselineByAgent.get(record.agentId) ?? 0) + record.amountUsd);
     }
   }
@@ -123,6 +126,10 @@ export class SpendMonitor {
     for (const provider of providers) {
       try {
         const rows = await provider.fetch({ start, end: now });
+        // Checked before any write: a bad row half-way through must not leave
+        // the batch partly recorded.
+        const bad = rows.find((row) => !isAmount(row.amountUsd) || Number.isNaN(Date.parse(row.occurredAt)));
+        if (bad) throw new Error(`${provider.name} returned an unusable row (${bad.reference}); nothing from this fetch was recorded`);
         let unattributed = 0;
         for (const row of rows) {
           const name = this.#options.attribution?.[row.attribution];

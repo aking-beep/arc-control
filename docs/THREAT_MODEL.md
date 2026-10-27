@@ -474,14 +474,20 @@ service.
 - *Spend reports.* The ledger refuses negative or non-numeric amounts. A
   reported record never replaces another.
 - *Agent reports.* `POST /v1/spend/report` attributes spend to the
-  authenticated agent only.
+  authenticated agent only. The report is dated by the server, must be above
+  zero, and is capped per day. It counts toward that agent's own budgets,
+  never toward an organization-wide one. It never sets a spike baseline.
+- *Organizations.* Budgets and spend that name an agent take that agent's
+  organization.
 - *Unreadable budgets.* The decision is DENY.
 - *MCP gate.* With it on, single MCP registration is refused. The server
   path scans the manifest itself and admits only tools it advertises.
 - *Prompt gate.* With it on, agents must register as drafts. Activation and
   resume both check the review.
 - *Endpoint vetting.* Link-local and metadata resolution are refused even
-  for sanctioned private hosts, and a vetter that fails refuses.
+  for sanctioned private hosts, IPv4-embedding IPv6 forms included, and a
+  vetter that fails refuses. The probe uses the address it classified.
+- *Records.* URLs are recorded without credentials or query values.
 
 Every refusal is audited.
 

@@ -3,6 +3,9 @@ import type { Gateway } from '@arc-control/gateway';
 import { withStatus, type Router } from './http.js';
 import type { OperatorAuth } from './operator.js';
 
+/** Self-reports one agent may file per UTC day. Report per task or per hour, not per call. */
+export const MAX_AGENT_REPORTS_PER_DAY = 500;
+
 export interface SpendRouteOptions {
   readonly gateway: Gateway;
   readonly operators: OperatorAuth;
@@ -91,8 +94,22 @@ export function addSpendRoutes(router: Router, options: SpendRouteOptions): Rout
     if (body.agentId !== undefined && body.agentId !== principal.agentId) {
       throw new ArcError('invalid_request', 'an agent can only report its own spend');
     }
+    // Every record is read on every decision, so a flood of reports is a cost
+    // on the decision path for everyone. A zero report changes nothing a
+    // budget reads, and a day's reports per agent are capped.
+    if (body.amountUsd === 0) throw new ArcError('invalid_request', 'a spend report must be above zero');
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const reportedToday = (await gateway.spend.list({ agentId: principal.agentId, since: today })).filter(
+      (record) => record.source === 'reported' && record.recordedBy === principal.agentId,
+    ).length;
+    if (reportedToday >= MAX_AGENT_REPORTS_PER_DAY) {
+      throw new ArcError('rate_limited', `an agent may report spend at most ${MAX_AGENT_REPORTS_PER_DAY} times a day; aggregate before reporting`);
+    }
+    const { occurredAt: _ignored, ...fields } = spendFields(body);
     const record = await gateway.admin.reportSpend(
-      { organizationId: principal.organizationId, agentId: principal.agentId, ...spendFields(body) },
+      // The agent cannot choose when its spend happened: it is dated now.
+      { organizationId: principal.organizationId, agentId: principal.agentId, ...fields, occurredAt: new Date().toISOString() },
       { identifier: principal.agentId, via: 'api' },
     );
     return withStatus(201, record);

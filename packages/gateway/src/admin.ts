@@ -372,7 +372,7 @@ export class Administration {
         summary: `${actor.identifier} tried to register ${registrations.length} tool(s) from MCP server "${manifest.name}": ${message}`,
         data: {
           server: manifest.name,
-          endpoint: manifest.endpoint,
+          endpoint: redactUrl(manifest.endpoint),
           grade: graded.grade,
           score: graded.score,
           minimumGrade: this.gates.mcpMinimumGrade,
@@ -410,15 +410,19 @@ export class Administration {
     }
 
     const findingsDigest = digest(report.findings.map((finding) => ({ id: finding.id, severity: finding.severity, tool: finding.tool })));
-    const tools: Tool[] = [];
+    // All or none: vet every endpoint first, then register the batch in one
+    // critical section, so a failure on the last tool leaves no earlier one
+    // behind as an unannounced half of a server.
+    const prepared: ToolRegistration[] = [];
     for (const registration of registrations) {
-      tools.push(
-        await this.#registerTool(
-          { ...registration, labels: { ...(registration.labels ?? {}), mcpGrade: graded.grade, mcpFindingsDigest: findingsDigest } },
-          actor,
-        ),
-      );
+      const vetted = await this.#vetEndpoint(registration, actor);
+      prepared.push({
+        ...registration,
+        labels: { ...(registration.labels ?? {}), ...(vetted ?? {}), mcpGrade: graded.grade, mcpFindingsDigest: findingsDigest },
+      });
     }
+    const tools = await this.#deps.tools.registerAll(prepared);
+    for (const tool of tools) await this.#auditRegistered(tool, actor);
     return { tools, grade: graded.grade, score: graded.score, findings: report.findings.length };
   }
 
@@ -427,6 +431,11 @@ export class Administration {
     const tool = await this.#deps.tools.register(
       vetted === undefined ? registration : { ...registration, labels: { ...(registration.labels ?? {}), ...vetted } },
     );
+    await this.#auditRegistered(tool, actor);
+    return tool;
+  }
+
+  async #auditRegistered(tool: Tool, actor: Actor): Promise<void> {
     await this.#deps.audit.append({
       type: 'tool.registered',
       organizationId: 'default',
@@ -442,7 +451,6 @@ export class Administration {
         via: actor.via,
       },
     });
-    return tool;
   }
 
   /**
@@ -582,6 +590,22 @@ export class Administration {
         via: actor.via,
       },
     });
+    // A review that falls below the gate on an agent already acting takes it
+    // out of action: the gate is about what may act, not only about what may
+    // start. Resuming it goes back through the gate.
+    const minimum = this.gates.promptMinimumGrade;
+    if (minimum !== undefined && agent.status === 'active' && comparePromptGrades(review.grade, minimum) < 0) {
+      const suspended = await this.#deps.agents.suspend(agent.id);
+      await this.#deps.audit.append({
+        type: 'agent.suspended',
+        organizationId: agent.organizationId,
+        actor: actor.identifier,
+        subject: agent.id,
+        summary: `"${agent.name}" was suspended because its prompt review graded ${review.grade}, below the minimum of ${minimum}`,
+        data: { reason: 'prompt_review_below_minimum', grade: review.grade, minimumGrade: minimum, via: actor.via },
+      });
+      return { agent: suspended, review };
+    }
     return { agent, review };
   }
 
@@ -634,7 +658,18 @@ export class Administration {
       };
     }
 
-    const message = failure ?? `the endpoint of "${registration.name}" failed vetting: ${errors.map((finding) => `${finding.id} ${finding.detail}`).join('; ')}`;
+    // The URL can carry credentials, and a vetter's findings can quote it;
+    // neither may reach the audit chain or the error as written (invariant 8).
+    const safe = redactUrl(url);
+    const scrub = (text: string): string => text.split(url).join(safe);
+    const findings = (result?.findings ?? []).map((finding) => ({ ...finding, detail: scrub(finding.detail) }));
+    const message = scrub(
+      failure ??
+        `the endpoint of "${registration.name}" failed vetting: ${findings
+          .filter((finding) => finding.severity === 'error')
+          .map((finding) => `${finding.id} ${finding.detail}`)
+          .join('; ')}`,
+    );
     await this.#deps.audit.append({
       type: 'tool.registration_refused',
       organizationId: 'default',
@@ -644,14 +679,34 @@ export class Administration {
       data: {
         name: registration.name,
         connector: registration.connector,
-        url,
-        findings: result?.findings ?? [],
-        ...(failure ? { error: failure } : {}),
+        url: safe,
+        findings,
+        ...(failure ? { error: scrub(failure) } : {}),
         via: actor.via,
       },
     });
     throw new ArcError('gate_refused', message, {
-      details: { gate: 'endpoint', reason: failure ? 'vetting_failed' : 'endpoint_refused', findings: result?.findings ?? [] },
+      details: { gate: 'endpoint', reason: failure ? 'vetting_failed' : 'endpoint_refused', findings },
     });
+  }
+}
+
+/**
+ * A URL with its credentials and query values removed, for records. An
+ * unparseable one is not echoed at all: whatever it is, it is not safe to
+ * assume it holds no secret.
+ */
+export function redactUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    if (url.username || url.password) {
+      url.username = 'redacted';
+      url.password = '';
+    }
+    for (const key of [...url.searchParams.keys()]) url.searchParams.set(key, 'redacted');
+    url.hash = '';
+    return url.toString();
+  } catch {
+    return '[unparseable url]';
   }
 }

@@ -1,4 +1,7 @@
 import { lookup } from 'node:dns/promises';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
+import { isIP } from 'node:net';
 import { connect, type PeerCertificate } from 'node:tls';
 
 /**
@@ -75,8 +78,10 @@ export async function vetEndpoint(urlTemplate: string, options: VetOptions = {})
   const findings: VettingFinding[] = [];
   const fail = (id: string, detail: string): void => void findings.push({ id, severity: 'error', detail });
   const warn = (id: string, detail: string): void => void findings.push({ id, severity: 'warning', detail });
+  // The result is recorded, so it carries the URL without credentials or
+  // query values (invariant 8), and no finding quotes the raw URL.
   const done = (url: string, host: string, addresses: readonly string[], certificate?: EndpointVetting['certificate']): EndpointVetting => ({
-    url,
+    url: redact(url),
     host,
     ok: findings.every((finding) => finding.severity !== 'error'),
     findings,
@@ -89,8 +94,8 @@ export async function vetEndpoint(urlTemplate: string, options: VetOptions = {})
   try {
     url = new URL(String(urlTemplate).replace(/\{[A-Za-z0-9_]+\}/g, 'x'));
   } catch {
-    fail('EP-001', `"${String(urlTemplate)}" is not a valid URL`);
-    return done(String(urlTemplate), '', []);
+    fail('EP-001', 'the tool URL is not a valid URL');
+    return done('', '', []);
   }
   const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
 
@@ -190,20 +195,54 @@ type AddressKind = 'public' | 'private' | 'link-local' | 'unspecified';
 /** Classifies an IPv4 or IPv6 address. Anything unparseable is treated as private: fail closed. */
 export function classifyAddress(address: string): AddressKind {
   const value = address.toLowerCase().replace(/^\[|\]$/g, '');
-  const v4 = parseIPv4(value);
-  if (v4) return classifyV4(v4);
+  const dotted = parseIPv4(value);
+  if (dotted) return classifyV4(dotted);
 
-  if (!value.includes(':')) return 'private';
-  if (value === '::') return 'unspecified';
-  if (value === '::1') return 'private';
-  const mapped = mappedV4(value);
-  if (mapped) return classifyV4(mapped);
-  const first = parseInt(value.split(':')[0] || '0', 16);
-  if (Number.isNaN(first)) return 'private';
+  if (!value.includes(':') || isIP(value) !== 6) return 'private';
+  const groups = expandV6(value);
+  if (!groups) return 'private';
+  if (groups.every((group) => group === 0)) return 'unspecified';
+  if (groups.slice(0, 7).every((group) => group === 0) && groups[7] === 1) return 'private';
+
+  // Every transition form that carries an IPv4 address is judged by that
+  // address: mapped (::ffff:a.b.c.d), compatible (::a.b.c.d), NAT64
+  // (64:ff9b::/96) and 6to4 (2002::/16). Otherwise `::a9fe:a9fe` would read
+  // as a public IPv6 address and reach the metadata service.
+  const embedded = (high: number, low: number): number[] => [high >> 8, high & 0xff, low >> 8, low & 0xff];
+  if (groups.slice(0, 5).every((group) => group === 0) && (groups[5] === 0xffff || groups[5] === 0)) {
+    return classifyV4(embedded(groups[6]!, groups[7]!));
+  }
+  if (groups[0] === 0x64 && groups[1] === 0xff9b && groups.slice(2, 6).every((group) => group === 0)) {
+    return classifyV4(embedded(groups[6]!, groups[7]!));
+  }
+  if (groups[0] === 0x2002) return classifyV4(embedded(groups[1]!, groups[2]!));
+
+  const first = groups[0]!;
   if ((first & 0xffc0) === 0xfe80) return 'link-local';
+  if ((first & 0xffc0) === 0xfec0) return 'private'; // deprecated site-local
   if ((first & 0xfe00) === 0xfc00) return 'private';
   if ((first & 0xff00) === 0xff00) return 'private';
   return 'public';
+}
+
+/** Eight 16-bit groups, or undefined. Accepts `::` compression and a trailing dotted IPv4. */
+function expandV6(value: string): number[] | undefined {
+  let text = value;
+  const dotted = /(\d+\.\d+\.\d+\.\d+)$/.exec(text);
+  if (dotted) {
+    const parts = parseIPv4(dotted[1]!);
+    if (!parts) return undefined;
+    text = `${text.slice(0, -dotted[1]!.length)}${((parts[0]! << 8) | parts[1]!).toString(16)}:${((parts[2]! << 8) | parts[3]!).toString(16)}`;
+  }
+  const halves = text.split('::');
+  if (halves.length > 2) return undefined;
+  const parse = (part: string): number[] => (part === '' ? [] : part.split(':').map((group) => parseInt(group, 16)));
+  const head = parse(halves[0]!);
+  const tail = halves.length === 2 ? parse(halves[1]!) : [];
+  const fill = 8 - head.length - tail.length;
+  if (halves.length === 1 ? head.length !== 8 : fill < 0) return undefined;
+  const groups = [...head, ...Array.from({ length: halves.length === 2 ? fill : 0 }, () => 0), ...tail];
+  return groups.length === 8 && groups.every((group) => Number.isInteger(group) && group >= 0 && group <= 0xffff) ? groups : undefined;
 }
 
 function classifyV4([a, b]: readonly number[]): AddressKind {
@@ -213,6 +252,7 @@ function classifyV4([a, b]: readonly number[]): AddressKind {
   if (a === 172 && b! >= 16 && b! <= 31) return 'private';
   if (a === 192 && b === 168) return 'private';
   if (a === 100 && b! >= 64 && b! <= 127) return 'private';
+  if (a === 198 && (b === 18 || b === 19)) return 'private';
   if (a! >= 224) return 'private';
   return 'public';
 }
@@ -238,7 +278,26 @@ function mappedV4(value: string): number[] | undefined {
 function isLoopbackAddress(address: string): boolean {
   const value = address.toLowerCase().replace(/^\[|\]$/g, '');
   const v4 = parseIPv4(value) ?? mappedV4(value);
-  return value === '::1' || (v4 !== undefined && v4[0] === 127);
+  if (v4) return v4[0] === 127;
+  const groups = expandV6(value);
+  return groups !== undefined && groups.slice(0, 7).every((group) => group === 0) && groups[7] === 1;
+}
+
+/** The URL without credentials, query values or fragment. Unparseable input is not echoed. */
+function redact(value: string): string {
+  if (value === '') return '';
+  try {
+    const url = new URL(value);
+    if (url.username || url.password) {
+      url.username = 'redacted';
+      url.password = '';
+    }
+    for (const key of [...url.searchParams.keys()]) url.searchParams.set(key, 'redacted');
+    url.hash = '';
+    return url.toString();
+  } catch {
+    return '[unparseable url]';
+  }
 }
 
 function isIpLiteral(host: string): boolean {
@@ -274,15 +333,33 @@ async function systemProbe(url: URL, addresses: readonly string[]): Promise<Endp
         })
       : undefined;
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 10_000);
-  try {
-    const response = await fetch(url, { method: 'HEAD', redirect: 'manual', signal: controller.signal });
-    const location = response.headers.get('location');
-    return { ...(tls ? { tls } : {}), status: response.status, ...(location ? { location } : {}) };
-  } finally {
-    clearTimeout(timer);
-  }
+  // The HEAD goes to the same vetted address as the handshake. Letting it
+  // resolve the name again would let a rebinding DNS answer send it to an
+  // address that was never classified.
+  const head = await new Promise<{ status: number; location?: string }>((resolve, reject) => {
+    const pinned = addresses[0]!;
+    const family = isIP(pinned) === 6 ? 6 : 4;
+    const issue = url.protocol === 'https:' ? httpsRequest : httpRequest;
+    const request = issue(
+      url,
+      {
+        method: 'HEAD',
+        timeout: 10_000,
+        lookup: ((_host: string, options: { all?: boolean }, callback: (...args: unknown[]) => void) =>
+          options?.all ? callback(null, [{ address: pinned, family }]) : callback(null, pinned, family)) as never,
+        ...(url.protocol === 'https:' ? { servername: url.hostname } : {}),
+      },
+      (response) => {
+        const location = response.headers.location;
+        response.resume();
+        resolve({ status: response.statusCode ?? 0, ...(typeof location === 'string' ? { location } : {}) });
+      },
+    );
+    request.once('timeout', () => request.destroy(new Error('HEAD request timed out')));
+    request.once('error', reject);
+    request.end();
+  });
+  return { ...(tls ? { tls } : {}), status: head.status, ...(head.location ? { location: head.location } : {}) };
 }
 
 function describe(cause: unknown): string {

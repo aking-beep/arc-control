@@ -40,6 +40,155 @@
       "fixedIn": "#12",
       "regressionTests": [],
       "releaseNote": "docs/releases/2.2.md"
+    },
+    {
+      "id": "ARC-SEC-004",
+      "title": "A per-agent budget was never enforced for an agent outside the default organization, while reports showed it exceeded",
+      "severity": "high",
+      "status": "fixed",
+      "foundAt": "2026-10-27",
+      "foundBy": "arc-security-reviewer, review of the 2.3 portfolio capabilities before merge",
+      "fixedAt": "2026-10-27",
+      "fixedIn": "branch ccr-c477e252-gpuzu3 (2.3, before merge)",
+      "regressionTests": [
+        "packages/gateway/src/portfolio-review.test.ts",
+        "packages/spend/src/ledger.test.ts"
+      ],
+      "releaseNote": "docs/releases/2.3.md"
+    },
+    {
+      "id": "ARC-SEC-005",
+      "title": "Backdated self-reported spend could pad the spike baseline and disarm the spend kill switch",
+      "severity": "medium",
+      "status": "fixed",
+      "foundAt": "2026-10-27",
+      "foundBy": "arc-security-reviewer, review of the 2.3 portfolio capabilities before merge",
+      "fixedAt": "2026-10-27",
+      "fixedIn": "branch ccr-c477e252-gpuzu3 (2.3, before merge)",
+      "regressionTests": [
+        "packages/spend/src/ledger.test.ts",
+        "packages/spend/src/monitor.test.ts",
+        "apps/control-api/src/spend.test.ts"
+      ],
+      "releaseNote": "docs/releases/2.3.md"
+    },
+    {
+      "id": "ARC-SEC-006",
+      "title": "Any agent could exhaust an organization-wide budget with self-reported spend and stop every agent in the organization",
+      "severity": "medium",
+      "status": "fixed",
+      "foundAt": "2026-10-27",
+      "foundBy": "arc-security-reviewer, review of the 2.3 portfolio capabilities before merge",
+      "fixedAt": "2026-10-27",
+      "fixedIn": "branch ccr-c477e252-gpuzu3 (2.3, before merge)",
+      "regressionTests": [
+        "packages/gateway/src/portfolio-review.test.ts",
+        "apps/control-api/src/spend.test.ts"
+      ],
+      "releaseNote": "docs/releases/2.3.md"
+    },
+    {
+      "id": "ARC-SEC-007",
+      "title": "Credentials in a tool or MCP endpoint URL reached the audit chain when registration was refused",
+      "severity": "medium",
+      "status": "fixed",
+      "foundAt": "2026-10-27",
+      "foundBy": "arc-security-reviewer, review of the 2.3 portfolio capabilities before merge",
+      "fixedAt": "2026-10-27",
+      "fixedIn": "branch ccr-c477e252-gpuzu3 (2.3, before merge)",
+      "regressionTests": [
+        "packages/gateway/src/portfolio-review.test.ts",
+        "connectors/generic-http/src/vet.test.ts"
+      ],
+      "releaseNote": "docs/releases/2.3.md"
+    },
+    {
+      "id": "ARC-SEC-008",
+      "title": "MCP server registration could leave earlier tools registered when a later one failed",
+      "severity": "low",
+      "status": "fixed",
+      "foundAt": "2026-10-27",
+      "foundBy": "arc-security-reviewer, review of the 2.3 portfolio capabilities before merge",
+      "fixedAt": "2026-10-27",
+      "fixedIn": "branch ccr-c477e252-gpuzu3 (2.3, before merge)",
+      "regressionTests": [
+        "packages/gateway/src/portfolio-review.test.ts"
+      ],
+      "releaseNote": "docs/releases/2.3.md"
+    },
+    {
+      "id": "ARC-SEC-009",
+      "title": "An active agent whose prompt review fell below the gate stayed active",
+      "severity": "low",
+      "status": "fixed",
+      "foundAt": "2026-10-27",
+      "foundBy": "arc-security-reviewer, review of the 2.3 portfolio capabilities before merge",
+      "fixedAt": "2026-10-27",
+      "fixedIn": "branch ccr-c477e252-gpuzu3 (2.3, before merge)",
+      "regressionTests": [
+        "packages/gateway/src/portfolio-review.test.ts"
+      ],
+      "releaseNote": "docs/releases/2.3.md"
+    },
+    {
+      "id": "ARC-SEC-010",
+      "title": "A malformed budget written straight to the store never applied instead of refusing",
+      "severity": "low",
+      "status": "fixed",
+      "foundAt": "2026-10-27",
+      "foundBy": "arc-security-reviewer, review of the 2.3 portfolio capabilities before merge",
+      "fixedAt": "2026-10-27",
+      "fixedIn": "branch ccr-c477e252-gpuzu3 (2.3, before merge)",
+      "regressionTests": [
+        "packages/spend/src/ledger.test.ts"
+      ],
+      "releaseNote": "docs/releases/2.3.md"
+    },
+    {
+      "id": "ARC-SEC-011",
+      "title": "Cost-report parsing under-counted on a missing amount or a cursor-less page, and stopped ingesting on any credit row",
+      "severity": "low",
+      "status": "fixed",
+      "foundAt": "2026-10-27",
+      "foundBy": "arc-security-reviewer, review of the 2.3 portfolio capabilities before merge",
+      "fixedAt": "2026-10-27",
+      "fixedIn": "branch ccr-c477e252-gpuzu3 (2.3, before merge)",
+      "regressionTests": [
+        "packages/spend/src/monitor.test.ts"
+      ],
+      "releaseNote": "docs/releases/2.3.md"
+    },
+    {
+      "id": "ARC-SEC-012",
+      "title": "Endpoint vetting classified IPv4-embedding IPv6 forms as public, and its probe re-resolved DNS after classification",
+      "severity": "low",
+      "status": "fixed",
+      "foundAt": "2026-10-27",
+      "foundBy": "arc-security-reviewer, review of the 2.3 portfolio capabilities before merge",
+      "fixedAt": "2026-10-27",
+      "fixedIn": "branch ccr-c477e252-gpuzu3 (2.3, before merge)",
+      "regressionTests": [
+        "connectors/generic-http/src/vet.test.ts"
+      ],
+      "releaseNote": "docs/releases/2.3.md"
+    },
+    {
+      "id": "ARC-SEC-013",
+      "title": "When a policy and a budget both require approval, the budget's approvers are not required",
+      "severity": "medium",
+      "status": "open",
+      "foundAt": "2026-10-27",
+      "foundBy": "arc-security-reviewer, review of the 2.3 portfolio capabilities before merge",
+      "notes": "tighten keeps the policy's approval requirement on an equal-severity tie, consistent with the engine's policy-vs-policy tie rule. The approval model cannot express 'one from each list'; combining lists as alternatives would loosen. Needs a design decision (arc-architect): extend ApprovalRequirement with conjunctive approver groups, or escalate such ties. Documented in docs/releases/2.3.md."
+    },
+    {
+      "id": "ARC-SEC-014",
+      "title": "explain, callable with an agent key, returns budget names and spend positions, including organization-wide budgets",
+      "severity": "low",
+      "status": "open",
+      "foundAt": "2026-10-27",
+      "foundBy": "arc-security-reviewer, review of the 2.3 portfolio capabilities before merge",
+      "notes": "Store error text is no longer echoed (fixed with ARC-SEC-007's change set). Whether agents should see budget evaluations at all is a product decision; documented in docs/releases/2.3.md."
     }
   ]
 }

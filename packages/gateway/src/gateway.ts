@@ -748,6 +748,7 @@ export class Gateway {
       const promptGrade = agent?.promptReview?.grade;
       return { evaluations, input: { spend, ...(promptGrade ? { promptGrade } : {}) } };
     } catch (cause) {
+      process.stderr.write(`arc-control: budget state unreadable, refusing: ${cause instanceof Error ? cause.message : String(cause)}\n`);
       return {
         evaluations: [
           {
@@ -756,9 +757,9 @@ export class Gateway {
             applied: true,
             effect: 'DENY',
             ruleId: 'unavailable',
-            reason: `budget state could not be read, so the action is refused rather than decided without it: ${
-              cause instanceof Error ? cause.message : String(cause)
-            }`,
+            // The cause stays out: this reason reaches the agent, and a store
+            // error can name paths and internals. Operators see it in the logs.
+            reason: 'budget state could not be read, so the action is refused rather than decided without it',
           },
         ],
         input: {},

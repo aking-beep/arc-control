@@ -181,9 +181,11 @@ describe('AnthropicCostProvider', () => {
     assert.match(seen[1]!, /page=page_2/);
   });
 
+  // A negative row is a credit and is skipped (ARC-SEC-011, below), so it no
+  // longer appears here; every case that would under-count still fails.
   it('fails the whole fetch on an HTTP error, a non-USD row or a bad amount, rather than under-counting', async () => {
     const bucket = (result: unknown) => ({ data: [{ starting_at: '2026-10-26T00:00:00Z', results: [result] }], has_more: false });
-    for (const pages of [[undefined], [bucket({ amount: '1', currency: 'EUR' })], [bucket({ amount: '-5', currency: 'USD' })], [bucket({ amount: 'abc', currency: 'USD' })]]) {
+    for (const pages of [[undefined], [bucket({ amount: '1', currency: 'EUR' })], [bucket({ amount: 'abc', currency: 'USD' })], [bucket({ currency: 'USD' })]]) {
       const provider = new AnthropicCostProvider({ adminKey: 'sk-ant-admin-test', fetch: fake(pages) });
       await assert.rejects(provider.fetch(window));
     }
@@ -193,5 +195,27 @@ describe('AnthropicCostProvider', () => {
     const endless = { data: [], has_more: true, next_page: 'again' };
     const provider = new AnthropicCostProvider({ adminKey: 'sk-ant-admin-test', maxPages: 3, fetch: fake([endless, endless, endless, endless]) });
     await assert.rejects(provider.fetch(window), /did not finish within 3 pages/);
+  });
+});
+
+describe('review findings', () => {
+  it('ARC-SEC-005: unverified spend does not count toward a spike baseline', () => {
+    const planted = { ...record('a', 5000, '2026-10-26T00:00:00Z'), source: 'reported' as const, verified: false };
+    const runaway = record('a', 900, '2026-10-27T09:00:00Z');
+    assert.equal(detectSpikes([planted, runaway], NOW, RULE).length, 1);
+  });
+
+  it('ARC-SEC-011: the cost report fails closed on a missing amount and on a cursor-less has_more, and skips credits', async () => {
+    const window = { start: new Date('2026-10-01T00:00:00Z'), end: NOW };
+    const page = (body: unknown) => (async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof globalThis.fetch;
+    const bucket = (results: unknown[]) => ({ data: [{ starting_at: '2026-10-26T00:00:00Z', results }], has_more: false });
+    await assert.rejects(new AnthropicCostProvider({ adminKey: 'k', fetch: page(bucket([{ currency: 'USD' }])) }).fetch(window));
+    await assert.rejects(new AnthropicCostProvider({ adminKey: 'k', fetch: page(bucket([{ amount: ' ', currency: 'USD' }])) }).fetch(window));
+    await assert.rejects(new AnthropicCostProvider({ adminKey: 'k', fetch: page({ data: [], has_more: true, next_page: null }) }).fetch(window));
+    const credited = await new AnthropicCostProvider({
+      adminKey: 'k',
+      fetch: page(bucket([{ amount: '1000', currency: 'USD', workspace_id: 'w' }, { amount: '-400', currency: 'USD', workspace_id: 'w' }])),
+    }).fetch(window);
+    assert.equal(credited[0]?.amountUsd, 10, 'a credit is ignored, which can only over-count');
   });
 });

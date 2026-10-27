@@ -31,6 +31,12 @@ export async function applyPack(pack, { api, token, operator = 'policy-packs', p
   if (errors.length > 0) return { published: [], errors };
   if (!publish) return { published: [], dryRun: pack.policies.map((policy) => `${policy.id} v${policy.version}`), errors: [] };
   if (!api || !token) return { published: [], errors: ['--publish needs --api and ARC_OPERATOR_TOKEN'] };
+  // The operator token is a bearer credential; it is never sent in the clear
+  // except to this machine.
+  const target = new URL(api);
+  if (target.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(target.hostname)) {
+    return { published: [], errors: [`refusing to send the operator token to ${target.origin} over plaintext HTTP`] };
+  }
 
   const published = [];
   for (const policy of pack.policies) {

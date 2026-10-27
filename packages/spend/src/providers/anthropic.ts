@@ -31,10 +31,10 @@ interface CostReportPage {
  * five minutes; a budget fed by it cuts off as fresh as that.
  *
  * Amounts arrive as decimal strings in the lowest currency unit — `"123.45"`
- * USD is $1.23 — and anything not in USD, or not a finite non-negative
- * number, makes the whole fetch fail rather than being skipped: silently
- * dropping a row would under-count spend, and under-counting is the one
- * error a budget cannot afford.
+ * USD is $1.2345 — and anything not in USD, missing or not a number makes
+ * the whole fetch fail rather than being skipped: silently dropping a row
+ * would under-count spend, and under-counting is the one error a budget
+ * cannot afford. Negative rows (credits) are skipped, which over-counts.
  */
 export class AnthropicCostProvider implements SpendProvider {
   readonly name = 'anthropic';
@@ -83,10 +83,14 @@ export class AnthropicCostProvider implements SpendProvider {
           if ((row.currency ?? 'USD') !== 'USD') {
             throw new Error(`Anthropic cost report returned a ${String(row.currency)} amount; only USD is supported`);
           }
-          const cents = Number(row.amount ?? '0');
-          if (!Number.isFinite(cents) || cents < 0) {
-            throw new Error('Anthropic cost report returned an amount that is not a non-negative number');
+          if (typeof row.amount !== 'string' || row.amount.trim() === '') {
+            throw new Error('Anthropic cost report returned a row with no amount');
           }
+          const cents = Number(row.amount);
+          if (!Number.isFinite(cents)) throw new Error('Anthropic cost report returned an amount that is not a number');
+          // A credit or adjustment. Skipping it can only over-count, which
+          // tightens; failing on it would stop ingestion on every tick.
+          if (cents < 0) continue;
           const workspace = row.workspace_id ?? 'default';
           const reference = `cost_report:${day.toISOString().slice(0, 10)}:${workspace}`;
           const previous = totals.get(reference);
@@ -99,7 +103,8 @@ export class AnthropicCostProvider implements SpendProvider {
         }
       }
 
-      if (!body.has_more || !body.next_page) return [...totals.values()];
+      if (!body.has_more) return [...totals.values()];
+      if (!body.next_page) throw new Error('Anthropic cost report said there is more but gave no cursor');
       page = body.next_page;
     }
 

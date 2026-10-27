@@ -75,6 +75,15 @@ describe('vetEndpoint', () => {
     assert.equal(same.findings[0]?.severity, 'warning');
   });
 
+  it('ARC-SEC-007: never echoes credentials or query values from the URL', async () => {
+    const result = await vet('https://user:hunter2@api.example.com/x?api_key=SECRET123');
+    const invalid = await vet('https://user:hunter2@exa mple.com/?token=SECRET123');
+    for (const text of [JSON.stringify(result), JSON.stringify(invalid)]) {
+      assert.ok(!text.includes('hunter2'));
+      assert.ok(!text.includes('SECRET123'));
+    }
+  });
+
   it('refuses credentials embedded in the URL and non-HTTP schemes', async () => {
     assert.deepEqual(ids(await vet('https://user:pass@api.example.com/x')), ['EP-001']);
     assert.deepEqual(ids(await vet('file:///etc/passwd')), ['EP-001']);
@@ -102,6 +111,14 @@ describe('classifyAddress', () => {
       ['::ffff:a9fe:a9fe', 'link-local'],
       ['::ffff:7f00:1', 'private'],
       ['garbage', 'private'],
+      // ARC-SEC-012: embedded IPv4 in every IPv6 transition form, and the remaining reserved ranges.
+      ['::a9fe:a9fe', 'link-local'],
+      ['::169.254.169.254', 'link-local'],
+      ['64:ff9b::a9fe:a9fe', 'link-local'],
+      ['2002:a9fe:a9fe::1', 'link-local'],
+      ['::7f00:1', 'private'],
+      ['198.18.0.1', 'private'],
+      ['fec0::1', 'private'],
     ];
     for (const [address, kind] of cases) assert.equal(classifyAddress(address), kind, address);
   });

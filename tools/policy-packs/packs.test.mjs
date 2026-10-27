@@ -61,6 +61,14 @@ describe('policy packs', () => {
     }
   });
 
+  it('refuses to send the operator token over plaintext HTTP off loopback', async () => {
+    const pack = await load((await discover())[0]);
+    let calls = 0;
+    const result = await applyPack(pack, { api: 'http://arc.example.com', token: 't', publish: true, fetch: async () => { calls += 1; } });
+    assert.match(result.errors[0] ?? '', /plaintext HTTP/);
+    assert.equal(calls, 0);
+  });
+
   it('refuses to publish a pack that does not validate', async () => {
     const pack = await load((await discover())[0]);
     let calls = 0;

@@ -217,3 +217,44 @@ describe('SpendLedger: budgets', () => {
     assert.deepEqual(input, { dayUsd: 6, monthUsd: 10, maxBudgetPercent: 50, verified: false });
   });
 });
+
+describe('SpendLedger: review findings', () => {
+  it('ARC-SEC-005: a reported record cannot be dated before the current month, so it cannot pad a spike baseline', async () => {
+    const { ledger } = await setup();
+    await assert.rejects(ledger.record(spend(5000, { occurredAt: '2026-09-30T00:00:00Z' }), 'reported', 'arc_ag_1'), /current month/);
+    await assert.rejects(ledger.record(spend(1, { occurredAt: '2020-01-01T00:00:00Z' }), 'reported', 'arc_ag_1'));
+  });
+
+  it('ARC-SEC-004: records spend in the organization of the agent it names', async () => {
+    const { ledger } = await setup();
+    const record = await ledger.record(spend(1, { organizationId: 'elsewhere' }), 'provider', 'system:anthropic');
+    assert.equal(record.organizationId, 'default');
+    await assert.rejects(ledger.record(spend(1, { agentId: 'arc_ag_missing' }), 'reported', 'x'), /no agent/);
+  });
+
+  it('ARC-SEC-010: a malformed budget written straight to the store refuses rather than lifting', async () => {
+    const { ledger, store, agent } = await setup();
+    const base = {
+      name: 'raw',
+      organizationId: 'default',
+      agentId: agent.id,
+      period: 'day' as const,
+      onExceeded: 'DENY' as const,
+      version: 1,
+      createdAt: NOW.toISOString(),
+      updatedAt: NOW.toISOString(),
+    };
+    await store.budgets.put('b1', { ...base, id: 'b1', limitUsd: 'ten' as unknown as number, enabled: true });
+    await store.budgets.put('b2', { ...base, id: 'b2', limitUsd: 10, enabled: undefined as unknown as boolean });
+    await store.budgets.put('b3', { ...base, id: 'b3', limitUsd: 10, enabled: true, effects: [] });
+    const { evaluations } = await ledger.evaluate({ agentId: agent.id, organizationId: 'default', toolEffect: 'write' });
+    assert.deepEqual(
+      evaluations.map((evaluation) => [evaluation.policyId, evaluation.effect]),
+      [
+        ['budget:b1', 'DENY'],
+        ['budget:b2', 'DENY'],
+        ['budget:b3', 'DENY'],
+      ],
+    );
+  });
+});

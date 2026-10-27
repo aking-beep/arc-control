@@ -98,11 +98,32 @@ describe('spend API', () => {
         { provider: 'anthropic', amountUsd: 5, agentId: h.other.id },
         { provider: 'anthropic', amountUsd: -5 },
         { provider: 'anthropic', amountUsd: '5' },
+        { provider: 'anthropic', amountUsd: 0 },
       ]) {
         const response = await h.call('POST', '/v1/spend/report', body, h.asAgent);
         assert.equal(response.status, 400, JSON.stringify(body));
       }
       assert.equal(await h.api.gateway.store.spend.count(), 0);
+    } finally {
+      await h.close();
+    }
+  });
+
+  it('dates an agent report now, whatever date it claims, and caps reports per day', async () => {
+    const h = await harness();
+    try {
+      const backdated = await h.call('POST', '/v1/spend/report', { provider: 'anthropic', amountUsd: 1, occurredAt: '2020-01-01T00:00:00Z' }, h.asAgent);
+      assert.equal(backdated.status, 201);
+      assert.ok(backdated.body.occurredAt.startsWith(String(new Date().getUTCFullYear())));
+      const { MAX_AGENT_REPORTS_PER_DAY } = await import('./spend-routes.js');
+      for (let index = 1; index < MAX_AGENT_REPORTS_PER_DAY; index += 1) {
+        await h.api.gateway.admin.reportSpend(
+          { organizationId: 'default', agentId: h.agent.id, provider: 'anthropic', amountUsd: 0.01, occurredAt: new Date().toISOString() },
+          { identifier: h.agent.id, via: 'api' },
+        );
+      }
+      const capped = await h.call('POST', '/v1/spend/report', { provider: 'anthropic', amountUsd: 1 }, h.asAgent);
+      assert.equal(capped.status, 429);
     } finally {
       await h.close();
     }
