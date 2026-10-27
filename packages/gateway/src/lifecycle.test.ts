@@ -122,6 +122,24 @@ describe('ARC-SEC-003: retirement is terminal on every path', () => {
     }
   });
 
+  it('two concurrent retirements: the one that retires records every revoked key (Bugbot on #12)', async () => {
+    for (let round = 0; round < 25; round += 1) {
+      const { gateway, agentId } = await setup();
+      await gateway.admin.issueKey(agentId, ACTOR);
+      const keys = (await gateway.agents.listKeys(agentId)).map((key) => key.id).sort();
+      // Slow the first sweep's read so the second retirement can overtake it.
+      const filter = gateway.store.credentials.filter.bind(gateway.store.credentials);
+      let calls = 0;
+      gateway.store.credentials.filter = async (predicate) => {
+        if ((calls += 1) === 1) await new Promise((resolve) => setTimeout(resolve, 5));
+        return filter(predicate);
+      };
+      await Promise.allSettled([gateway.admin.retireAgent(agentId, ACTOR), gateway.admin.retireAgent(agentId, ACTOR)]);
+      const retired = (await gateway.audit.read()).find((record) => record.type === 'agent.retired');
+      assert.deepEqual([...((retired?.data.revokedCredentialIds as string[]) ?? [])].sort(), keys, `round ${round}`);
+    }
+  });
+
   it('a concurrent resume cannot undo a retirement', async () => {
     for (let round = 0; round < 25; round += 1) {
       const { gateway, agentId } = await setup();

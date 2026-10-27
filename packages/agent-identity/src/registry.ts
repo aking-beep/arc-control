@@ -11,7 +11,7 @@ import {
   type CredentialInventoryEntry,
   type CredentialState,
 } from '@arc-control/schemas';
-import type { ControlStore } from '@arc-control/store';
+import { Mutex, type ControlStore } from '@arc-control/store';
 import { issueCredential, parseApiKey, verifySecret, type IssuedCredential } from './credentials.js';
 
 export interface AgentRegistryOptions {
@@ -31,6 +31,8 @@ export class AgentRegistry {
   readonly #organizationId: string;
   readonly #environment: string;
   readonly #now: () => Date;
+  /** Serializes retirements; see `retire`. Per process, like every lock in ARC. */
+  readonly #retirements = new Mutex();
 
   constructor(store: ControlStore, options: AgentRegistryOptions = {}) {
     this.#store = store;
@@ -144,6 +146,14 @@ export class AgentRegistry {
    * survived retirement.
    */
   async retire(agentId: string): Promise<{ readonly agent: Agent; readonly revoked: readonly string[] }> {
+    // Retirements run one at a time, status write and sweep together, so the
+    // call that writes `retired` is also the one that revokes — and its
+    // `agent.retired` record lists every key. Without this, a concurrent
+    // retry could finish the sweep first and take the ids onto its refusal.
+    return this.#retirements.run(() => this.#retire(agentId));
+  }
+
+  async #retire(agentId: string): Promise<{ readonly agent: Agent; readonly revoked: readonly string[] }> {
     let retired: Agent;
     try {
       retired = await this.#transition(agentId, 'retired');
