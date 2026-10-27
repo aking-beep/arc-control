@@ -61,5 +61,15 @@ export function reapprovalReason(required: ApprovalRequirement, held: ApprovalRe
   if (minimum > heldMinimum) {
     return `current policy requires ${minimum} approvals; the approval on file carries ${held.votes.filter((vote) => vote.vote === 'approve').length}`;
   }
-  return 'current policy requires separation of duties, which the approval on file was not granted under';
+  // A further group — a budget's approvers, typically (ARC-SEC-013) — that
+  // the approval on file does not carry.
+  const heldGroups = new Set([held.requirement, ...(held.requirement.alsoRequired ?? [])].map((group) => group.approvers.join(', ')));
+  const missing = (required.alsoRequired ?? []).map((group) => group.approvers.join(', ')).filter((group) => !heldGroups.has(group));
+  if (missing.length > 0) {
+    return `current policy also requires approval from ${missing.join('; and from ')}, which the approval on file does not include`;
+  }
+  if (required.requireSeparationOfDuties === true && held.requirement.requireSeparationOfDuties !== true) {
+    return 'current policy requires separation of duties, which the approval on file was not granted under';
+  }
+  return 'the approval on file does not satisfy every approver group current policy requires';
 }

@@ -298,5 +298,9 @@ describe('ARC-SEC-013: a policy hold and a budget hold both need their approvers
     const released = await gateway.resume(pending.approvalId!);
     assert.notEqual(released.outcome, 'executed');
     assert.equal(connector.callCount('ci.deploy'), 0);
+    const evidence = await gateway.evidence(released.evidenceId);
+    const reason = evidence?.revalidation?.reason ?? '';
+    assert.match(reason, /role:finance-manager/, 'the reason names the approvers still needed');
+    assert.doesNotMatch(reason, /separation of duties/);
   });
 });
