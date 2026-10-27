@@ -51,6 +51,22 @@ async function setup() {
 const retiredRefusal = (error: ArcError) => error.code === 'conflict' && error.details.reason === 'agent_retired';
 
 describe('ARC-SEC-003: retirement is terminal on every path', () => {
+  it('retiring again finishes a credential sweep an earlier retirement never completed (Bugbot on #12)', async () => {
+    const { gateway, agentId, apiKey } = await setup();
+    // A retirement that wrote its status and then died before revoking: the
+    // key is still live on a retired agent.
+    const agent = await gateway.agents.require(agentId);
+    await gateway.store.agents.put(agentId, { ...agent, status: 'retired', retiredAt: new Date().toISOString() });
+    const live = (await gateway.agents.listKeys(agentId)).filter((key) => !key.revokedAt);
+    assert.equal(live.length, 1);
+
+    await assert.rejects(() => gateway.admin.retireAgent(agentId, ACTOR), retiredRefusal);
+    assert.equal((await gateway.agents.listKeys(agentId)).filter((key) => !key.revokedAt).length, 0, 'the retry revokes what was left');
+    const refusal = (await gateway.audit.read()).find((record) => record.type === 'agent.transition_refused');
+    assert.deepEqual(refusal?.data.revokedCredentialIds, [live[0]!.id], 'the audit chain records the completed sweep');
+    await assert.rejects(() => gateway.agents.authenticate(apiKey));
+  });
+
   it('the internal registry refuses resume, activate and suspend of a retired agent', async () => {
     const { gateway, agentId } = await setup();
     await gateway.admin.retireAgent(agentId, ACTOR);

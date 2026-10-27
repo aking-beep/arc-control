@@ -144,16 +144,33 @@ export class AgentRegistry {
    * survived retirement.
    */
   async retire(agentId: string): Promise<{ readonly agent: Agent; readonly revoked: readonly string[] }> {
-    const retired = await this.#transition(agentId, 'retired');
+    let retired: Agent;
+    try {
+      retired = await this.#transition(agentId, 'retired');
+    } catch (cause) {
+      // Already retired: the status stays as it is, but the sweep still runs.
+      // A retirement that wrote its status and then failed before revoking
+      // would otherwise leave live keys that no retry could ever reach. The
+      // refusal carries what this attempt revoked, so the caller can audit it.
+      if (cause instanceof ArcError && cause.code === 'conflict' && cause.details.reason === 'agent_retired') {
+        const revoked = await this.#revokeAll(agentId);
+        throw new ArcError('conflict', cause.message, { details: { ...cause.details, revokedCredentialIds: revoked } });
+      }
+      throw cause;
+    }
 
+    return { agent: retired, revoked: await this.#revokeAll(agentId) };
+  }
+
+  /** Revokes every live credential the agent holds; returns the ids revoked. */
+  async #revokeAll(agentId: string): Promise<string[]> {
     const revoked: string[] = [];
     for (const credential of await this.listKeys(agentId)) {
       if (credential.revokedAt) continue;
       await this.revokeKey(credential.id);
       revoked.push(credential.id);
     }
-
-    return { agent: retired, revoked };
+    return revoked;
   }
 
   /** Records or replaces the agent's governance record. */

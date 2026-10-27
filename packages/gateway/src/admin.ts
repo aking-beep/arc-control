@@ -327,7 +327,15 @@ export class Administration {
           actor: actor.identifier,
           subject: agentId,
           summary: `${actor.identifier} attempted to ${attempted.replace('_', ' ')} retired agent "${agent?.name ?? agentId}"; refused`,
-          data: { attempted, status: agent?.status, retiredAt: agent?.retiredAt, via: actor.via },
+          data: {
+            attempted,
+            status: agent?.status,
+            retiredAt: agent?.retiredAt,
+            // A repeated retirement finishes any credential sweep an earlier
+            // one did not; what it revoked belongs in the chain.
+            ...(Array.isArray(cause.details.revokedCredentialIds) ? { revokedCredentialIds: cause.details.revokedCredentialIds } : {}),
+            via: actor.via,
+          },
         });
       }
       throw cause;
