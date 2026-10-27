@@ -1,10 +1,10 @@
 {
-  "at": "2026-10-27T08:09:38.082Z",
-  "commit": "feaa3fa79b3c91d7a07e177f4b7b53d258fbde40",
+  "at": "2026-10-27T08:10:21.834Z",
+  "commit": "b12f46ec9a5b3ffaaef2396ea7b342ef88fb3bb0",
   "ref": "refs/heads/main",
   "summary": {
-    "met": 21,
-    "breached": 1,
+    "met": 22,
+    "breached": 0,
     "unmeasured": 0
   },
   "metrics": [
@@ -22,13 +22,13 @@
     {
       "id": "verify.main_ci_runs",
       "skill": "verify",
-      "value": 8,
+      "value": 9,
       "target": {
         "op": ">=",
         "value": 1
       },
       "status": "met",
-      "previous": 7
+      "previous": 8
     },
     {
       "id": "deliver.gate_pass_rate",
@@ -55,13 +55,13 @@
     {
       "id": "security.oldest_open_days",
       "skill": "security-remediation",
-      "value": 1.3400151967592593,
+      "value": 1.3405216550925927,
       "target": {
         "op": "<=",
         "value": 14
       },
       "status": "met",
-      "previous": 1.2783353935185184
+      "previous": 1.3400151967592593
     },
     {
       "id": "security.open_critical",
@@ -165,13 +165,13 @@
     {
       "id": "steward.green_at_merge_rate",
       "skill": "steward",
-      "value": 0.8,
+      "value": 1,
       "target": {
         "op": ">=",
         "value": 1
       },
-      "status": "breached",
-      "previous": 0.6666666666666666
+      "status": "met",
+      "previous": 0.8
     },
     {
       "id": "steward.unresolved_threads_at_merge",
@@ -193,7 +193,7 @@
         "value": 72
       },
       "status": "met",
-      "previous": 0.27166666666666667
+      "previous": 1.4625
     },
     {
       "id": "release.notes_passing_rate",
@@ -231,13 +231,13 @@
     {
       "id": "deploy.time_to_healthy_ms",
       "skill": "deploy",
-      "value": 246,
+      "value": 244,
       "target": {
         "op": "<=",
         "value": 10000
       },
       "status": "met",
-      "previous": 247
+      "previous": 246
     },
     {
       "id": "harness.problems",
