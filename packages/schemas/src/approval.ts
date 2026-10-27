@@ -23,6 +23,12 @@ export interface ApprovalVote {
   readonly issuer?: string;
   /** The provider's stable subject for the approver, which survives an email change. */
   readonly subject?: string;
+  /**
+   * The approver groups this vote counts toward, decided when it was cast:
+   * 0 is the requirement itself, `n` is `alsoRequired[n - 1]`. Absent on votes
+   * cast before 2.3, which count toward the requirement itself only.
+   */
+  readonly groups?: readonly number[];
 }
 
 /**

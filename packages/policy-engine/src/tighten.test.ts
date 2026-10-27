@@ -65,13 +65,27 @@ describe('tighten', () => {
     assert.deepEqual(result.approval?.approvers, ['role:finance-manager']);
   });
 
-  it('leaves a decision that is already as strict untouched, citation included', () => {
+  it('on a hold-and-hold tie keeps the policy citation and requires the budget approvers as well (ARC-SEC-013)', () => {
     const held = decision('REQUIRE_APPROVAL', {
       approval: { approvers: ['role:cfo'], minApprovals: 2, expiresInSeconds: 600 },
     });
     const result = tighten(held, [budget('REQUIRE_APPROVAL')]);
     assert.equal(result.policyId, 'FINANCE-004');
     assert.deepEqual(result.approval?.approvers, ['role:cfo']);
+    assert.equal(result.approval?.minApprovals, 2);
+    assert.deepEqual(result.approval?.alsoRequired?.map((group) => group.approvers), [['role:finance-manager']]);
+  });
+
+  it('requires every holding budget when one budget wins over an allow', () => {
+    const result = tighten(decision('ALLOW'), [budget('REQUIRE_APPROVAL', 'budget:a'), budget('REQUIRE_APPROVAL', 'budget:b')]);
+    assert.equal(result.policyId, 'budget:a');
+    assert.equal(result.approval?.alsoRequired?.length, 1, 'the other budget is required too');
+  });
+
+  it('adds nothing when a stricter DENY wins', () => {
+    const result = tighten(decision('REQUIRE_APPROVAL', { approval: { approvers: ['role:cfo'] } }), [budget('DENY'), budget('REQUIRE_APPROVAL', 'budget:z')]);
+    assert.equal(result.effect, 'DENY');
+    assert.equal(result.approval, undefined);
   });
 
   it('cannot turn a default DENY into anything else', () => {

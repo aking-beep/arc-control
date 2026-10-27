@@ -168,3 +168,61 @@ describe('voting twice', () => {
     assert.equal(updated.votes.length, 2);
   });
 });
+
+describe('ARC-SEC-013: every approver group must approve', () => {
+  async function held(store: MemoryStore) {
+    const engine = new ApprovalEngine(store, { now: () => new Date('2026-10-20T06:30:00.000Z') });
+    await store.approvals.put(
+      'arc_apr_2',
+      request({
+        id: 'arc_apr_2',
+        requirement: {
+          approvers: ['role:eng-manager'],
+          minApprovals: 1,
+          alsoRequired: [{ approvers: ['role:finance-manager'], minApprovals: 1 }],
+        },
+      }),
+    );
+    return engine;
+  }
+
+  it('stays pending until a member of each group has approved', async () => {
+    const store = new MemoryStore();
+    const engine = await held(store);
+    const first = await engine.vote({ approvalId: 'arc_apr_2', approver: approver('lead@example.com', ['eng-manager']), vote: 'approve' });
+    assert.equal(first.status, 'pending', 'the policy approver alone is not enough');
+    const second = await engine.vote({ approvalId: 'arc_apr_2', approver: approver('cfo@example.com', ['finance-manager']), vote: 'approve' });
+    assert.equal(second.status, 'approved');
+    assert.deepEqual(second.votes.map((vote) => vote.groups), [[0], [1]]);
+  });
+
+  it('lets anyone in any group vote, and refuses anyone in none', async () => {
+    const store = new MemoryStore();
+    const engine = await held(store);
+    assert.equal(engine.canApprove(await engine.require('arc_apr_2'), approver('cfo@example.com', ['finance-manager'])), true);
+    await assert.rejects(
+      engine.vote({ approvalId: 'arc_apr_2', approver: approver('intern@example.com', ['intern']), vote: 'approve' }),
+      /not an approver/,
+    );
+  });
+
+  it('applies a group separation of duties to that group', async () => {
+    const store = new MemoryStore();
+    const engine = new ApprovalEngine(store, { now: () => new Date('2026-10-20T06:30:00.000Z') });
+    await store.approvals.put(
+      'arc_apr_3',
+      request({
+        id: 'arc_apr_3',
+        requirement: {
+          approvers: ['role:eng-manager'],
+          minApprovals: 1,
+          alsoRequired: [{ approvers: ['role:finance-manager'], minApprovals: 1, requireSeparationOfDuties: true }],
+        },
+      }),
+    );
+    // The owner holds both roles: they may count for the policy group, never the finance one.
+    const owner = await engine.vote({ approvalId: 'arc_apr_3', approver: approver('ops@example.com', ['eng-manager', 'finance-manager']), vote: 'approve' });
+    assert.deepEqual(owner.votes[0]!.groups, [0]);
+    assert.equal(owner.status, 'pending');
+  });
+});

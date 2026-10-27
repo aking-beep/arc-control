@@ -251,3 +251,56 @@ describe('budgets: spend as policy input', () => {
     assert.equal(connector.callCount('ci.deploy'), 1);
   });
 });
+
+describe('ARC-SEC-013: a policy hold and a budget hold both need their approvers', () => {
+  async function held() {
+    const ctx = await setup();
+    await ctx.gateway.admin.publishPolicy(
+      {
+        ...ALLOW_DEPLOY,
+        version: 2,
+        rules: [
+          { id: 'hold', when: { always: true }, effect: 'REQUIRE_APPROVAL', reason: 'a lead approves deploys', approval: { approvers: ['role:eng-manager'] } },
+        ],
+      },
+      operator,
+    );
+    await ctx.gateway.spend.saveBudget(
+      { name: 'b', agentId: ctx.agent.id, period: 'day', limitUsd: 1, onExceeded: 'REQUIRE_APPROVAL', approvers: ['role:finance-manager'] },
+      { organizationId: 'default' },
+    );
+    return ctx;
+  }
+  const lead = { identifier: 'lead@example.com', roles: ['eng-manager'] };
+  const cfo = { identifier: 'cfo@example.com', roles: ['finance-manager'] };
+
+  it('does not release on the policy approver alone; releases once finance also approves', async () => {
+    const { gateway, deploy, connector, spend } = await held();
+    await spend(5);
+    const pending = await deploy();
+    assert.equal(pending.outcome, 'pending_approval');
+
+    const afterLead = await gateway.approvals.vote({ approvalId: pending.approvalId!, approver: lead, vote: 'approve' });
+    assert.equal(afterLead.status, 'pending');
+    await assert.rejects(gateway.resume(pending.approvalId!));
+    assert.equal(connector.callCount('ci.deploy'), 0);
+
+    await gateway.approvals.vote({ approvalId: pending.approvalId!, approver: cfo, vote: 'approve' });
+    assert.equal((await gateway.resume(pending.approvalId!)).outcome, 'executed');
+    assert.equal(connector.callCount('ci.deploy'), 1);
+  });
+
+  it('a grant approved before the budget ran out does not release once the budget holds too', async () => {
+    const { gateway, deploy, connector, spend } = await held();
+    const pending = await deploy();
+    await gateway.approvals.vote({ approvalId: pending.approvalId!, approver: lead, vote: 'approve' });
+    await spend(5);
+    const released = await gateway.resume(pending.approvalId!);
+    assert.notEqual(released.outcome, 'executed');
+    assert.equal(connector.callCount('ci.deploy'), 0);
+    const evidence = await gateway.evidence(released.evidenceId);
+    const reason = evidence?.revalidation?.reason ?? '';
+    assert.match(reason, /role:finance-manager/, 'the reason names the approvers still needed');
+    assert.doesNotMatch(reason, /separation of duties/);
+  });
+});
