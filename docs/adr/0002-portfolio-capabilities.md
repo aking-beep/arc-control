@@ -54,8 +54,8 @@ Spend is also exposed to policy as `$.agent.spend.dayUsd`, `$.agent.spend.monthU
 
 ### Gates at registration and activation
 
-- **MCP.** `gradeScan(report)` maps a scan to a letter grade. `McpRegistrationGate` refuses tools from a server below the configured minimum, audits the refusal, and records the grade on each tool that does register.
-- **Prompts.** A new package, `@arc-control/prompt-review`, holds static checks with no dependencies. The prompt's grade and digest go on the agent's governance record and reach policy as `$.agent.promptGrade`. Once a minimum is configured, activation refuses an agent whose reviewed prompt is missing or graded below it.
+- **MCP.** `gradeScan(report)` maps a scan to a letter grade. `Administration.registerMcpServer` scans the manifest itself, refuses every tool from a server below the configured minimum, audits the refusal, and labels each tool it does register with the grade. While the gate is on, registering an MCP tool by itself is refused.
+- **Prompts.** A new package, `@arc-control/prompt-review`, holds static checks with no dependencies. The prompt's grade, its failed checks and a digest go on the agent as `promptReview`; the prompt text itself is never stored. The grade reaches policy as `$.agent.promptGrade`. Once a minimum is configured, an agent must be registered as a draft. Activating or resuming one whose review is missing or graded below the minimum is refused.
 - **Endpoints.** `vetEndpoint` checks that the endpoint uses HTTPS (except on loopback), that it does not resolve to a private or metadata address, and that it does not redirect off host. It also checks that the TLS certificate is valid and not close to expiry. Resolution and probing are injected, so the checks are tested without the network.
 
 ### Policy packs
@@ -65,7 +65,7 @@ A pack is a set of policies in `policy-packs/<id>/pack.json`, with expected-outc
 ## Consequences
 
 - `Decision.evaluations` and `trace` can now carry entries whose `policyId` starts with `budget:`. They are not policies, and nothing looks them up as one.
-- Two new collections, `spend` and `budgets`. Older data directories open without migration, with both collections empty.
+- Two new collections, `spend` and `budgets`, and one new optional field on the agent, `promptReview`. Older data directories open without migration, with both collections empty.
 - New audit event types: `budget.created`, `budget.updated`, `spend.reported`, `spend.ingested`, `spend.incident`, `mcp.registration_refused`, `agent.activation_refused` and `tool.registration_refused`.
 
 ## What this does not establish
