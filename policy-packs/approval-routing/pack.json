@@ -1,0 +1,48 @@
+{
+  "id": "pack-approval-routing",
+  "name": "Approval routing: draft, don't move money",
+  "pack": {
+    "version": 1,
+    "source": "AI Workflow Templates — operations/approval-routing",
+    "summary": "An approval-routing agent may read requests and draft and route approval packets. It never moves money: anything irreversible, and anything on a payments system, is denied whatever the amount.",
+    "adapt": [
+      "Give your routing agent the role approval-router.",
+      "Rename the systems 'approvals' and 'payments' in the policies to the system names your tools use."
+    ]
+  },
+  "organizationId": "policy-pack",
+  "environment": "production",
+  "requirements": { "separationOfDutiesForIrreversible": true },
+  "tools": [
+    { "name": "approvals.read_request", "description": "Read an inbound approval request.", "system": "approvals", "effect": "read", "riskTier": "low", "connector": "generic-http", "parameters": [{ "name": "requestId", "type": "string", "required": true }] },
+    { "name": "approvals.route_packet", "description": "Draft an approval packet and route it to the approver of record.", "system": "approvals", "effect": "write", "riskTier": "medium", "connector": "generic-http", "parameters": [{ "name": "requestId", "type": "string", "required": true }, { "name": "approver", "type": "string", "required": true }] },
+    { "name": "payments.pay_vendor", "description": "Pay a vendor. Irreversible.", "system": "payments", "effect": "irreversible", "riskTier": "critical", "connector": "generic-http", "parameters": [{ "name": "vendor", "type": "string", "required": true }, { "name": "amount", "type": "number", "required": true, "minimum": 0 }] }
+  ],
+  "agents": [
+    { "name": "approval-router", "owner": "ops-owner@client.example", "roles": ["approval-router"], "declaredTools": ["approvals.read_request", "approvals.route_packet"] }
+  ],
+  "approvers": [],
+  "policies": [
+    {
+      "id": "PACK-APPROVALS-001",
+      "version": 1,
+      "name": "Approval routers route; they never pay",
+      "description": "From the approval-routing template: the model classifies and drafts, a human decides, nothing moves money.",
+      "enabled": true,
+      "match": { "agents": ["role:approval-router"] },
+      "rules": [
+        { "id": "never-irreversible", "when": { "eq": ["$.tool.effect", "irreversible"] }, "effect": "DENY", "reason": "an approval router never takes an irreversible action" },
+        { "id": "never-payments", "when": { "eq": ["$.tool.system", "payments"] }, "effect": "DENY", "reason": "an approval router never touches a payments system" },
+        { "id": "read-requests", "when": { "and": [{ "eq": ["$.tool.system", "approvals"] }, { "eq": ["$.tool.effect", "read"] }] }, "effect": "ALLOW", "reason": "reading a request to classify it" },
+        { "id": "route-packets", "when": { "and": [{ "eq": ["$.tool.system", "approvals"] }, { "eq": ["$.tool.effect", "write"] }] }, "effect": "ALLOW", "reason": "drafting and routing a packet moves no money; the approver of record decides" }
+      ],
+      "fallback": { "effect": "DENY", "reason": "outside what an approval router does" }
+    }
+  ],
+  "scenarios": [
+    { "id": "reads-request", "agent": "approval-router", "tool": "approvals.read_request", "parameters": { "requestId": "r-1" }, "expect": "executed", "policyId": "PACK-APPROVALS-001" },
+    { "id": "routes-packet", "agent": "approval-router", "tool": "approvals.route_packet", "parameters": { "requestId": "r-1", "approver": "finance-lead" }, "expect": "executed" },
+    { "id": "cannot-pay", "agent": "approval-router", "tool": "payments.pay_vendor", "parameters": { "vendor": "acme", "amount": 10 }, "expect": "denied", "policyId": "PACK-APPROVALS-001" },
+    { "id": "malformed-route", "agent": "approval-router", "tool": "approvals.route_packet", "parameters": { "requestId": "r-1" }, "expect": "refused" }
+  ]
+}
