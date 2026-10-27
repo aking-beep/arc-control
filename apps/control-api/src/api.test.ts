@@ -9,6 +9,7 @@ const TOKEN = 'test-operator-token';
 interface Harness {
   readonly api: ControlApi;
   readonly agentKey: string;
+  readonly agentId: string;
   readonly toolId: string;
   readonly base: string;
   close(): Promise<void>;
@@ -51,6 +52,7 @@ async function harness(): Promise<Harness> {
   return {
     api,
     agentKey: apiKey,
+    agentId: agent.id,
     toolId: tool.id,
     base: `http://${address.host}:${address.port}`,
     close: async () => {
@@ -196,6 +198,41 @@ describe('the governance surface is operator-only', () => {
       await h.close();
     }
   });
+});
+
+/**
+ * Retirement is final over HTTP, not only in the gateway. Both routes that can
+ * set an agent active once reached an unguarded status setter, so a retired
+ * agent came back with a 200 (found by the Meridian sandbox, ARC-SEC-003). The
+ * gateway tests cover the method; this covers the routes an operator uses.
+ */
+describe('a retired agent cannot be brought back over the API', () => {
+  for (const route of ['activate', 'resume']) {
+    it(`refuses POST /v1/agents/:id/${route} with 409 and leaves the agent retired`, async () => {
+      const h = await harness();
+      try {
+        const retired = await fetch(`${h.base}/v1/agents/${h.agentId}/retire`, { method: 'POST', headers: operator() });
+        assert.equal(retired.status, 200);
+
+        const revived = await fetch(`${h.base}/v1/agents/${h.agentId}/${route}`, { method: 'POST', headers: operator() });
+        assert.equal(revived.status, 409);
+
+        const agent = (await (await fetch(`${h.base}/v1/agents/${h.agentId}`, { headers: operator() })).json()) as { status: string };
+        assert.equal(agent.status, 'retired');
+
+        // Retirement revoked the key; refusing the status change must not
+        // have brought it back.
+        const action = await fetch(`${h.base}/v1/actions`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${h.agentKey}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ tool: 'stripe.refund', parameters: { amount: 10 } }),
+        });
+        assert.equal(action.status, 401);
+      } finally {
+        await h.close();
+      }
+    });
+  }
 });
 
 describe('health', () => {

@@ -105,8 +105,17 @@ export class AgentRegistry {
     return this.#setStatus(agentId, 'suspended');
   }
 
+  /**
+   * Brings a suspended agent back. The same as `activate`, deliberately.
+   *
+   * This used to set the status unconditionally. `Administration` stopped
+   * calling it after it let both API routes revive a retired agent, but the
+   * method stayed public, so the next caller to reach for the obvious name
+   * would have reopened the hole. The retirement refusal now holds whichever
+   * of the two is called.
+   */
   async resume(agentId: string): Promise<Agent> {
-    return this.#setStatus(agentId, 'active');
+    return this.activate(agentId);
   }
 
   /**

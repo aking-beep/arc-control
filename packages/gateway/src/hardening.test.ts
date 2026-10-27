@@ -675,6 +675,16 @@ describe('retirement is final through every path', () => {
     assert.equal((await gateway.agents.require(agent.id)).status, 'retired');
   });
 
+  it('refuses to reactivate a retired agent through the registry directly', async () => {
+    const { gateway, agent } = await setup();
+    await gateway.admin.retireAgent(agent.id, { identifier: 'ops@example.com' });
+
+    // `resume` is the obvious name for this operation; a caller that skips the
+    // administration layer must still be refused.
+    await assert.rejects(() => gateway.agents.resume(agent.id), /register a new agent rather than reviving it/);
+    assert.equal((await gateway.agents.require(agent.id)).status, 'retired');
+  });
+
   it('still brings a merely suspended agent back', async () => {
     const { gateway, agent, apiKey } = await setup();
     await gateway.admin.setAgentStatus(agent.id, 'suspended', { identifier: 'ops@example.com' });

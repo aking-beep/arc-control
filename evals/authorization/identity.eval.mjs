@@ -104,6 +104,33 @@ export default {
       },
     },
     {
+      name: 'retirement is final: no status change brings a retired agent back',
+      async run() {
+        const { gateway, agent, apiKey, connector } = await buildHarness();
+        const actor = { identifier: 'evals', via: 'system' };
+        await gateway.admin.retireAgent(agent.id, actor);
+
+        await expect.rejects(
+          () => gateway.admin.setAgentStatus(agent.id, 'active', actor),
+          'conflict',
+          'the administration path behind /activate and /resume must refuse a retired agent',
+        );
+        await expect.rejects(
+          () => gateway.agents.resume(agent.id),
+          'conflict',
+          'the registry must refuse it too, so no future caller can skip the check',
+        );
+
+        expect.equal((await gateway.agents.require(agent.id)).status, 'retired', 'the agent must still be retired');
+        await expect.rejects(
+          () => gateway.handle(apiKey, refund(10)),
+          undefined,
+          'its revoked key must still be refused',
+        );
+        expect.equal(connector.callCount(), 0, 'a retired agent must never reach the connector');
+      },
+    },
+    {
       name: 'evidence names the credential that authenticated the request',
       async run() {
         const { gateway, agent, apiKey } = await buildHarness();
