@@ -10,6 +10,8 @@ import type {
 import type { AgentRegistry, IssuedCredential } from '@arc-control/agent-identity';
 import type { AuditLog } from '@arc-control/audit';
 import type { ToolRegistry } from '@arc-control/execution';
+import type { SpendInput, SpendLedger } from '@arc-control/spend';
+import type { Budget, SpendRecord } from '@arc-control/schemas';
 import type { PolicyStore } from './policies.js';
 
 /**
@@ -37,6 +39,7 @@ export interface AdminDependencies {
   readonly tools: ToolRegistry;
   readonly policies: PolicyStore;
   readonly audit: AuditLog;
+  readonly spend: SpendLedger;
 }
 
 export class Administration {
@@ -319,5 +322,62 @@ export class Administration {
       data: { policyId: policy.id, version: policy.version, enabled, via: actor.via },
     });
     return policy;
+  }
+
+  /**
+   * Creates a budget, or replaces one. Audited with the full document, so
+   * "who raised this agent's limit, and from what" is answerable.
+   */
+  async saveBudget(
+    value: unknown,
+    actor: Actor,
+    options: { readonly organizationId?: string; readonly id?: string } = {},
+  ): Promise<Budget> {
+    const previous = options.id === undefined ? undefined : await this.#deps.spend.budget(options.id);
+    const budget = await this.#deps.spend.saveBudget(value, {
+      organizationId: options.organizationId ?? 'default',
+      ...(options.id !== undefined ? { id: options.id } : {}),
+    });
+
+    await this.#deps.audit.append({
+      type: previous ? 'budget.updated' : 'budget.created',
+      organizationId: budget.organizationId,
+      actor: actor.identifier,
+      subject: budget.id,
+      summary: previous
+        ? `${actor.identifier} changed budget "${budget.name}" from $${previous.limitUsd} to $${budget.limitUsd} per ${budget.period} (${budget.onExceeded}${budget.enabled ? '' : ', disabled'})`
+        : `${actor.identifier} created budget "${budget.name}": $${budget.limitUsd} per ${budget.period}, ${budget.onExceeded} when exhausted`,
+      data: {
+        budget,
+        ...(previous ? { previous: { limitUsd: previous.limitUsd, onExceeded: previous.onExceeded, enabled: previous.enabled, version: previous.version } } : {}),
+        via: actor.via,
+      },
+    });
+    return budget;
+  }
+
+  /**
+   * Records spend reported by an agent or an operator. Always unverified:
+   * ARC did not fetch it. It counts toward budgets all the same, because the
+   * only thing a reporter can do with it is make a budget tighter.
+   */
+  async reportSpend(input: SpendInput, actor: Actor): Promise<SpendRecord> {
+    const record = await this.#deps.spend.record(input, 'reported', actor.identifier);
+    await this.#deps.audit.append({
+      type: 'spend.reported',
+      organizationId: record.organizationId,
+      actor: actor.identifier,
+      subject: record.agentId ?? record.organizationId,
+      summary: `${actor.identifier} reported $${record.amountUsd} of ${record.provider} spend (unverified)`,
+      data: {
+        spendId: record.id,
+        agentId: record.agentId,
+        provider: record.provider,
+        amountUsd: record.amountUsd,
+        occurredAt: record.occurredAt,
+        via: actor.via,
+      },
+    });
+    return record;
   }
 }

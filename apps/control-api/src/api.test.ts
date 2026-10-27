@@ -71,7 +71,7 @@ function operator(extra: Record<string, string> = {}): Record<string, string> {
  * governance route is reachable with an agent credential, and a list that
  * drifts out of date would silently stop testing the route that was added last.
  */
-const GOVERNANCE_ROUTES: readonly { method: 'GET' | 'POST'; path: string; body?: unknown }[] = [
+const GOVERNANCE_ROUTES: readonly { method: 'GET' | 'POST' | 'PUT'; path: string; body?: unknown }[] = [
   { method: 'GET', path: '/v1/assurance/summary' },
   { method: 'GET', path: '/v1/assurance/coverage' },
   { method: 'GET', path: '/v1/assurance/controls' },
@@ -120,6 +120,12 @@ const GOVERNANCE_ROUTES: readonly { method: 'GET' | 'POST'; path: string; body?:
   { method: 'POST', path: '/v1/tools/arc_tl_x/enable' },
   { method: 'POST', path: '/v1/connectors/simulation/disable', body: {} },
   { method: 'POST', path: '/v1/connectors/simulation/enable' },
+  // 2.3 — spend control. An agent that could raise its own budget would not be governed by it.
+  { method: 'GET', path: '/v1/budgets' },
+  { method: 'POST', path: '/v1/budgets', body: { name: 'b', period: 'day', limitUsd: 1000, onExceeded: 'DENY' } },
+  { method: 'PUT', path: '/v1/budgets/arc_bdg_x', body: { name: 'b', period: 'day', limitUsd: 1000, onExceeded: 'DENY' } },
+  { method: 'GET', path: '/v1/spend' },
+  { method: 'POST', path: '/v1/spend', body: { provider: 'anthropic', amountUsd: 0 } },
 ];
 
 describe('the governance surface is operator-only', () => {

@@ -1,0 +1,27 @@
+{
+  "name": "@arc-control/spend",
+  "version": "2.3.0",
+  "description": "Spend control: a ledger of what agents cost, budgets that tighten decisions, and provider adapters.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean"
+  },
+  "dependencies": {
+    "@arc-control/schemas": "2.0.0",
+    "@arc-control/store": "2.0.0"
+  }
+}

@@ -248,6 +248,48 @@ export function loadConfig(env: Env = process.env): LoadedConfig {
     }
   }
 
+  // --- 2.3: spend control and gates (ADR-0002) ---------------------------
+  //
+  // Each is off until set, and a set value that cannot be read refuses to
+  // start: a typo in a spike rule must not quietly mean "no spike rule".
+  const anthropicAdminKey = text(env.ARC_ANTHROPIC_ADMIN_KEY);
+  const attribution: Record<string, string> = {};
+  for (const [key, names] of Object.entries(mapping(env.ARC_SPEND_ATTRIBUTION) ?? {})) {
+    if (names.length !== 1) refusals.push(`ARC_SPEND_ATTRIBUTION maps "${key}" to more than one agent`);
+    else attribution[key] = names[0]!;
+  }
+  let spike: { multiplier: number; minimumUsd: number; baselineDays: number } | undefined;
+  const spikeText = text(env.ARC_SPEND_SPIKE);
+  if (spikeText !== undefined) {
+    const [multiplier, minimumUsd, baselineDays] = spikeText.split(',').map((part) => Number(part.trim()));
+    if (
+      spikeText.split(',').length !== 3 ||
+      !(Number.isFinite(multiplier) && multiplier! >= 1) ||
+      !(Number.isFinite(minimumUsd) && minimumUsd! >= 0) ||
+      !(Number.isInteger(baselineDays) && baselineDays! >= 1 && baselineDays! <= 30)
+    ) {
+      refusals.push(
+        `ARC_SPEND_SPIKE="${spikeText}" must be "multiplier,minimumUsd,baselineDays", e.g. "3,20,7" ` +
+          '(multiplier at least 1, baseline 1 to 30 days)',
+      );
+    } else {
+      spike = { multiplier: multiplier!, minimumUsd: minimumUsd!, baselineDays: baselineDays! };
+    }
+  }
+  const onSpike = text(env.ARC_SPEND_ON_SPIKE);
+  if (onSpike !== undefined && onSpike !== 'record' && onSpike !== 'suspend') {
+    refusals.push(`ARC_SPEND_ON_SPIKE="${onSpike}" must be "record" or "suspend"`);
+  }
+  if (onSpike !== undefined && spike === undefined) {
+    refusals.push('ARC_SPEND_ON_SPIKE is set but ARC_SPEND_SPIKE is not; there is no spike to act on');
+  }
+  if ((spike !== undefined || Object.keys(attribution).length > 0) && anthropicAdminKey === undefined) {
+    warnings.push(
+      'A spend spike rule or attribution is configured but no spend provider is (ARC_ANTHROPIC_ADMIN_KEY), so only ' +
+        'self-reported spend will be seen. Self-reported spend is unverified.',
+    );
+  }
+
   if (refusals.length > 0) {
     throw new ArcError(
       'invalid_request',
@@ -283,6 +325,16 @@ export function loadConfig(env: Env = process.env): LoadedConfig {
     ...(webhookSigningSecret ? { webhookSigningSecret } : {}),
     ...(schedule !== undefined ? { schedule } : {}),
     ...(defaultOrganizationId ? { defaultOrganizationId } : {}),
+    ...(anthropicAdminKey || spike
+      ? {
+          spend: {
+            ...(anthropicAdminKey ? { anthropicAdminKey } : {}),
+            ...(Object.keys(attribution).length > 0 ? { attribution } : {}),
+            ...(spike ? { spike } : {}),
+            ...(onSpike === 'record' || onSpike === 'suspend' ? { onSpike } : {}),
+          },
+        }
+      : {}),
     ...(issuer && clientId && redirectUri
       ? {
           oidc: {

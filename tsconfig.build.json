@@ -7,6 +7,7 @@
     { "path": "packages/operator-identity" },
     { "path": "packages/notify" },
     { "path": "packages/policy-engine" },
+    { "path": "packages/spend" },
     { "path": "packages/approvals" },
     { "path": "packages/evidence" },
     { "path": "packages/assurance" },

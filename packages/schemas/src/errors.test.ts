@@ -55,6 +55,8 @@ describe('ArcError status mapping', () => {
       // who someone is. 503 so a load balancer and an on-call rota treat it
       // as the infrastructure failure it is, rather than as a user error.
       identity_provider_unavailable: 503,
+      // A configured gate refused the request as submitted: well-formed, not acceptable.
+      gate_refused: 422,
       not_found: 404,
       conflict: 409,
       invalid_request: 400,

@@ -10,6 +10,7 @@
  */
 
 import type { ActionRiskClass, Reversibility } from './classification.js';
+import type { AgentSpendInput } from './spend.js';
 
 /** The three outcomes ARC Control can produce for an action. */
 export type PolicyEffect = 'ALLOW' | 'REQUIRE_APPROVAL' | 'DENY';
@@ -121,6 +122,19 @@ export interface PolicyInput {
     readonly owner: string;
     readonly roles: readonly string[];
     readonly labels: Readonly<Record<string, string>>;
+    /**
+     * Spend so far, as `$.agent.spend.dayUsd`, `$.agent.spend.monthUsd`,
+     * `$.agent.spend.maxBudgetPercent` and `$.agent.spend.verified` (2.3).
+     *
+     * Absent when the caller supplied none. A rule that reads it then does
+     * not match, which fails closed for an ALLOW rule.
+     */
+    readonly spend?: AgentSpendInput;
+    /**
+     * Letter grade of the agent's reviewed system prompt, `A` to `F`, as
+     * `$.agent.promptGrade` (2.3). Absent when the prompt was never reviewed.
+     */
+    readonly promptGrade?: string;
   };
   readonly tool: {
     readonly name: string;

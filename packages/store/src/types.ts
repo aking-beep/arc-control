@@ -20,6 +20,8 @@ import type {
   Policy,
   PolicyVersionRecord,
   Risk,
+  Budget,
+  SpendRecord,
   Tool,
 } from '@arc-control/schemas';
 
@@ -105,6 +107,15 @@ export interface ControlStore {
 
   readonly notificationChannels: Collection<NotificationChannel>;
   readonly notificationDeliveries: Collection<NotificationDelivery>;
+
+  // --- 2.3: spend control (ADR-0002) ------------------------------------
+  //
+  // In the same store as decisions because a budget is read on the decision
+  // path: a refusal that cites spend has to be checkable against the very
+  // records it counted.
+
+  readonly spend: Collection<SpendRecord>;
+  readonly budgets: Collection<Budget>;
 
   /**
    * The head of the audit chain as this store recorded it, when the

@@ -33,6 +33,9 @@
       "path": "../../packages/policy-engine"
     },
     {
+      "path": "../../packages/spend"
+    },
+    {
       "path": "../../packages/approvals"
     },
     {
