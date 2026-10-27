@@ -1,6 +1,6 @@
 {
-  "at": "2026-10-27T03:06:57.692Z",
-  "commit": "6d44fd15c4b8af3fc6a28793a2fced7ca5c48e4a",
+  "at": "2026-10-27T03:07:33.114Z",
+  "commit": "8b0eb4beacc7fba51274483a839ece52b17aa88f",
   "ref": "refs/heads/main",
   "summary": {
     "met": 20,
@@ -17,7 +17,7 @@
         "value": 0.95
       },
       "status": "met",
-      "previous": null
+      "previous": 1
     },
     {
       "id": "verify.main_ci_runs",
@@ -28,7 +28,7 @@
         "value": 1
       },
       "status": "met",
-      "previous": null
+      "previous": 6
     },
     {
       "id": "deliver.gate_pass_rate",
@@ -39,7 +39,7 @@
         "value": 1
       },
       "status": "met",
-      "previous": null
+      "previous": 1
     },
     {
       "id": "deliver.waiver_rate",
@@ -50,18 +50,18 @@
         "value": 0.2
       },
       "status": "met",
-      "previous": null
+      "previous": 0
     },
     {
       "id": "security.oldest_open_days",
       "skill": "security-remediation",
-      "value": 1.1298237268518518,
+      "value": 1.1302366435185185,
       "target": {
         "op": "<=",
         "value": 14
       },
       "status": "met",
-      "previous": null
+      "previous": 1.1298237268518518
     },
     {
       "id": "security.open_critical",
@@ -72,7 +72,7 @@
         "value": 0
       },
       "status": "met",
-      "previous": null
+      "previous": 0
     },
     {
       "id": "security.fixed_with_tests_rate",
@@ -83,7 +83,7 @@
         "value": 1
       },
       "status": "met",
-      "previous": null
+      "previous": 1
     },
     {
       "id": "security.median_days_to_fix",
@@ -94,7 +94,7 @@
         "value": 7
       },
       "status": "met",
-      "previous": null
+      "previous": 0
     },
     {
       "id": "meridian.integration_failed",
@@ -105,7 +105,7 @@
         "value": 0
       },
       "status": "met",
-      "previous": null
+      "previous": 0
     },
     {
       "id": "meridian.phase2_fail",
@@ -116,7 +116,7 @@
         "value": 0
       },
       "status": "met",
-      "previous": null
+      "previous": 0
     },
     {
       "id": "meridian.stress_failed_presets",
@@ -127,7 +127,7 @@
         "value": 0
       },
       "status": "met",
-      "previous": null
+      "previous": 0
     },
     {
       "id": "clients.profiles_invalid",
@@ -138,7 +138,7 @@
         "value": 0
       },
       "status": "met",
-      "previous": null
+      "previous": 0
     },
     {
       "id": "clients.scenario_pass_rate",
@@ -149,7 +149,7 @@
         "value": 1
       },
       "status": "met",
-      "previous": null
+      "previous": 1
     },
     {
       "id": "clients.warnings_total",
@@ -160,7 +160,7 @@
         "value": 0
       },
       "status": "met",
-      "previous": null
+      "previous": 0
     },
     {
       "id": "steward.green_at_merge_rate",
@@ -171,7 +171,7 @@
         "value": 1
       },
       "status": "breached",
-      "previous": null
+      "previous": 0.5
     },
     {
       "id": "steward.unresolved_threads_at_merge",
@@ -182,7 +182,7 @@
         "value": 0
       },
       "status": "met",
-      "previous": null
+      "previous": 0
     },
     {
       "id": "steward.median_hours_to_merge",
@@ -193,7 +193,7 @@
         "value": 72
       },
       "status": "met",
-      "previous": null
+      "previous": 0.26611111111111113
     },
     {
       "id": "release.notes_passing_rate",
@@ -204,7 +204,7 @@
         "value": 1
       },
       "status": "met",
-      "previous": null
+      "previous": 1
     },
     {
       "id": "release.decision_prs_with_note_rate",
@@ -226,18 +226,18 @@
         "value": 1
       },
       "status": "met",
-      "previous": null
+      "previous": 1
     },
     {
       "id": "deploy.time_to_healthy_ms",
       "skill": "deploy",
-      "value": 435,
+      "value": 231,
       "target": {
         "op": "<=",
         "value": 10000
       },
       "status": "met",
-      "previous": null
+      "previous": 435
     },
     {
       "id": "harness.problems",
@@ -248,7 +248,7 @@
         "value": 0
       },
       "status": "met",
-      "previous": null
+      "previous": 0
     }
   ],
   "sources": {
