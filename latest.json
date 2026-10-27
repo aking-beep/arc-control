@@ -1,6 +1,6 @@
 {
-  "at": "2026-10-27T08:10:21.834Z",
-  "commit": "b12f46ec9a5b3ffaaef2396ea7b342ef88fb3bb0",
+  "at": "2026-10-27T15:42:43.495Z",
+  "commit": "ced2a1ea470f5a75c814594972820fa11cd08974",
   "ref": "refs/heads/main",
   "summary": {
     "met": 22,
@@ -28,7 +28,7 @@
         "value": 1
       },
       "status": "met",
-      "previous": 8
+      "previous": 9
     },
     {
       "id": "deliver.gate_pass_rate",
@@ -55,13 +55,13 @@
     {
       "id": "security.oldest_open_days",
       "skill": "security-remediation",
-      "value": 1.3405216550925927,
+      "value": 0,
       "target": {
         "op": "<=",
         "value": 14
       },
       "status": "met",
-      "previous": 1.3400151967592593
+      "previous": 1.3405216550925927
     },
     {
       "id": "security.open_critical",
@@ -171,7 +171,7 @@
         "value": 1
       },
       "status": "met",
-      "previous": 0.8
+      "previous": 1
     },
     {
       "id": "steward.unresolved_threads_at_merge",
@@ -231,13 +231,13 @@
     {
       "id": "deploy.time_to_healthy_ms",
       "skill": "deploy",
-      "value": 244,
+      "value": 233,
       "target": {
         "op": "<=",
         "value": 10000
       },
       "status": "met",
-      "previous": 246
+      "previous": 244
     },
     {
       "id": "harness.problems",
