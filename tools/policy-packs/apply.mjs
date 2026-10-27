@@ -12,7 +12,7 @@
  *
  * Usage:
  *   node tools/policy-packs/apply.mjs policy-packs/<id>/pack.json            # dry run
- *   ARC_OPERATOR_TOKEN=... node tools/policy-packs/apply.mjs <pack.json> --api https://arc.example.com --publish
+ *   ARC_OPERATOR_TOKEN="$TOKEN" node tools/policy-packs/apply.mjs <pack.json> --api https://arc.example.com --publish
  *
  * A policy whose id already exists at the same or a higher version is
  * refused by the API (`conflict`), so re-applying a pack never silently
