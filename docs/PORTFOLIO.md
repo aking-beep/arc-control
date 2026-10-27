@@ -12,15 +12,16 @@ listing one here does not publish its code.
 | Repository | Role | Relationship to this repo |
 | --- | --- | --- |
 | `aking-beep/arc-control` | The control platform: gateway, policy, approvals, evidence, audit | **This repository.** The one canonical policy engine ([ADR-0001](./adr/0001-canonical-policy-engine.md)). |
-| `aking-beep/tokenloop` | Spend control and chargeback for AI coding agents | Separate product, private. |
+| `aking-beep/tokenloop` | Spend control and chargeback for AI coding agents | Separate product, private. ARC Control has its own native spend control and budgets ([ADR-0002](./adr/0002-portfolio-capabilities.md)); no TokenLoop code is used here. |
 | `aking-beep/experience-intelligence-platform` | Evidence-backed CRO and UX assessment | Separate product, private. |
 | `aking-beep/arc-cith-app` | The C.I.T.H. AI transformation readiness assessment | Separate product, private. |
 | `aking-beep/aifit-engine` → `apps/teams` | AI Fit Teams: team-level AI capability mapping, calibrated by this platform's `GET /api/v1/calibration` | Separate product. Its code sits in `aifit-engine` beside AI Fit (an ARC Labs product); only `apps/teams` is Control's. |
 | `aking-beep/arc-skills` | An open library of agent skills (`SKILL.md` packages) | Separate product, public. |
-| `aking-beep/ai-workflow-templates` | An open catalog of AI workflows, most stopping at a human gate | Separate product, public. |
+| `aking-beep/ai-workflow-templates` | An open catalog of AI workflows, most stopping at a human gate | Separate product, public. Four of its workflows are rebuilt here as validated policy packs (`policy-packs/`, ADR-0002). |
 | `aking-beep/reference-architectures` | An open library of system blueprints and their trade-offs | Separate product, public. |
-| `aking-beep/prompt-reviewer` | Static review of whether a system prompt is ready to ship | Separate product, public. |
-| `aking-beep/connectivity-scanner` | Grades an endpoint for reachability, TLS, speed and security headers | Separate product, public. |
+| `aking-beep/prompt-reviewer` | Static review of whether a system prompt is ready to ship | Separate product, public. Its static checks are reimplemented in `packages/prompt-review` to gate agent activation (ADR-0002). |
+| `aking-beep/connectivity-scanner` | Grades an endpoint for reachability, TLS, speed and security headers | Separate product, public. Its TLS, redirect and private-address checks are reimplemented in `connectors/generic-http/src/vet.ts` to gate tool registration (ADR-0002). |
+| `aking-beep/mcp-conformance-scanner` | Grades an MCP server on protocol conformance and security | Separate product, public. Its manifest-level checks and grading are reimplemented in `packages/mcp-security` to gate MCP registration (ADR-0002). |
 | `aking-beep/ark-ai-agent-platform` | A governed single-agent runtime on AWS | **Superseded.** Its useful parts are ported here under ADR-0001, then the repository is archived. |
 | `aking-beep/ark` | The original ARK monorepo, whose Control app overlaps this one | **Legacy, migrating.** ADR-0001 steps 2–11 port its Control safeguards here; its AI Fit apps have moved to `aifit-engine` (AI Fit is an ARC Labs product; AI Fit Teams, in `apps/teams`, is Control's). |
 

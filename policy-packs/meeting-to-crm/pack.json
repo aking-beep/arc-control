@@ -1,0 +1,56 @@
+{
+  "id": "pack-meeting-to-crm",
+  "name": "Meeting to CRM: propose a diff, a rep confirms",
+  "pack": {
+    "version": 1,
+    "source": "AI Workflow Templates — automation/meeting-to-crm",
+    "summary": "A CRM agent may read records and propose changes. Writing a change back needs the rep's confirmation. Deleting a record is denied.",
+    "adapt": [
+      "Give your CRM agent the role crm-updater and your reps the role account-rep.",
+      "Rename the system 'crm' to the one your tools use."
+    ]
+  },
+  "organizationId": "policy-pack",
+  "environment": "production",
+  "requirements": { "separationOfDutiesForIrreversible": true },
+  "tools": [
+    { "name": "crm.read_record", "description": "Read a CRM record.", "system": "crm", "effect": "read", "riskTier": "low", "connector": "generic-http", "parameters": [{ "name": "recordId", "type": "string", "required": true }] },
+    { "name": "crm.patch_record", "description": "Write a confirmed field diff back to a CRM record.", "system": "crm", "effect": "write", "riskTier": "medium", "connector": "generic-http", "parameters": [{ "name": "recordId", "type": "string", "required": true }, { "name": "diff", "type": "object", "required": true }] },
+    { "name": "crm.delete_record", "description": "Delete a CRM record. Irreversible.", "system": "crm", "effect": "irreversible", "riskTier": "critical", "connector": "generic-http", "parameters": [{ "name": "recordId", "type": "string", "required": true }] }
+  ],
+  "agents": [
+    { "name": "crm-updater", "owner": "revops@client.example", "roles": ["crm-updater"], "declaredTools": ["crm.read_record", "crm.patch_record"] }
+  ],
+  "approvers": [
+    { "identifier": "rep@client.example", "roles": ["account-rep"] }
+  ],
+  "policies": [
+    {
+      "id": "PACK-CRM-001",
+      "version": 1,
+      "name": "CRM agents propose; reps confirm",
+      "description": "From the meeting-to-crm template: never overwrite a field silently; always diff and confirm.",
+      "enabled": true,
+      "match": { "agents": ["role:crm-updater"], "systems": ["crm"] },
+      "rules": [
+        { "id": "never-delete", "when": { "eq": ["$.tool.effect", "irreversible"] }, "effect": "DENY", "reason": "the CRM agent never deletes a record" },
+        {
+          "id": "rep-confirms-write",
+          "when": { "eq": ["$.tool.effect", "write"] },
+          "effect": "REQUIRE_APPROVAL",
+          "reason": "the rep confirms the diff before it is written back",
+          "approval": { "approvers": ["role:account-rep"], "minApprovals": 1, "expiresInSeconds": 172800, "requireSeparationOfDuties": true }
+        },
+        { "id": "read", "when": { "eq": ["$.tool.effect", "read"] }, "effect": "ALLOW", "reason": "reading a record to prepare a diff" }
+      ],
+      "fallback": { "effect": "DENY", "reason": "outside what the CRM agent does" }
+    }
+  ],
+  "scenarios": [
+    { "id": "reads", "agent": "crm-updater", "tool": "crm.read_record", "parameters": { "recordId": "o-1" }, "expect": "executed", "policyId": "PACK-CRM-001" },
+    { "id": "write-is-held", "agent": "crm-updater", "tool": "crm.patch_record", "parameters": { "recordId": "o-1", "diff": { "stage": "proposal" } }, "expect": "pending_approval" },
+    { "id": "write-after-rep-confirms", "agent": "crm-updater", "tool": "crm.patch_record", "parameters": { "recordId": "o-2", "diff": { "stage": "won" } }, "expect": "pending_approval", "approveAs": "rep@client.example" },
+    { "id": "never-deletes", "agent": "crm-updater", "tool": "crm.delete_record", "parameters": { "recordId": "o-1" }, "expect": "denied", "policyId": "PACK-CRM-001" },
+    { "id": "malformed-patch", "agent": "crm-updater", "tool": "crm.patch_record", "parameters": { "recordId": "o-1" }, "expect": "refused" }
+  ]
+}

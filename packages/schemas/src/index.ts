@@ -11,6 +11,7 @@ export * from './audit.js';
 export * from './governance.js';
 export * from './operator.js';
 export * from './notify.js';
+export * from './spend.js';
 export * from './bundle.js';
 export * from './classification.js';
 export * from './validate.js';

@@ -26,6 +26,29 @@ toolbox.
 
 ---
 
+## 2.3 — Portfolio capabilities 🔨 in review
+
+Five capabilities from ARC's free portfolio, rebuilt natively as controls
+rather than reports. Order, design and limits are in
+[ADR-0002](./adr/0002-portfolio-capabilities.md), and what shipped in
+[releases/2.3.md](./releases/2.3.md).
+
+| # | Capability | From | Control |
+| --- | --- | --- | --- |
+| 1 | Spend control | TokenLoop | Budgets fold into every decision and can only tighten it; spend is `$.agent.spend.*`; verified spend comes from Anthropic's cost report; a spike can suspend the agent |
+| 2 | MCP gate at registration | MCP Conformance Scanner | A server below `ARC_MCP_MIN_GRADE` registers none of its tools |
+| 3 | Prompt review on activation | Prompt Reviewer | An agent below `ARC_PROMPT_MIN_GRADE` cannot become active; the grade is `$.agent.promptGrade` |
+| 4 | Policy packs | AI Workflow Templates | Four validated packs, checked in CI at the connector, published only on request |
+| 5 | Endpoint vetting | Connectivity Scanner | A `generic-http` tool whose endpoint fails TLS, resolution or redirect checks is not registered |
+
+**Next, not in 2.3:**
+- Spend providers beyond Anthropic, behind the same `SpendProvider` interface.
+- Per-action cost estimates, so a budget can refuse the action that would cross it rather than the next one.
+- Periodic re-vetting of registered endpoints and re-scanning of MCP servers, with drift raised as a finding.
+- Chargeback reporting per client from the spend ledger.
+
+---
+
 ## 2.0 — Control + Assurance ✅ shipped
 
 The release that renumbered the project. 1.0's capabilities are the baseline;

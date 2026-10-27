@@ -1,5 +1,5 @@
 import { createServer, type Server } from 'node:http';
-import { Gateway, type RateLimitOptions } from '@arc-control/gateway';
+import { Gateway, type GateOptions, type RateLimitOptions } from '@arc-control/gateway';
 import { AssuranceEngine } from '@arc-control/assurance';
 import type { ControlStore } from '@arc-control/store';
 import { addAssuranceRoutes } from './assurance-routes.js';
@@ -7,9 +7,12 @@ import { buildRoutes } from './routes.js';
 import { OperatorAuth, type TrustedProxyOptions } from './operator.js';
 import { addAuthRoutes } from './auth-routes.js';
 import { addNotificationRoutes } from './notification-routes.js';
+import { addSpendRoutes } from './spend-routes.js';
 import { Scheduler } from './scheduler.js';
 import { Notifier } from '@arc-control/notify';
+import { vetEndpoint } from '@arc-control/connector-generic-http';
 import { ArcError } from '@arc-control/schemas';
+import { AnthropicCostProvider, SpendMonitor, type SpendProvider, type SpikeRule } from '@arc-control/spend';
 import {
   OidcClient,
   SessionManager,
@@ -77,6 +80,31 @@ export interface ControlApiOptions {
    * Off for tests and for a second replica, which must not also be ticking.
    */
   readonly schedule?: boolean | { readonly intervalMs?: number; readonly assessmentIntervalMs?: number };
+
+  // --- 2.3: spend control and gates (ADR-0002) ---------------------------
+
+  /** Registration and activation gates. Each is off unless set. */
+  readonly gates?: GateOptions;
+  /**
+   * Vet every URL-bearing tool's endpoint at registration (HTTPS, resolution,
+   * certificate, redirects). Off unless set.
+   */
+  readonly endpointVetting?: { readonly allowPrivateHosts?: readonly string[]; readonly minimumCertificateDays?: number };
+
+  /**
+   * Verified spend and runaway detection. Absent means budgets count only
+   * self-reported spend and nothing is fetched.
+   */
+  readonly spend?: {
+    /** Anthropic Admin API key. Held in memory; never written to a record. */
+    readonly anthropicAdminKey?: string;
+    /** Provider attribution (`workspace:wrkspc_...`) to agent name. */
+    readonly attribution?: Readonly<Record<string, string>>;
+    readonly spike?: SpikeRule;
+    readonly onSpike?: 'record' | 'suspend';
+    /** Test seam: providers to use instead of the configured ones. */
+    readonly providers?: readonly SpendProvider[];
+  };
 }
 
 export interface ControlApi {
@@ -104,6 +132,26 @@ export function createControlApi(options: ControlApiOptions): ControlApi {
     ...(options.rateLimit ? { rateLimit: options.rateLimit } : {}),
     ...(options.monetaryEscalationThreshold !== undefined
       ? { classification: { monetaryEscalationThreshold: options.monetaryEscalationThreshold } }
+      : {}),
+    ...(options.gates || options.endpointVetting
+      ? {
+          gates: {
+            ...(options.gates ?? {}),
+            ...(options.endpointVetting
+              ? {
+                  endpointVetter: {
+                    vet: (url: string) =>
+                      vetEndpoint(url, {
+                        ...(options.endpointVetting?.allowPrivateHosts ? { allowPrivateHosts: options.endpointVetting.allowPrivateHosts } : {}),
+                        ...(options.endpointVetting?.minimumCertificateDays !== undefined
+                          ? { minimumCertificateDays: options.endpointVetting.minimumCertificateDays }
+                          : {}),
+                      }),
+                  },
+                }
+              : {}),
+          },
+        }
       : {}),
   });
 
@@ -180,8 +228,34 @@ export function createControlApi(options: ControlApiOptions): ControlApi {
     ...(options.defaultOrganizationId ? { defaultOrganizationId: options.defaultOrganizationId } : {}),
   });
 
+  const providers: SpendProvider[] = [
+    ...(options.spend?.providers ?? []),
+    ...(options.spend?.anthropicAdminKey ? [new AnthropicCostProvider({ adminKey: options.spend.anthropicAdminKey })] : []),
+  ];
+  const spendMonitor =
+    providers.length > 0 || options.spend?.spike !== undefined
+      ? new SpendMonitor({
+          store: options.store,
+          ledger: gateway.spend,
+          providers,
+          organizationId: options.defaultOrganizationId ?? 'default',
+          ...(options.spend?.attribution ? { attribution: options.spend.attribution } : {}),
+          ...(options.spend?.spike ? { spike: options.spend.spike } : {}),
+          ...(options.spend?.onSpike ? { onSpike: options.spend.onSpike } : {}),
+          audit: (event) =>
+            gateway.audit.append({
+              ...event,
+              organizationId: options.defaultOrganizationId ?? 'default',
+              actor: 'system:spend-monitor',
+            }),
+          suspend: (agentId) =>
+            gateway.admin.setAgentStatus(agentId, 'suspended', { identifier: 'system:spend-monitor', via: 'system' }),
+        })
+      : undefined;
+
   const schedule = options.schedule ?? true;
   const scheduler = new Scheduler({
+    ...(spendMonitor ? { spendMonitor } : {}),
     gateway,
     assurance,
     notifier,
@@ -194,6 +268,11 @@ export function createControlApi(options: ControlApiOptions): ControlApi {
 
   addAssuranceRoutes(router, { gateway, assurance, operators, version: API_VERSION });
   addNotificationRoutes(router, { gateway, operators, notifier, scheduler });
+  addSpendRoutes(router, {
+    gateway,
+    operators,
+    ...(options.defaultOrganizationId ? { defaultOrganizationId: options.defaultOrganizationId } : {}),
+  });
   addAuthRoutes(router, {
     gateway,
     operators,

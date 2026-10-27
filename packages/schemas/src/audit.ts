@@ -69,7 +69,18 @@ export type AuditEventType =
   // the first explains why eight calls produced one effect, the second is the
   // only record that a stale approval was checked against today's rules.
   | 'action.replayed'
-  | 'action.revalidated';
+  | 'action.revalidated'
+  // 2.3 — portfolio capabilities (ADR-0002). Budgets change what agents may
+  // do, spend is the input they decide on, and a refused registration or
+  // activation is a control working — all three belong in the chain.
+  | 'budget.created'
+  | 'budget.updated'
+  | 'spend.reported'
+  | 'spend.ingested'
+  | 'spend.incident'
+  | 'mcp.registration_refused'
+  | 'agent.activation_refused'
+  | 'tool.registration_refused';
 
 export interface AuditRecord {
   readonly id: string;

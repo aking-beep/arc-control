@@ -146,6 +146,53 @@
         }
       }
     },
+    "promptReview": {
+      "type": "object",
+      "description": "The latest static review of the agent's system prompt (2.3). The prompt itself is never stored: only its grade, failed check ids and a digest.",
+      "required": [
+        "grade",
+        "score",
+        "promptDigest",
+        "failed",
+        "reviewedAt",
+        "reviewedBy"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "grade": {
+          "enum": [
+            "A",
+            "B",
+            "C",
+            "D",
+            "F"
+          ]
+        },
+        "score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "promptDigest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "failed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "reviewedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "reviewedBy": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
     "retiredAt": {
       "type": "string",
       "format": "date-time",

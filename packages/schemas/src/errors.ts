@@ -26,6 +26,12 @@ export type ArcErrorCode =
    * authorized while operators cannot sign in.
    */
   | 'identity_provider_unavailable'
+  /**
+   * A configured gate refused a registration or activation: an MCP server
+   * graded below the minimum, an agent whose reviewed prompt is missing or
+   * graded below it, an endpoint that failed vetting (2.3, ADR-0002).
+   */
+  | 'gate_refused'
   | 'not_found'
   | 'conflict'
   | 'invalid_request'
@@ -78,6 +84,7 @@ const HTTP_STATUS_BY_CODE: Record<ArcErrorCode, number> = {
   execution_failed: 502,
   connector_unavailable: 503,
   identity_provider_unavailable: 503,
+  gate_refused: 422,
   not_found: 404,
   conflict: 409,
   invalid_request: 400,
