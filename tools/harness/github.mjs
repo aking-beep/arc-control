@@ -41,12 +41,28 @@ export async function graphql(context, query, variables = {}) {
   return body.data;
 }
 
+/**
+ * Each check on a commit, with enough timing to tell a check that ran on the
+ * pull request from one that ran after it merged. When a PR is fast-forwarded
+ * its head commit becomes the main commit, and the checks main runs on push
+ * land on the same commit; the live rollup then reads "pending" for a PR that
+ * was green when it merged.
+ */
+const CONTEXT_FIELDS = `
+  nodes {
+    __typename
+    ... on CheckRun { name status conclusion completedAt checkSuite { createdAt } }
+    ... on StatusContext { context state createdAt }
+  }
+  pageInfo { hasNextPage endCursor }
+`;
+
 const PR_FIELDS = `
   number title url state isDraft createdAt mergedAt body
   mergeable mergeStateStatus
   files(first: 100) { nodes { path } pageInfo { hasNextPage endCursor } }
   reviewThreads(first: 100) { nodes { isResolved } pageInfo { hasNextPage endCursor } }
-  commits(last: 1) { nodes { commit { oid statusCheckRollup { state } } } }
+  commits(last: 1) { nodes { commit { oid statusCheckRollup { state contexts(first: 100) { ${CONTEXT_FIELDS} } } } } }
 `;
 
 /**
@@ -74,7 +90,48 @@ async function complete(context, pr) {
       page = next.pageInfo;
     }
   }
+  const rollup = pr.commits.nodes[0]?.commit.statusCheckRollup;
+  let page = rollup?.contexts?.pageInfo;
+  while (page?.hasNextPage) {
+    const data = await graphql(
+      context,
+      `query($owner: String!, $name: String!, $number: Int!, $after: String!) { repository(owner: $owner, name: $name) {
+         pullRequest(number: $number) { commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100, after: $after) { ${CONTEXT_FIELDS} } } } } } } } }`,
+      { owner: context.owner, name: context.name, number: pr.number, after: page.endCursor },
+    );
+    const next = data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts;
+    rollup.contexts.nodes.push(...next.nodes);
+    page = next.pageInfo;
+  }
   return pr;
+}
+
+/**
+ * Whether a merged PR's checks were green when it merged.
+ *
+ * Only checks whose suite was created before the merge count, so the runs
+ * main starts on the same commit after a fast-forward cannot turn a green PR
+ * pending. Green means at least one such check, every one completed by the
+ * merge with success, neutral or skipped, and no failing status. Anything
+ * else, including no checks at all, is not green.
+ */
+export function greenAtMerge(pr) {
+  const mergedAt = Date.parse(pr.mergedAt);
+  const contexts = pr.commits.nodes[0]?.commit.statusCheckRollup?.contexts?.nodes ?? [];
+  const before = contexts.filter((check) => {
+    const created = check.__typename === 'CheckRun' ? check.checkSuite?.createdAt : check.createdAt;
+    return created !== undefined && created !== null && Date.parse(created) < mergedAt;
+  });
+  if (before.length === 0) return false;
+  return before.every((check) => {
+    if (check.__typename === 'StatusContext') return check.state === 'SUCCESS';
+    return (
+      check.status === 'COMPLETED' &&
+      ['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(check.conclusion) &&
+      check.completedAt !== null &&
+      Date.parse(check.completedAt) <= mergedAt
+    );
+  });
 }
 
 /** One pull request, with what the steward checklist needs. */

@@ -73,3 +73,38 @@ describe('github client follows pagination', () => {
     assert.deepEqual(calls, ['first', 'cursor-1', 'cursor-1']);
   });
 });
+
+describe('green at merge ignores checks that ran after the merge', async () => {
+  const { greenAtMerge } = await import('./github.mjs');
+  const merged = '2026-10-27T03:06:28Z';
+  const run = (conclusion, suiteCreated, completedAt, status = 'COMPLETED') => ({
+    __typename: 'CheckRun',
+    name: 'ci',
+    status,
+    conclusion,
+    completedAt,
+    checkSuite: { createdAt: suiteCreated },
+  });
+  const pr = (...contexts) => ({ mergedAt: merged, commits: { nodes: [{ commit: { statusCheckRollup: { state: 'PENDING', contexts: { nodes: contexts } } } }] } });
+
+  it('a fast-forwarded PR stays green while main re-runs checks on the same commit', () => {
+    assert.equal(
+      greenAtMerge(pr(run('SUCCESS', '2026-10-27T02:59:50Z', '2026-10-27T03:00:20Z'), run(null, '2026-10-27T03:06:29Z', null, 'IN_PROGRESS'))),
+      true,
+    );
+  });
+
+  it('neutral and skipped checks count as green', () => {
+    assert.equal(greenAtMerge(pr(run('NEUTRAL', '2026-10-27T02:59:50Z', '2026-10-27T03:00:20Z'), run('SKIPPED', '2026-10-27T02:59:50Z', '2026-10-27T02:59:55Z'))), true);
+  });
+
+  it('a failing or unfinished check from before the merge is not green', () => {
+    assert.equal(greenAtMerge(pr(run('FAILURE', '2026-10-27T02:59:50Z', '2026-10-27T03:00:20Z'))), false);
+    assert.equal(greenAtMerge(pr(run(null, '2026-10-27T02:59:50Z', null, 'IN_PROGRESS'))), false);
+    assert.equal(greenAtMerge(pr(run('SUCCESS', '2026-10-27T02:59:50Z', '2026-10-27T03:10:00Z'))), false, 'finished only after the merge');
+  });
+
+  it('a PR merged with no checks at all is not green', () => {
+    assert.equal(greenAtMerge(pr()), false);
+  });
+});

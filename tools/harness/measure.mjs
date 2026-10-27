@@ -31,7 +31,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { parseArgs } from './lib.mjs';
-import { githubContext, mergedPullRequests, workflowRuns } from './github.mjs';
+import { githubContext, greenAtMerge, mergedPullRequests, workflowRuns } from './github.mjs';
 import { auditChange } from './pr-audit.mjs';
 
 const run = promisify(execFile);
@@ -94,7 +94,7 @@ async function collect(source, { scratch, options, measuredFrom }) {
       const decision = audits.filter((audit) => audit.decisionPathFiles.length > 0);
       metrics.delivery_gate_pass_rate = audits.filter((audit) => audit.passed).length / audits.length;
       metrics.waiver_rate = audits.filter((audit) => audit.waived.length > 0).length / audits.length;
-      metrics.green_at_merge_rate = prs.filter((pr) => pr.commits.nodes[0]?.commit.statusCheckRollup?.state === 'SUCCESS').length / prs.length;
+      metrics.green_at_merge_rate = prs.filter(greenAtMerge).length / prs.length;
       metrics.unresolved_threads_at_merge = prs.reduce((sum, pr) => sum + pr.reviewThreads.nodes.filter((thread) => !thread.isResolved).length, 0);
       metrics.median_hours_to_merge = median(prs.map((pr) => (Date.parse(pr.mergedAt) - Date.parse(pr.createdAt)) / HOUR));
       if (decision.length > 0) {
