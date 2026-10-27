@@ -37,12 +37,14 @@ export function detectSpikes(records: readonly SpendRecord[], now: Date, rule: S
   const baselineByAgent = new Map<string, number>();
 
   for (const record of records) {
-    if (record.agentId === undefined) continue;
+    // Only verified spend is compared, on both sides. Reported spend in the
+    // baseline can be padded to hide a runaway, and in today's total it can
+    // double-count what the provider also reported and suspend an agent that
+    // did not spike. Budgets still count it; the kill switch does not.
+    if (record.agentId === undefined || !record.verified) continue;
     const at = Date.parse(record.occurredAt);
     if (at >= today) todayByAgent.set(record.agentId, (todayByAgent.get(record.agentId) ?? 0) + record.amountUsd);
-    // Only verified spend sets the baseline. Anything reported can be
-    // padded to make tomorrow's runaway look ordinary.
-    else if (at >= baselineStart && record.verified) {
+    else if (at >= baselineStart) {
       baselineByAgent.set(record.agentId, (baselineByAgent.get(record.agentId) ?? 0) + record.amountUsd);
     }
   }

@@ -219,3 +219,12 @@ describe('review findings', () => {
     assert.equal(credited[0]?.amountUsd, 10, 'a credit is ignored, which can only over-count');
   });
 });
+
+describe('Bugbot on #22', () => {
+  it('reported spend does not count toward today either, so a report of spend the provider also ingested cannot fake a spike', () => {
+    const baseline = Array.from({ length: 7 }, (_, day) => record('a', 10, `2026-10-${String(20 + day).padStart(2, '0')}T12:00:00Z`));
+    const provider = record('a', 20, '2026-10-27T09:00:00Z');
+    const echoed = { ...record('a', 20, '2026-10-27T09:30:00Z'), id: 'echo', source: 'reported' as const, verified: false };
+    assert.equal(detectSpikes([...baseline, provider, echoed], NOW, RULE).length, 0);
+  });
+});

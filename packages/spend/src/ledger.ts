@@ -77,10 +77,10 @@ export class SpendLedger {
         source === 'provider' && input.reference !== undefined
           ? await this.#store.spend.find(
               (record) =>
-                record.source === 'provider' &&
-                record.provider === input.provider &&
-                record.reference === input.reference &&
-                record.organizationId === organizationId,
+                // One provider row is one record, wherever it was filed: a row
+                // first recorded as unattributed and later attributed to an
+                // agent in another organization moves, it is not counted twice.
+                record.source === 'provider' && record.provider === input.provider && record.reference === input.reference,
             )
           : undefined;
 
@@ -203,7 +203,9 @@ export class SpendLedger {
           budget.enabled !== false &&
           budget.organizationId === args.organizationId &&
           governs(budget, args.agentId) &&
-          (!Array.isArray(budget.effects) || budget.effects.length === 0 || (budget.effects as readonly string[]).includes(args.toolEffect)),
+          // A malformed budget applies whatever its effects say: they may be
+          // the very field that is malformed.
+          (malformed(budget) || budget.effects === undefined || (budget.effects as readonly string[]).includes(args.toolEffect)),
       )
       .sort((left, right) => left.id.localeCompare(right.id))
       .map((budget) =>
@@ -260,6 +262,7 @@ function selfReported(record: SpendRecord): boolean {
 
 const PERIODS: ReadonlySet<string> = new Set(['day', 'month']);
 const EFFECTS: ReadonlySet<string> = new Set(['DENY', 'REQUIRE_APPROVAL']);
+const TOOL_EFFECTS: ReadonlySet<string> = new Set(['read', 'write', 'irreversible']);
 
 /** A stored budget that validation would have refused. */
 function malformed(budget: Budget): boolean {
@@ -269,7 +272,10 @@ function malformed(budget: Budget): boolean {
     budget.limitUsd <= 0 ||
     !PERIODS.has(budget.period) ||
     !EFFECTS.has(budget.onExceeded) ||
-    (budget.effects !== undefined && (!Array.isArray(budget.effects) || budget.effects.length === 0))
+    (budget.effects !== undefined &&
+      (!Array.isArray(budget.effects) ||
+        budget.effects.length === 0 ||
+        !budget.effects.every((effect) => TOOL_EFFECTS.has(effect))))
   );
 }
 

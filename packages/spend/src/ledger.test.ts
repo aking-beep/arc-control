@@ -258,3 +258,38 @@ describe('SpendLedger: review findings', () => {
     );
   });
 });
+
+describe('SpendLedger: Bugbot on #22', () => {
+  it('a stored budget with invalid non-empty effects refuses instead of being skipped', async () => {
+    const { ledger, store, agent } = await setup();
+    await store.budgets.put('b4', {
+      id: 'b4',
+      name: 'raw',
+      organizationId: 'default',
+      agentId: agent.id,
+      period: 'day',
+      limitUsd: 10,
+      onExceeded: 'DENY',
+      enabled: true,
+      effects: ['bogus'] as unknown as ['write'],
+      version: 1,
+      createdAt: NOW.toISOString(),
+      updatedAt: NOW.toISOString(),
+    });
+    const { evaluations } = await ledger.evaluate({ agentId: agent.id, organizationId: 'default', toolEffect: 'write' });
+    assert.deepEqual(evaluations.map((evaluation) => [evaluation.policyId, evaluation.effect]), [['budget:b4', 'DENY']]);
+  });
+
+  it('a provider row re-fetched with a new attribution replaces the old record, in whatever organization it was', async () => {
+    const { ledger, store } = await setup();
+    await store.agents.put('arc_ag_2', {
+      id: 'arc_ag_2', name: 'acme', kind: 'autonomous', status: 'active', organizationId: 'acme', environment: 'production',
+      owner: 'o', roles: [], declaredTools: [], labels: {}, createdAt: NOW.toISOString(), updatedAt: NOW.toISOString(),
+    });
+    await ledger.record(spend(40, { agentId: undefined, reference: 'cost_report:2026-10-27:w1' }), 'provider', 'system:anthropic');
+    await ledger.record(spend(40, { agentId: 'arc_ag_2', reference: 'cost_report:2026-10-27:w1' }), 'provider', 'system:anthropic');
+    const records = await store.spend.list();
+    assert.equal(records.length, 1, 'one provider row is one record');
+    assert.equal(records[0]!.organizationId, 'acme');
+  });
+});
