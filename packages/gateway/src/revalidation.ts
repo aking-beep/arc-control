@@ -31,18 +31,21 @@ export interface Revalidation {
  * requirement.
  */
 export function heldApprovalSatisfies(required: ApprovalRequirement, held: ApprovalRequest): boolean {
-  const minimum = required.minApprovals ?? 1;
+  const heldGroups = [held.requirement, ...(held.requirement.alsoRequired ?? [])];
+  const counted = (index: number): number =>
+    held.votes.filter((vote) => vote.vote === 'approve' && (vote.groups ?? [0]).includes(index)).length;
 
-  const approvals = held.votes.filter((vote) => vote.vote === 'approve').length;
-  if (approvals < minimum) return false;
-
-  if (required.requireSeparationOfDuties === true && held.requirement.requireSeparationOfDuties !== true) {
-    return false;
-  }
-
-  const admittedNow = new Set(required.approvers);
-  if (admittedNow.has('*')) return true;
-  return held.requirement.approvers.every((selector) => admittedNow.has(selector));
+  // Every group current policy requires — the requirement itself and each
+  // `alsoRequired` (ARC-SEC-013) — must be met by some group on file whose
+  // approvers it still admits, carrying enough approvals of its own.
+  return [required, ...(required.alsoRequired ?? [])].every((group) =>
+    heldGroups.some((candidate, index) => {
+      if (counted(index) < (group.minApprovals ?? 1)) return false;
+      if (group.requireSeparationOfDuties === true && candidate.requireSeparationOfDuties !== true) return false;
+      const admittedNow = new Set(group.approvers);
+      return admittedNow.has('*') || candidate.approvers.every((selector) => admittedNow.has(selector));
+    }),
+  );
 }
 
 /** Explains a re-approval in the terms an operator reading the queue needs. */

@@ -32,14 +32,18 @@
     },
     {
       "id": "ARC-SEC-003",
-      "title": "A retired agent could be reactivated (HTTP fixed in 2.1; registry resume/suspend and the retire/issue-key race remain until #12 merges)",
+      "title": "A retired agent could be reactivated or keep a live credential",
       "severity": "high",
-      "status": "in_progress",
+      "status": "fixed",
       "foundAt": "2026-10-26",
       "foundBy": "Meridian Phase 2 (check retired-agent-final); internal paths by probe against 887dd2f",
-      "fixedIn": "#12",
-      "regressionTests": [],
-      "releaseNote": "docs/releases/2.2.md"
+      "fixedIn": "#12 (feaa3fa)",
+      "regressionTests": [
+        "packages/gateway/src/lifecycle.test.ts",
+        "apps/control-api/src/lifecycle.test.ts"
+      ],
+      "releaseNote": "docs/releases/2.2.md",
+      "fixedAt": "2026-10-27"
     },
     {
       "id": "ARC-SEC-004",
@@ -174,21 +178,29 @@
     },
     {
       "id": "ARC-SEC-013",
-      "title": "When a policy and a budget both require approval, the budget's approvers are not required",
+      "title": "When a policy and a budget both required approval, the budget's approvers were not required",
       "severity": "medium",
-      "status": "open",
+      "status": "fixed",
       "foundAt": "2026-10-27",
       "foundBy": "arc-security-reviewer, review of the 2.3 portfolio capabilities before merge",
-      "notes": "tighten keeps the policy's approval requirement on an equal-severity tie, consistent with the engine's policy-vs-policy tie rule. The approval model cannot express 'one from each list'; combining lists as alternatives would loosen. Needs a design decision (arc-architect): extend ApprovalRequirement with conjunctive approver groups, or escalate such ties. Documented in docs/releases/2.3.md."
+      "fixedAt": "2026-10-27",
+      "fixedIn": "branch ccr-c477e252-gpuzu3 (owner decision 2026-10-27: both must approve)",
+      "regressionTests": [
+        "packages/gateway/src/budgets.test.ts",
+        "packages/approvals/src/engine.test.ts",
+        "packages/policy-engine/src/tighten.test.ts"
+      ],
+      "releaseNote": "docs/releases/2.3.md"
     },
     {
       "id": "ARC-SEC-014",
       "title": "explain, callable with an agent key, returns budget names and spend positions, including organization-wide budgets",
       "severity": "low",
-      "status": "open",
+      "status": "accepted",
       "foundAt": "2026-10-27",
       "foundBy": "arc-security-reviewer, review of the 2.3 portfolio capabilities before merge",
-      "notes": "Store error text is no longer echoed (fixed with ARC-SEC-007's change set). Whether agents should see budget evaluations at all is a product decision; documented in docs/releases/2.3.md."
+      "notes": "Accepted: an agent may see, through explain, the budgets that govern it, including organization-wide budgets, and their positions. Store error text is not echoed. Revisit if budgets ever carry information an agent should not hold.",
+      "acceptedBy": "aking@arctransformationgroup.com (repository owner), 2026-10-27"
     }
   ]
 }

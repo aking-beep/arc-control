@@ -70,6 +70,13 @@ export interface ApprovalRequirement {
   readonly expiresInSeconds?: number;
   /** Forbids the agent's own owner from approving when the owner is also an approver. */
   readonly requireSeparationOfDuties?: boolean;
+  /**
+   * Further approver groups that must **each** be satisfied as well (2.3,
+   * ARC-SEC-013). Set by the gateway when a policy and a budget both hold
+   * the same action: the policy's approvers and the budget's approvers must
+   * both approve. Not written in policy documents.
+   */
+  readonly alsoRequired?: readonly ApprovalRequirement[];
 }
 
 export interface PolicyRule {

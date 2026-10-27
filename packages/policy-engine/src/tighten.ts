@@ -1,5 +1,6 @@
 import {
   EFFECT_SEVERITY,
+  type ApprovalRequirement,
   type Decision,
   type PolicyEffect,
   type PolicyEvaluation,
@@ -24,8 +25,9 @@ import {
  * When an extra evaluation wins, it is cited in place of the policy — its id,
  * version, rule, reason and approval requirement — and the allowing policy's
  * obligations are dropped, because they described an action that is no
- * longer going ahead as decided. On a tie the policy's citation stands: a
- * policy that already holds the action names its own approvers.
+ * longer going ahead as decided. On a tie the policy's citation stands, and
+ * when both hold the action for a human, every holder's approvers must
+ * approve: the extras are added to the requirement as `alsoRequired`.
  */
 export function tighten(decision: Decision, extra: readonly PolicyEvaluation[]): Decision {
   if (extra.length === 0) return decision;
@@ -58,9 +60,24 @@ export function tighten(decision: Decision, extra: readonly PolicyEvaluation[]):
     trace: [...decision.trace, ...trace],
   };
 
-  if (!winner || EFFECT_SEVERITY[winner.effect!] <= EFFECT_SEVERITY[decision.effect]) return combined;
+  // Every extra that holds the action for a human, in citation order.
+  const holds = evaluations.filter(
+    (evaluation) => evaluation.applied && evaluation.effect === 'REQUIRE_APPROVAL' && evaluation.approval !== undefined,
+  );
+
+  if (!winner || EFFECT_SEVERITY[winner.effect!] <= EFFECT_SEVERITY[decision.effect]) {
+    // A tie on REQUIRE_APPROVAL: the policy's requirement stands and every
+    // holding extra's approvers are required as well (ARC-SEC-013). Picking
+    // one list would drop the other's control; merging them as alternatives
+    // would let either side approve alone.
+    if (decision.effect === 'REQUIRE_APPROVAL' && decision.approval && holds.length > 0) {
+      return { ...combined, approval: requireAlso(decision.approval, holds.map((hold) => hold.approval!)) };
+    }
+    return combined;
+  }
 
   const { approval: _approval, ...rest } = combined;
+  const others = holds.filter((hold) => hold !== winner).map((hold) => hold.approval!);
   return {
     ...rest,
     effect: winner.effect!,
@@ -68,9 +85,15 @@ export function tighten(decision: Decision, extra: readonly PolicyEvaluation[]):
     policyVersion: winner.policyVersion,
     ...(winner.ruleId ? { ruleId: winner.ruleId } : {}),
     reason: winner.reason ?? `${winner.policyId} refused this action`,
-    ...(winner.effect === 'REQUIRE_APPROVAL' && winner.approval ? { approval: winner.approval } : {}),
+    ...(winner.effect === 'REQUIRE_APPROVAL' && winner.approval ? { approval: requireAlso(winner.approval, others) } : {}),
     obligations: [],
   };
+}
+
+/** `base`, with each of `groups` required in addition. */
+function requireAlso(base: ApprovalRequirement, groups: readonly ApprovalRequirement[]): ApprovalRequirement {
+  if (groups.length === 0) return base;
+  return { ...base, alsoRequired: [...(base.alsoRequired ?? []), ...groups] };
 }
 
 const KNOWN: ReadonlySet<string> = new Set<PolicyEffect>(['ALLOW', 'REQUIRE_APPROVAL', 'DENY']);

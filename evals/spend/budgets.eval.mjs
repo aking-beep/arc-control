@@ -96,6 +96,31 @@ export default {
       },
     },
     {
+      name: 'when a policy and a budget both hold an action, the policy approver alone cannot release it',
+      async run() {
+        const { gateway, connector, agent, apiKey } = await buildHarness();
+        await budget(gateway, {
+          name: 'hold',
+          agentId: agent.id,
+          period: 'day',
+          limitUsd: 1,
+          onExceeded: 'REQUIRE_APPROVAL',
+          approvers: ['role:budget-owner'],
+        });
+        await spend(gateway, agent.id, 2);
+        const held = await gateway.handle(apiKey, refund(1_000));
+        expect.equal(held.outcome, 'pending_approval', 'FINANCE-004 holds $1,000 for a finance manager');
+        const vote = await gateway.approvals.vote({
+          approvalId: held.approvalId,
+          approver: { identifier: 'cfo@example.com', roles: ['finance-manager'] },
+          vote: 'approve',
+        });
+        expect.equal(vote.status, 'pending', 'the budget owner has not approved yet');
+        await expect.rejects(() => gateway.resume(held.approvalId), undefined, 'release is refused');
+        expect.equal(connector.callCount(), 0, 'nothing reaches the connector');
+      },
+    },
+    {
       name: 'a held action whose budget ran out while it waited is not released',
       async run() {
         const { gateway, connector, agent, apiKey } = await buildHarness();
