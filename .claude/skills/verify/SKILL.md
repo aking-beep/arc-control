@@ -24,6 +24,9 @@ green, and never re-run a failure hoping it passes.
 | 11 | Policy lint | `node .github/scripts/export-demo-policies.mjs /tmp/demo-policies.json && node packages/cli/dist/bin.js policy lint /tmp/demo-policies.json` | exit code |
 | 12 | Harness | `node tools/harness/check-harness.mjs` | `N agent(s), M skill(s)`; every problem |
 | 13 | Client profiles | `node tools/harness/validate-client.mjs` | `N/M client profile(s) valid`; every error and warning |
+| 14 | Findings register | `node tools/harness/findings.mjs` | exit code; every problem |
+| 15 | Release notes | `node tools/harness/lint-release-notes.mjs` | `N/M release note(s) pass` |
+| 16 | Deployment smoke | `node tools/harness/deploy-smoke.mjs` | `N/M deployment checks passed` |
 
 Gates 2–4 and 5–7 are what `npm run verify` and `npm run harness` wrap.
 The CI job "CLI commands work against a real store" in

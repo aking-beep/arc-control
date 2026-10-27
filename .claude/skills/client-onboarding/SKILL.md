@@ -38,6 +38,12 @@ Format and checks: `docs/harness/CLIENTS.md`.
    today (see `docs/harness/CLIENTS.md#what-a-profile-does-not-prove`).
 9. **Review and ship** through the `deliver` pipeline.
 
+## Triggered
+
+An issue labelled `client-onboarding` (template:
+`.github/ISSUE_TEMPLATE/client-onboarding.yml`) starts this skill through
+`.github/workflows/harness-agents.yaml`, which opens a profile PR for review.
+
 ## Never
 
 Commit secrets, real hostnames, real personal data or production credentials.

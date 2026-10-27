@@ -14,17 +14,21 @@
  *   - every agent named in a hand-off or routing table exists
  *   - every agent and skill is listed in the docs, and nothing listed is missing
  *   - every skill's maturity level is backed by what it claims: L2 needs a
- *     script, L3 needs that script wired into CI
+ *     script, L3 needs that script run by a workflow, L4 needs outcome
+ *     metrics with targets in tools/harness/metrics.json, from sources
+ *     measure.mjs can collect, measured by a scheduled workflow
  *
  * Usage: node tools/harness/check-harness.mjs   (exits non-zero on any problem)
  */
 import { access, readdir, readFile, stat } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseArgs, writeResult } from './lib.mjs';
+import { SOURCES } from './measure.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const ALLOWED_TOOLS = new Set(['Read', 'Grep', 'Glob', 'Bash', 'Edit', 'Write']);
-const READ_ONLY = new Set(['arc-architect', 'arc-security-reviewer', 'arc-verifier', 'arc-meridian-validator']);
+const READ_ONLY = new Set(['arc-architect', 'arc-security-reviewer', 'arc-verifier', 'arc-meridian-validator', 'arc-harness-analyst']);
 const AGENT_SECTIONS = ['## Mission', '## Owns', '## Must', '## Must not', '## Done when', '## Hands off to', '## Report'];
 const PATH = /`((?:packages|apps|connectors|docs|evals|tools|clients|schemas|examples|\.github|\.claude)\/[A-Za-z0-9_./-]+|CLAUDE\.md|CONTRIBUTING\.md|SECURITY\.md|README\.md)(?:#[^`]*)?`/g;
 
@@ -132,8 +136,27 @@ for (const [, name] of agentsDoc.matchAll(/^\| `(arc-[a-z-]+)` \|/gm)) {
   if (!agents.has(name)) problem('docs/harness/AGENTS.md', `lists agent \`${name}\`, which has no definition`);
 }
 
-// Skill maturity: | `name` | L<n> | ... | <evidence> |
-const ci = await readFile(join(ROOT, '.github', 'workflows', 'ci.yaml'), 'utf8');
+// Skill maturity: | `name` | L<n> | ... | `<evidence>` |
+const workflowDir = join(ROOT, '.github', 'workflows');
+const workflows = new Map();
+for (const file of await readdir(workflowDir)) workflows.set(file, await readFile(join(workflowDir, file), 'utf8'));
+const runByWorkflow = (text) => [...workflows.values()].some((body) => body.includes(text));
+
+const definitions = JSON.parse(await readFile(join(ROOT, 'tools', 'harness', 'metrics.json'), 'utf8'));
+const OPS = new Set(['>=', '<=', '==']);
+const metricIds = new Set();
+for (const metric of definitions.metrics) {
+  const where = `tools/harness/metrics.json ${metric.id ?? '(no id)'}`;
+  if (metricIds.has(metric.id)) problem(where, 'duplicate metric id');
+  metricIds.add(metric.id);
+  if (!SOURCES.includes(metric.source)) problem(where, `source "${metric.source}" is not one measure.mjs collects (${SOURCES.join(', ')})`);
+  if (!metric.key) problem(where, 'missing key');
+  if (!OPS.has(metric.target?.op) || typeof metric.target?.value !== 'number') problem(where, 'target needs an op (>=, <=, ==) and a numeric value');
+  if (!metric.description) problem(where, 'missing description');
+  if (metric.skill !== 'harness' && !skills.has(metric.skill)) problem(where, `skill "${metric.skill}" does not exist`);
+}
+const scheduled = [...workflows.entries()].find(([, body]) => body.includes('tools/harness/measure.mjs') && /\bschedule:/.test(body));
+
 const levels = new Map();
 for (const [, name, level, evidence] of skillsDoc.matchAll(/^\| `([a-z-]+)` \| L([1-4]) \|[^\n]*\| `([^`]+)` \|$/gm)) {
   levels.set(name, { level: Number(level), evidence });
@@ -145,24 +168,46 @@ for (const name of skills.keys()) {
     continue;
   }
   if (claim.level >= 2) {
-    const script = claim.evidence.split(' ')[0];
     try {
-      if (!(await stat(join(ROOT, script))).isFile()) throw new Error();
+      if (!(await stat(join(ROOT, claim.evidence))).isFile()) throw new Error();
     } catch {
-      problem('docs/harness/SKILLS.md', `skill \`${name}\` claims L${claim.level} but its script \`${script}\` does not exist`);
+      problem('docs/harness/SKILLS.md', `skill \`${name}\` claims L${claim.level} but its script \`${claim.evidence}\` does not exist`);
     }
   }
-  if (claim.level >= 3 && !ci.includes(claim.evidence)) {
-    problem('docs/harness/SKILLS.md', `skill \`${name}\` claims L3 but \`${claim.evidence}\` is not run in .github/workflows/ci.yaml`);
+  if (claim.level >= 3 && !runByWorkflow(claim.evidence)) {
+    problem('docs/harness/SKILLS.md', `skill \`${name}\` claims L${claim.level} but no workflow in .github/workflows runs \`${claim.evidence}\``);
+  }
+  if (claim.level >= 4) {
+    const measured = definitions.metrics.filter((metric) => metric.skill === name);
+    if (measured.length === 0) problem('docs/harness/SKILLS.md', `skill \`${name}\` claims L4 but has no metric in tools/harness/metrics.json`);
+    if (!scheduled) problem('docs/harness/SKILLS.md', `skill \`${name}\` claims L4 but no scheduled workflow runs tools/harness/measure.mjs`);
+    for (const metric of measured) {
+      if (!skillsDoc.includes(`\`${metric.id}\``)) problem('docs/harness/SKILLS.md', `does not list metric \`${metric.id}\` for skill \`${name}\``);
+    }
   }
 }
 for (const name of levels.keys()) if (!skills.has(name)) problem('docs/harness/SKILLS.md', `lists skill \`${name}\`, which has no definition`);
 
 // --- report ---------------------------------------------------------------
+await writeResult(parseArgs().options.out, {
+  skill: 'harness',
+  tool: 'check-harness',
+  ok: problems.length === 0,
+  metrics: {
+    agents: agents.size,
+    skills: skills.size,
+    problems: problems.length,
+    skills_at_l4: [...levels.values()].filter((claim) => claim.level === 4).length,
+    metrics_defined: definitions.metrics.length,
+  },
+  details: { problems },
+});
 if (problems.length > 0) {
   for (const line of problems) process.stdout.write(`FAIL ${line}\n`);
   process.stdout.write(`\n${problems.length} harness problem(s)\n`);
   process.exitCode = 1;
 } else {
-  process.stdout.write(`Harness OK: ${agents.size} agent(s), ${skills.size} skill(s), catalogue and references consistent\n`);
+  process.stdout.write(
+    `Harness OK: ${agents.size} agent(s), ${skills.size} skill(s), ${[...levels.values()].filter((claim) => claim.level === 4).length} at L4, ${definitions.metrics.length} metric(s); catalogue and references consistent\n`,
+  );
 }

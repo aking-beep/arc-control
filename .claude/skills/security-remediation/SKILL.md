@@ -45,7 +45,15 @@ revert the fix locally and watch it fail.
 `verify` skill (all gates, before and after), then `meridian-validate`
 against the change and, where useful, against the base.
 
-## 6. Document
+## 6. Register
+
+Add or update the finding in `docs/security/findings.json`. A `fixed` entry
+needs `fixedAt`, `fixedIn`, at least one regression test that exists in the
+tree, and a release note. `node tools/harness/findings.mjs` checks it in CI,
+and `tools/harness/measure.mjs` tracks open age, open criticals, time to fix
+and fixed-with-tests rate against their targets.
+
+## 7. Document
 
 Add to the current `docs/releases/` note: the finding id, what happened,
 root cause, fix, behaviour changes, tests, and what the fix does **not**

@@ -22,4 +22,8 @@ new file only for a new version.
 6. **What this does not establish** — limits, per-process bounds, anything a
    reader might over-read. Never claim enterprise readiness.
 
+`node tools/harness/lint-release-notes.mjs` fails a note without a
+Verification section or a stated-limits section, or one that claims enterprise
+readiness. CI runs it on every change.
+
 Write for someone investigating a decision in two years. Cite files and tests.

@@ -19,7 +19,7 @@
     "typecheck": "tsc -b tsconfig.build.json",
     "test": "npm run build && node --test \"packages/*/dist/**/*.test.js\" \"connectors/*/dist/**/*.test.js\" \"apps/*/dist/**/*.test.js\"",
     "evals": "npm run build && node evals/run.js",
-    "harness": "npm run build && node tools/harness/check-harness.mjs && node tools/harness/validate-client.mjs && node --test \"tools/harness/*.test.mjs\"",
+    "harness": "npm run build && node tools/harness/check-harness.mjs && node tools/harness/validate-client.mjs && node tools/harness/findings.mjs && node tools/harness/lint-release-notes.mjs && node --test \"tools/harness/*.test.mjs\"",
     "verify": "npm run build && npm run test --silent && npm run evals --silent && node .github/scripts/check-dependencies.mjs && node .github/scripts/check-infrastructure.mjs && node examples/console-walkthrough/run.js > /dev/null",
     "api": "npm run build && node apps/control-api/dist/main.js",
     "console": "npm run build && node apps/control-console/dist/main.js",

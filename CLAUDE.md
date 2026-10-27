@@ -43,7 +43,9 @@ npm run build          # tsc -b across the workspace
 npm test               # unit tests (node:test, compiled output)
 npm run evals          # control-plane properties
 npm run verify         # build + tests + evals + dependency/infra checks + walkthrough
-npm run harness        # harness self-check + every client profile + validator tests
+npm run harness        # harness self-check, client profiles, findings, release notes, script tests
+node tools/harness/deploy-smoke.mjs    # start, enforce, restart, persist (after a build)
+node tools/harness/measure.mjs --out-dir .harness   # every skill's metrics against targets
 ```
 
 The full gate list, matching CI, is `.claude/skills/verify/SKILL.md`.
@@ -58,6 +60,10 @@ The full gate list, matching CI, is `.claude/skills/verify/SKILL.md`.
   (`.claude/skills/meridian-validate/SKILL.md`) with its expectations untouched.
 - Docs and the current `docs/releases/` note say what changed and what it does
   **not** establish.
+- A security finding is in `docs/security/findings.json`, and a fixed one names
+  its regression test.
+- `node tools/harness/pr-audit.mjs` passes, or the PR states a visible
+  `Harness-Exempt: D<n> <reason>`.
 
 ## Never
 
@@ -68,6 +74,7 @@ The full gate list, matching CI, is `.claude/skills/verify/SKILL.md`.
 - Merge a pull request, push to `main`, or rewrite someone else's branch.
 - Describe a per-process guarantee as distributed, or local test results as
   enterprise readiness.
+- Change a target in `tools/harness/metrics.json` to make a scorecard green.
 
 ## Where things are
 
@@ -77,5 +84,7 @@ The full gate list, matching CI, is `.claude/skills/verify/SKILL.md`.
 | How to deliver a change end to end | `.claude/skills/deliver/SKILL.md` |
 | Fixing a security finding | `.claude/skills/security-remediation/SKILL.md` |
 | Onboarding a client | `.claude/skills/client-onboarding/SKILL.md`, `clients/` |
+| Deploying | `.claude/skills/deploy/SKILL.md`, `infrastructure/` |
+| What starts automatically, and the scorecard | `docs/harness/README.md` |
 | Layout and conventions | `CONTRIBUTING.md` |
 | Known limitations | `SECURITY.md`, the newest `docs/releases/` note |

@@ -34,6 +34,11 @@ the 17 again), stops the stack, and writes everything to
 `npm run phase2` exits non-zero when any implemented check or stress preset
 fails. That exit code is the result.
 
+CI runs this in `.github/workflows/meridian.yaml` on every change to the
+decision path and nightly, against a pinned sandbox commit. The run writes
+`result.json` in the harness format, which `tools/harness/measure.mjs`
+reads (`--meridian`).
+
 ## Report
 
 - sandbox revision and ARC revision (`git rev-parse HEAD` in each)

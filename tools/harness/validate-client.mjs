@@ -25,7 +25,7 @@
  *
  * Usage:
  *   node tools/harness/validate-client.mjs                 # every clients/*\/profile.json
- *   node tools/harness/validate-client.mjs path/to/profile.json [--json]
+ *   node tools/harness/validate-client.mjs path/to/profile.json [--json] [--out result.json]
  *
  * Exits non-zero when any profile has an error. Warnings do not fail the run;
  * they are what a reviewer should read before the profile goes to a customer.
@@ -42,6 +42,7 @@ import { MemoryStore } from '@arc-control/store';
 import { SimulationConnector } from '@arc-control/connector-simulation';
 import { verifyEvidence } from '@arc-control/evidence';
 import { validatePolicy } from '@arc-control/schemas';
+import { parseArgs, writeResult } from './lib.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const OUTCOMES = new Set(['executed', 'denied', 'pending_approval', 'refused']);
@@ -231,9 +232,8 @@ async function discover() {
 }
 
 async function main() {
-  const args = process.argv.slice(2);
-  const json = args.includes('--json');
-  const paths = args.filter((arg) => arg !== '--json');
+  const { options, positional: paths } = parseArgs();
+  const json = options.json === true;
   const files = paths.length > 0 ? paths.map((path) => resolve(path)) : await discover();
 
   const reports = [];
@@ -263,6 +263,21 @@ async function main() {
     const failed = reports.filter((report) => report.errors.length > 0).length;
     process.stdout.write(`\n${reports.length - failed}/${reports.length} client profile(s) valid\n`);
   }
+  const scenarios = reports.flatMap((report) => report.results);
+  await writeResult(options.out, {
+    skill: 'client-onboarding',
+    tool: 'validate-client',
+    ok: reports.every((report) => report.errors.length === 0),
+    metrics: {
+      profiles_total: reports.length,
+      profiles_invalid: reports.filter((report) => report.errors.length > 0).length,
+      scenarios_total: scenarios.length,
+      scenarios_passed: scenarios.filter((result) => result.pass).length,
+      scenario_pass_rate: scenarios.length ? scenarios.filter((result) => result.pass).length / scenarios.length : 0,
+      warnings_total: reports.reduce((sum, report) => sum + report.warnings.length, 0),
+    },
+    details: reports.map((report) => ({ source: report.source, errors: report.errors, warnings: report.warnings })),
+  });
   if (reports.some((report) => report.errors.length > 0)) process.exitCode = 1;
 }
 

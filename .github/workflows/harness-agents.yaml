@@ -1,0 +1,204 @@
+name: Harness agents
+
+# Starts the delivery harness's agents on events, so nobody has to remember to.
+#
+#   pull request on the decision path   → arc-security-reviewer reviews it (comment only)
+#   issue labelled `finding`            → deliver + security-remediation: a fix PR, never merged
+#   issue labelled `client-onboarding`  → arc-client-onboarder: a profile PR, never merged
+#   PR labelled `harness:autofix` + CI red → steward: diagnose and push a fix to that PR's branch
+#   `@claude` from a maintainer          → the main session, under CLAUDE.md
+#
+# Every job runs only when the ANTHROPIC_API_KEY secret is set, and never for
+# a pull request from a fork (which has no secrets). Without the key each job
+# logs that it is disabled and succeeds, so the workflow is safe to merge
+# before the key exists. Agents open pull requests and comments; they never
+# merge and never push to main — branch protection on main should enforce it.
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: read
+  id-token: write
+
+jobs:
+  gate:
+    name: Agents enabled?
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - id: check
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -n "$ANTHROPIC_API_KEY" ]; then echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else echo "enabled=false" >> "$GITHUB_OUTPUT"; echo "::notice::Harness agents are disabled: set the ANTHROPIC_API_KEY repository secret to enable them."; fi
+
+  security-review:
+    name: Security review (arc-security-reviewer)
+    needs: gate
+    if: >-
+      needs.gate.outputs.enabled == 'true' &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Is the decision path touched?
+        id: scope
+        run: |
+          node tools/harness/pr-audit.mjs --base "origin/${{ github.base_ref }}" --head HEAD --out "$RUNNER_TEMP/audit.json" || true
+          echo "decision=$(node -e 'console.log(require(process.argv[1]).metrics.decision_path_files)' "$RUNNER_TEMP/audit.json")" >> "$GITHUB_OUTPUT"
+      - name: Review
+        if: steps.scope.outputs.decision != '0'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            You are the arc-security-reviewer agent. Read CLAUDE.md and .claude/agents/arc-security-reviewer.md and follow them exactly.
+            Review pull request #${{ github.event.pull_request.number }}: the diff is `git diff origin/${{ github.base_ref }}...HEAD`.
+            Read the code around every change, not only the diff. Report confirmed and plausible findings separately, each with file, line, the concrete failure scenario and severity, mapped to docs/THREAT_MODEL.md.
+            Post exactly one comment with `gh pr comment ${{ github.event.pull_request.number }} --body "<your review>"`. If you find nothing, say what you examined. You cannot edit files or push, by design.
+          claude_args: --max-turns 40 --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(gh pr comment:*),Bash(gh pr view:*)"
+
+  remediate-finding:
+    name: Remediate finding (deliver + security-remediation)
+    needs: gate
+    if: >-
+      needs.gate.outputs.enabled == 'true' &&
+      github.event_name == 'issues' && github.event.label.name == 'finding'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts && npm run build
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            Read CLAUDE.md, then follow .claude/skills/deliver/SKILL.md and .claude/skills/security-remediation/SKILL.md for the finding in issue #${{ github.event.issue.number }} (`gh issue view ${{ github.event.issue.number }}`).
+            Work on a new branch named harness/finding-${{ github.event.issue.number }}. Reproduce first on the current main; if it no longer reproduces, say so on the issue and stop.
+            Add the finding to docs/security/findings.json. Run `npm run verify` and `npm run harness` before pushing.
+            Open a pull request that links the issue. Never merge, never push to main, never change an existing test's or eval's expected outcome.
+            Comment on the issue with the PR link and the verification results.
+          claude_args: --max-turns 120
+
+  onboard-client:
+    name: Onboard client (arc-client-onboarder)
+    needs: gate
+    if: >-
+      needs.gate.outputs.enabled == 'true' &&
+      github.event_name == 'issues' && github.event.label.name == 'client-onboarding'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts && npm run build
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            You are the arc-client-onboarder agent. Read CLAUDE.md, .claude/agents/arc-client-onboarder.md and .claude/skills/client-onboarding/SKILL.md, and follow them.
+            The client's requirements are in issue #${{ github.event.issue.number }} (`gh issue view ${{ github.event.issue.number }}`).
+            Build clients/<client-id>/ from clients/_template on a new branch harness/client-${{ github.event.issue.number }}, validate with `node tools/harness/validate-client.mjs clients/<client-id>/profile.json` until it has zero errors, and record open questions instead of inventing answers.
+            Open a pull request linking the issue. Never merge, never commit secrets or real hostnames. Comment on the issue with the PR link, the validator output and the open questions.
+          claude_args: --max-turns 80
+
+  fix-ci:
+    name: Fix red CI on an opted-in PR (steward)
+    needs: gate
+    if: >-
+      needs.gate.outputs.enabled == 'true' &&
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Opted in?
+        id: optin
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR=$(gh api "repos/${{ github.repository }}/commits/${{ github.event.workflow_run.head_sha }}/pulls" --jq '.[0].number')
+          LABELLED=$(gh pr view "$PR" --repo "${{ github.repository }}" --json labels --jq '[.labels[].name] | index("harness:autofix") != null')
+          echo "pr=$PR" >> "$GITHUB_OUTPUT"
+          echo "autofix=$LABELLED" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        if: steps.optin.outputs.autofix == 'true'
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        if: steps.optin.outputs.autofix == 'true'
+        with:
+          node-version: '22'
+      - if: steps.optin.outputs.autofix == 'true'
+        run: npm ci --ignore-scripts && npm run build
+      - if: steps.optin.outputs.autofix == 'true'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            Read CLAUDE.md and .claude/skills/steward/SKILL.md. CI failed on pull request #${{ steps.optin.outputs.pr }} (run ${{ github.event.workflow_run.html_url }}).
+            Read the failing job's log (`gh run view ${{ github.event.workflow_run.id }} --log-failed`), reproduce the failure locally, root-cause it, and push a fix to the PR's branch only if it is within the PR's scope.
+            Never skip, disable or loosen a test or eval; never push an empty commit. If the failure is not this PR's, comment on the PR saying what is failing and why instead of pushing.
+          claude_args: --max-turns 80
+
+  mention:
+    name: Respond to @claude
+    needs: gate
+    if: >-
+      needs.gate.outputs.enabled == 'true' &&
+      (github.event_name == 'issue_comment' || github.event_name == 'pull_request_review_comment') &&
+      contains(github.event.comment.body, '@claude') &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts && npm run build
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          claude_args: --max-turns 60

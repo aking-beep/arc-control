@@ -27,6 +27,17 @@ description: How to drive an ARC Control pull request to mergeable — CI, revie
 - **PR text.** Keep the description true after every push: scope, behaviour
   changes, verification numbers, limitations. Update it when scope changes.
 
+## Checklist
+
+`node tools/harness/pr-state.mjs --pr <n>` (needs `GITHUB_TOKEN`) prints
+mergeability, the check rollup on the head, open review threads and draft
+status as one checklist. CI writes it to the job summary of every PR. Steward
+outcomes — green at merge, threads left unresolved, time to merge — are
+measured by `tools/harness/measure.mjs`.
+
+On a PR labelled `harness:autofix`, a red CI run starts this skill
+automatically (`.github/workflows/harness-agents.yaml`, job `fix-ci`).
+
 ## Every event
 
 Look at the whole PR on its current head: mergeability, CI on the latest

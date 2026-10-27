@@ -20,6 +20,7 @@ the next stage until the gate is met.
 | 6 | Verify | `arc-verifier` | All gates green. Before/after numbers recorded. |
 | 7 | Validate | `arc-meridian-validator` | For enforcement changes: Meridian integration, Phase 2 and stress results, with sandbox and ARC revisions. Expected outcomes untouched. |
 | 8 | Document | `arc-docs-steward` | Release note, threat/trust model, runbooks and schemas match the code. Limitations stated. |
+| 8a | Deliver gates | main session | `node tools/harness/pr-audit.mjs --base origin/main` passes: a decision-path change carries a test or eval and a release note. CI runs the same check on every PR; a waiver is a visible `Harness-Exempt: D<n> <reason>` line in the PR description. |
 | 9 | Ship | main session | Branch pushed; PR opened **only when the user asked for one**; then the `steward` skill. Never merge. |
 
 ## Routing by area
@@ -33,6 +34,8 @@ the next stage until the gate is met.
 | connectors, MCP security | `arc-connector-engineer` |
 | assurance controls and reporting | `arc-assurance-analyst` |
 | a client's configuration | `arc-client-onboarder` |
+| image, infrastructure, startup config | `arc-deployment-engineer` |
+| harness metrics and targets | `arc-harness-analyst` (read-only) |
 
 A change spanning several areas gets one owner per area and one plan.
 
@@ -41,6 +44,11 @@ A change spanning several areas gets one owner per area and one plan.
 Write each brief so the agent can work from it alone: the goal, the files,
 what has been ruled out, the test that must fail first, and what "done"
 means. The agent sees only the brief and `CLAUDE.md`.
+
+## Measured
+
+`deliver.gate_pass_rate` and `deliver.waiver_rate` in `tools/harness/metrics.json`,
+computed over merged pull requests by `tools/harness/measure.mjs`.
 
 ## Small changes
 

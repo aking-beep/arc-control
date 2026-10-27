@@ -67,6 +67,20 @@ jobs:
           node tools/harness/validate-client.mjs
           node --test "tools/harness/*.test.mjs"
 
+      # A finding is closed only with a regression test that exists in this
+      # tree and a release note that documents it.
+      - name: Security findings register
+        run: node tools/harness/findings.mjs
+
+      - name: Release notes state verification and limits
+        run: node tools/harness/lint-release-notes.mjs
+
+      # Start the real API on a durable store, drive governed traffic, restart
+      # it, and check the audit chain and evidence survived. The container
+      # image gets the same check in docker.yaml.
+      - name: Deployment smoke
+        run: node tools/harness/deploy-smoke.mjs
+
       - name: Examples
         run: |
           node examples/approval-required-agent/run.js
@@ -225,3 +239,36 @@ jobs:
         run: |
           node .github/scripts/export-demo-policies.mjs /tmp/demo-policies.json
           node packages/cli/dist/bin.js policy lint /tmp/demo-policies.json
+
+  # The delivery gates a script can check from the changed files: a
+  # decision-path change carries a test or eval and a release note. A gate is
+  # waived only by a visible `Harness-Exempt: D<n> <reason>` line in the PR
+  # description. Then the steward checklist for the PR, in the job summary.
+  delivery-gates:
+    name: Delivery gates
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Delivery gates (tools/harness/pr-audit.mjs)
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: node tools/harness/pr-audit.mjs --base "origin/${{ github.base_ref }}" --head HEAD
+
+      - name: Steward checklist
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node tools/harness/pr-state.mjs

@@ -1,0 +1,145 @@
+name: Harness metrics
+
+# Level 4: every skill's outcomes measured against its targets
+# (tools/harness/metrics.json), with history kept on the `harness-metrics`
+# branch so trends survive past artifact retention. A breached target opens or
+# updates one issue labelled `harness:metrics`, and — when an Anthropic key is
+# configured — the arc-harness-analyst agent triages it on that issue.
+#
+# This workflow writes to exactly two places: the `harness-metrics` branch and
+# issues. It never writes to main.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  actions: read
+  pull-requests: read
+  checks: read
+  id-token: write
+
+concurrency:
+  group: harness-metrics
+  cancel-in-progress: false
+
+env:
+  SANDBOX_REF: a9499a8d6b0eb323a560acd67994e61f6a0f4821
+  METRICS_BRANCH: harness-metrics
+
+jobs:
+  measure:
+    name: Measure every skill
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: arc-control
+          fetch-depth: 0
+
+      - uses: actions/checkout@v4
+        with:
+          repository: aking-beep/arc-control-sandbox
+          ref: ${{ env.SANDBOX_REF }}
+          path: arc-control-sandbox
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build
+        working-directory: arc-control
+        run: npm ci --ignore-scripts && npm run build
+
+      # Measured even when it fails: a failing Meridian run is a value, not a gap.
+      - name: Meridian
+        working-directory: arc-control
+        continue-on-error: true
+        env:
+          MERIDIAN_OUT: ${{ runner.temp }}/meridian
+        run: .claude/skills/meridian-validate/run.sh "$GITHUB_WORKSPACE/arc-control" metrics "$GITHUB_WORKSPACE/arc-control-sandbox"
+
+      - name: Fetch metric history
+        working-directory: arc-control
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          OUT="$RUNNER_TEMP/metrics-branch"
+          URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git ls-remote --exit-code --heads origin "$METRICS_BRANCH" > /dev/null; then
+            git clone --quiet --single-branch --branch "$METRICS_BRANCH" "$URL" "$OUT"
+          else
+            git init --quiet "$OUT"
+            git -C "$OUT" checkout --quiet -b "$METRICS_BRANCH"
+            git -C "$OUT" remote add origin "$URL"
+          fi
+
+      - name: Measure
+        id: measure
+        working-directory: arc-control
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node tools/harness/measure.mjs --out-dir "$RUNNER_TEMP/metrics-branch" --meridian "$RUNNER_TEMP/meridian/metrics/result.json"
+          node -e 'const s=require(process.argv[1]).summary; console.log(`breached=${s.breached}`)' "$RUNNER_TEMP/metrics-branch/latest.json" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to the metrics branch
+        run: |
+          cd "$RUNNER_TEMP/metrics-branch"
+          rm -rf results
+          cat > README.md <<'README'
+          # Harness metrics
+
+          Written by `.github/workflows/harness-metrics.yaml`; never edit by hand.
+          `SCORECARD.md` is the latest measurement, `latest.json` the same as data,
+          and `history.jsonl` every measurement ever taken, one per line.
+          Definitions: `tools/harness/metrics.json` on main.
+          README
+          git config user.name "arc-harness"
+          git config user.email "arc-harness@users.noreply.github.com"
+          git add README.md SCORECARD.md latest.json history.jsonl
+          git commit --quiet -m "Measure ${GITHUB_SHA::12} ($(date -u +%Y-%m-%dT%H:%MZ))"
+          git push --quiet origin "$METRICS_BRANCH"
+
+      - name: Open or update the breach issue
+        id: issue
+        if: steps.measure.outputs.breached != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        working-directory: arc-control
+        run: |
+          gh label create harness:metrics --color B60205 --description "A harness metric breached its target" --force
+          BODY="$RUNNER_TEMP/metrics-branch/SCORECARD.md"
+          EXISTING=$(gh issue list --label harness:metrics --state open --json number --jq '.[0].number')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body-file "$BODY"
+            echo "number=$EXISTING" >> "$GITHUB_OUTPUT"
+          else
+            URL=$(gh issue create --title "Harness metrics: targets breached" --label harness:metrics --body-file "$BODY")
+            echo "number=${URL##*/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Agents enabled?
+        id: agents
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: echo "enabled=$([ -n "$ANTHROPIC_API_KEY" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - name: Triage the breach (arc-harness-analyst)
+        if: steps.measure.outputs.breached != '0' && steps.agents.outputs.enabled == 'true'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            You are the arc-harness-analyst agent. Read arc-control/.claude/agents/arc-harness-analyst.md and arc-control/CLAUDE.md first and follow them.
+            The harness metrics run breached at least one target. The scorecard is at ${{ runner.temp }}/metrics-branch/SCORECARD.md and the full snapshot at ${{ runner.temp }}/metrics-branch/latest.json.
+            For each breached metric: find the cause from the data and the repository, say whether the target or the work is wrong, and name the owning agent and the next action.
+            Post one comment on issue #${{ steps.issue.outputs.number }} with `gh issue comment`. Do not edit files, open PRs or change targets.
+          claude_args: --max-turns 25 --allowedTools "Read,Grep,Glob,Bash(gh issue comment:*),Bash(gh issue view:*),Bash(git log:*),Bash(node arc-control/tools/harness/*)"

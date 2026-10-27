@@ -1,0 +1,28 @@
+name: Security finding (private findings go to SECURITY.md, not here)
+description: A confirmed authorization, identity, replay or evidence defect that is safe to discuss publicly. Labelling starts the remediation agent.
+labels: [finding]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do **not** use this for an undisclosed vulnerability — see SECURITY.md. The `finding` label starts the
+        `deliver` + `security-remediation` pipeline (.github/workflows/harness-agents.yaml), which opens a fix PR.
+  - type: input
+    id: id
+    attributes: { label: Finding id, description: "ARC-SEC-NNN, or leave blank to assign one", placeholder: ARC-SEC-004 }
+  - type: dropdown
+    id: severity
+    attributes: { label: Severity, options: [critical, high, medium, low] }
+    validations: { required: true }
+  - type: textarea
+    id: reproduce
+    attributes: { label: How to reproduce, description: Exact steps or a script. The fix starts by reproducing this. }
+    validations: { required: true }
+  - type: textarea
+    id: expected
+    attributes: { label: What should happen instead }
+    validations: { required: true }
+  - type: input
+    id: found-by
+    attributes: { label: Found by, placeholder: "Meridian Phase 2 check concurrent-idempotency" }
+    validations: { required: true }
