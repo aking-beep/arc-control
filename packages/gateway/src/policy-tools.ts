@@ -275,6 +275,9 @@ function inputFor(
   };
 
   return buildPolicyInput({
+    // The grade as it stands now. Spend is not reconstructed for a replayed
+    // action, so a rule reading `$.agent.spend.*` does not match in simulation.
+    ...(agent.promptReview ? { promptGrade: agent.promptReview.grade } : {}),
     risk: classifyAction({
       effect: tool.effect,
       riskTier: tool.riskTier,

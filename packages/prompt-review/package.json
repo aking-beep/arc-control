@@ -1,0 +1,26 @@
+{
+  "name": "@arc-control/prompt-review",
+  "version": "2.3.0",
+  "description": "Static review of an agent system prompt: deterministic checks, a score and a letter grade.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean"
+  },
+  "dependencies": {
+    "@arc-control/schemas": "2.0.0"
+  }
+}

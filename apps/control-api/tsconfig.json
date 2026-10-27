@@ -36,6 +36,9 @@
       "path": "../../packages/spend"
     },
     {
+      "path": "../../packages/prompt-review"
+    },
+    {
       "path": "../../packages/approvals"
     },
     {

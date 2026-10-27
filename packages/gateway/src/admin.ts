@@ -1,5 +1,6 @@
 import { ArcError, digest } from '@arc-control/schemas';
 import { compareGrades, gradeScan, scanManifest, type McpGrade, type McpServerManifest } from '@arc-control/mcp-security';
+import { comparePromptGrades, reviewPrompt, type PromptGrade, type PromptReview } from '@arc-control/prompt-review';
 import type {
   Agent,
   AgentGovernance,
@@ -56,6 +57,13 @@ export interface GateOptions {
    * scans the server first; `registerTool` refuses them.
    */
   readonly mcpMinimumGrade?: McpGrade;
+  /**
+   * Lowest prompt-review grade an agent may have to become active. Once set,
+   * an agent must be registered as a draft, have its prompt reviewed, and be
+   * activated; activating or resuming an agent with no review, or one graded
+   * below this, is refused.
+   */
+  readonly promptMinimumGrade?: PromptGrade;
 }
 
 export class Administration {
@@ -71,6 +79,23 @@ export class Administration {
   }
 
   async registerAgent(registration: AgentRegistration, actor: Actor): Promise<Agent> {
+    // Registering straight into `active` would step around the activation
+    // gate, so with it on an agent starts as a draft or not at all.
+    if (this.gates.promptMinimumGrade !== undefined && registration.draft !== true) {
+      await this.#deps.audit.append({
+        type: 'agent.activation_refused',
+        organizationId: registration.organizationId ?? 'default',
+        actor: actor.identifier,
+        subject: registration.name,
+        summary: `${actor.identifier} tried to register "${registration.name}" as active; refused because the prompt gate requires a reviewed draft first`,
+        data: { name: registration.name, reason: 'register_as_draft', minimumGrade: this.gates.promptMinimumGrade, via: actor.via },
+      });
+      throw new ArcError(
+        'gate_refused',
+        `the prompt gate is on: register "${registration.name}" as a draft, review its prompt, then activate it`,
+        { details: { gate: 'prompt', reason: 'register_as_draft' } },
+      );
+    }
     const agent = await this.#deps.agents.register(registration);
     await this.#deps.audit.append({
       type: 'agent.registered',
@@ -227,6 +252,7 @@ export class Administration {
    * no route can miss it.
    */
   async setAgentStatus(agentId: string, status: 'active' | 'suspended', actor: Actor): Promise<Agent> {
+    if (status === 'active') await this.#checkPromptGate(agentId, actor);
     const agent =
       status === 'suspended'
         ? await this.#deps.agents.suspend(agentId)
@@ -501,5 +527,65 @@ export class Administration {
       },
     });
     return record;
+  }
+
+  /**
+   * Reviews an agent's system prompt and records the outcome on the agent.
+   *
+   * The prompt is reviewed and dropped: the record and the audit entry carry
+   * the grade, the failed checks and a digest, never the text.
+   */
+  async reviewAgentPrompt(
+    agentId: string,
+    input: { readonly prompt: string; readonly tools?: readonly { readonly name: string; readonly description?: string }[] },
+    actor: Actor,
+  ): Promise<{ readonly agent: Agent; readonly review: PromptReview }> {
+    if (typeof input.prompt !== 'string') throw new ArcError('invalid_request', 'prompt must be a string');
+    const review = reviewPrompt(input);
+    const agent = await this.#deps.agents.setPromptReview(agentId, {
+      grade: review.grade,
+      score: review.score,
+      promptDigest: review.promptDigest,
+      failed: review.failed,
+      reviewedAt: new Date().toISOString(),
+      reviewedBy: actor.identifier,
+    });
+
+    await this.#deps.audit.append({
+      type: 'agent.updated',
+      organizationId: agent.organizationId,
+      actor: actor.identifier,
+      subject: agent.id,
+      summary: `${actor.identifier} reviewed the prompt of "${agent.name}": grade ${review.grade} (${review.basis})`,
+      data: {
+        promptReview: { grade: review.grade, score: review.score, promptDigest: review.promptDigest, failed: review.failed },
+        via: actor.via,
+      },
+    });
+    return { agent, review };
+  }
+
+  /** Refuses to make an agent active when the prompt gate is on and its review is missing or below the minimum. */
+  async #checkPromptGate(agentId: string, actor: Actor): Promise<void> {
+    const minimum = this.gates.promptMinimumGrade;
+    if (minimum === undefined) return;
+    const agent = await this.#deps.agents.require(agentId);
+    const review = agent.promptReview;
+    if (review !== undefined && comparePromptGrades(review.grade, minimum) >= 0) return;
+
+    const reason = review === undefined ? 'not_reviewed' : 'below_minimum_grade';
+    const message =
+      review === undefined
+        ? `"${agent.name}" has no prompt review, and the prompt gate requires grade ${minimum} or better to become active`
+        : `"${agent.name}" has a prompt graded ${review.grade}; the minimum to become active is ${minimum}`;
+    await this.#deps.audit.append({
+      type: 'agent.activation_refused',
+      organizationId: agent.organizationId,
+      actor: actor.identifier,
+      subject: agent.id,
+      summary: `${actor.identifier} tried to activate "${agent.name}": ${message}`,
+      data: { reason, grade: review?.grade, minimumGrade: minimum, via: actor.via },
+    });
+    throw new ArcError('gate_refused', message, { details: { gate: 'prompt', reason, grade: review?.grade, minimumGrade: minimum } });
   }
 }

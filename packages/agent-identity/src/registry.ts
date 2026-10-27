@@ -6,6 +6,7 @@ import {
   type AgentCredential,
   type AgentPrincipal,
   type AgentGovernance,
+  type AgentPromptReview,
   type AgentRegistration,
   type CredentialInventoryEntry,
   type CredentialState,
@@ -159,6 +160,16 @@ export class AgentRegistry {
     return this.#store.agents.transact(async () => {
       const agent = await this.require(agentId);
       const updated: Agent = { ...agent, governance, updatedAt: this.#now().toISOString() };
+      await this.#store.agents.put(updated.id, updated);
+      return updated;
+    });
+  }
+
+  /** Records the latest prompt review. */
+  async setPromptReview(agentId: string, review: AgentPromptReview): Promise<Agent> {
+    return this.#store.agents.transact(async () => {
+      const agent = await this.require(agentId);
+      const updated: Agent = { ...agent, promptReview: review, updatedAt: this.#now().toISOString() };
       await this.#store.agents.put(updated.id, updated);
       return updated;
     });

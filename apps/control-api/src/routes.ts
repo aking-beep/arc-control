@@ -402,6 +402,28 @@ export function buildRoutes(options: RouteOptions): Router {
   });
 
   /**
+   * Reviews an agent's system prompt and records the grade (2.3). The
+   * response carries every check so the operator can act on it; the agent
+   * record and the audit chain keep only the grade, the failed check ids and
+   * a digest. The prompt itself is not stored anywhere.
+   */
+  router.post('/v1/agents/:id/prompt-review', async (context) => {
+    const operator = await operators.authenticate(context);
+    const body = await context.body<{ prompt?: unknown; tools?: unknown }>();
+    if (typeof body.prompt !== 'string') throw new ArcError('invalid_request', 'prompt must be a string');
+    if (body.prompt.length > 200_000) throw new ArcError('invalid_request', 'prompt is longer than 200,000 characters');
+    const tools = Array.isArray(body.tools)
+      ? body.tools.map((tool) => ({ name: String((tool as { name?: unknown }).name ?? '') }))
+      : undefined;
+    const { review, agent } = await gateway.admin.reviewAgentPrompt(
+      context.params.id!,
+      { prompt: body.prompt, ...(tools ? { tools } : {}) },
+      { identifier: operator.identifier, via: 'api' },
+    );
+    return { review, agent, minimumGrade: gateway.admin.gates.promptMinimumGrade ?? null };
+  });
+
+  /**
    * Retires an agent permanently and revokes every credential it holds.
    *
    * Not reversible: the registry refuses to revive a retired agent, so an

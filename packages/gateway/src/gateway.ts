@@ -718,7 +718,7 @@ export class Gateway {
 
   /**
    * The budgets governing this agent and tool, as evaluations to fold into a
-   * decision, and its spend as policy input.
+   * decision, and its spend and prompt grade as policy input.
    *
    * Fails closed: if spend or budgets cannot be read, the result is a single
    * DENY evaluation rather than no evaluations. Deciding without them would
@@ -728,15 +728,25 @@ export class Gateway {
     principal: AgentPrincipal,
     tool: Tool,
     at: Date,
-  ): Promise<{ readonly evaluations: readonly PolicyEvaluation[]; readonly input: { readonly spend?: AgentSpendInput } }> {
+  ): Promise<{
+    readonly evaluations: readonly PolicyEvaluation[];
+    readonly input: { readonly spend?: AgentSpendInput; readonly promptGrade?: string };
+  }> {
     try {
-      const { evaluations, spend } = await this.spend.evaluate({
-        agentId: principal.agentId,
-        organizationId: principal.organizationId,
-        toolEffect: tool.effect,
-        now: at,
-      });
-      return { evaluations, input: { spend } };
+      const [{ evaluations, spend }, agent] = await Promise.all([
+        this.spend.evaluate({
+          agentId: principal.agentId,
+          organizationId: principal.organizationId,
+          toolEffect: tool.effect,
+          now: at,
+        }),
+        this.agents.get(principal.agentId),
+      ]);
+      // The prompt grade rides along here because it is read from the same
+      // place at the same moment; a rule reading it when it is absent simply
+      // does not match.
+      const promptGrade = agent?.promptReview?.grade;
+      return { evaluations, input: { spend, ...(promptGrade ? { promptGrade } : {}) } };
     } catch (cause) {
       return {
         evaluations: [

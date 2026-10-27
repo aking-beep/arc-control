@@ -89,7 +89,38 @@ describe('MCP gate over the API', () => {
   });
 });
 
+describe('prompt gate over the API', () => {
+  it('reviews a prompt, keeps no prompt text, and gates activation on the grade', async () => {
+    const h = await harness({ promptMinimumGrade: 'C' });
+    try {
+      const created = await h.call('POST', '/v1/agents', { name: 'deployer', owner: 'o@example.com', draft: true });
+      assert.equal(created.status, 201);
+      const id = created.body.id;
+
+      const refused = await h.call('POST', `/v1/agents/${id}/activate`);
+      assert.equal(refused.status, 422);
+
+      const review = await h.call('POST', `/v1/agents/${id}/prompt-review`, { prompt: 'Do whatever. token: sk-abcdefghijklmnopqrstuv' });
+      assert.equal(review.body.review.grade, 'F');
+      assert.equal(review.body.minimumGrade, 'C');
+      assert.ok(!JSON.stringify(review.body).includes('sk-abcdefghijklmnopqrstuv'));
+      assert.equal((await h.call('POST', `/v1/agents/${id}/activate`)).status, 422);
+
+      const direct = await h.call('POST', '/v1/agents', { name: 'sneaky', owner: 'o@example.com' });
+      assert.equal(direct.status, 422, 'registering straight into active is refused');
+    } finally {
+      await h.close();
+    }
+  });
+});
+
 describe('gate configuration', () => {
+  it('reads ARC_PROMPT_MIN_GRADE and refuses a value that is not a grade', () => {
+    const base = { ARC_OPERATOR_TOKEN: 'x'.repeat(32) };
+    assert.equal(loadConfig({ ...base, ARC_PROMPT_MIN_GRADE: 'C' }).options.gates?.promptMinimumGrade, 'C');
+    assert.throws(() => loadConfig({ ...base, ARC_PROMPT_MIN_GRADE: 'great' }), /ARC_PROMPT_MIN_GRADE/);
+  });
+
   it('reads ARC_MCP_MIN_GRADE and refuses a value that is not a grade', () => {
     const base = { ARC_OPERATOR_TOKEN: 'x'.repeat(32) };
     assert.equal(loadConfig({ ...base, ARC_MCP_MIN_GRADE: 'B' }).options.gates?.mcpMinimumGrade, 'B');

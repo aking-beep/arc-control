@@ -8,6 +8,7 @@
     { "path": "packages/notify" },
     { "path": "packages/policy-engine" },
     { "path": "packages/spend" },
+    { "path": "packages/prompt-review" },
     { "path": "packages/approvals" },
     { "path": "packages/evidence" },
     { "path": "packages/assurance" },
