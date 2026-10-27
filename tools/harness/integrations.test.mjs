@@ -108,3 +108,43 @@ describe('green at merge ignores checks that ran after the merge', async () => {
     assert.equal(greenAtMerge(pr()), false);
   });
 });
+
+describe('green at merge judges the latest attempt of each check', async () => {
+  const { greenAtMerge } = await import('./github.mjs');
+  const merged = '2026-10-27T03:06:28Z';
+  const run = (name, conclusion, suiteCreated, completedAt) => ({
+    __typename: 'CheckRun',
+    name,
+    status: 'COMPLETED',
+    conclusion,
+    completedAt,
+    checkSuite: { createdAt: suiteCreated },
+  });
+  const status = (context, state, createdAt) => ({ __typename: 'StatusContext', context, state, createdAt });
+  const pr = (...contexts) => ({ mergedAt: merged, commits: { nodes: [{ commit: { statusCheckRollup: { contexts: { nodes: contexts } } } }] } });
+
+  it('a failed attempt superseded by a passing re-run is green', () => {
+    assert.equal(
+      greenAtMerge(pr(run('tests', 'FAILURE', '2026-10-27T02:50:00Z', '2026-10-27T02:52:00Z'), run('tests', 'SUCCESS', '2026-10-27T02:55:00Z', '2026-10-27T02:57:00Z'))),
+      true,
+    );
+  });
+
+  it('a passing attempt followed by a failing one is not green', () => {
+    assert.equal(
+      greenAtMerge(pr(run('tests', 'SUCCESS', '2026-10-27T02:50:00Z', '2026-10-27T02:52:00Z'), run('tests', 'FAILURE', '2026-10-27T02:55:00Z', '2026-10-27T02:57:00Z'))),
+      false,
+    );
+  });
+
+  it('a pending status later marked success is green', () => {
+    assert.equal(greenAtMerge(pr(status('deploy', 'PENDING', '2026-10-27T02:50:00Z'), status('deploy', 'SUCCESS', '2026-10-27T02:58:00Z'))), true);
+  });
+
+  it('a different check failing still makes it not green', () => {
+    assert.equal(
+      greenAtMerge(pr(run('tests', 'SUCCESS', '2026-10-27T02:50:00Z', '2026-10-27T02:52:00Z'), run('lint', 'FAILURE', '2026-10-27T02:50:00Z', '2026-10-27T02:51:00Z'))),
+      false,
+    );
+  });
+});

@@ -111,19 +111,30 @@ async function complete(context, pr) {
  *
  * Only checks whose suite was created before the merge count, so the runs
  * main starts on the same commit after a fast-forward cannot turn a green PR
- * pending. Green means at least one such check, every one completed by the
+ * pending, and only the latest attempt of each named check, so a re-run flake
+ * does not count against a PR its re-run made green. Green means at least one such check, every one completed by the
  * merge with success, neutral or skipped, and no failing status. Anything
  * else, including no checks at all, is not green.
  */
 export function greenAtMerge(pr) {
   const mergedAt = Date.parse(pr.mergedAt);
   const contexts = pr.commits.nodes[0]?.commit.statusCheckRollup?.contexts?.nodes ?? [];
+  const created = (check) => (check.__typename === 'CheckRun' ? check.checkSuite?.createdAt : check.createdAt);
   const before = contexts.filter((check) => {
-    const created = check.__typename === 'CheckRun' ? check.checkSuite?.createdAt : check.createdAt;
-    return created !== undefined && created !== null && Date.parse(created) < mergedAt;
+    const at = created(check);
+    return at !== undefined && at !== null && Date.parse(at) < mergedAt;
   });
-  if (before.length === 0) return false;
-  return before.every((check) => {
+  // A re-run leaves the superseded attempt in the list. What decided the
+  // merge is the latest attempt of each named check, so keep only that one.
+  const latest = new Map();
+  for (const check of before) {
+    const key = check.__typename === 'CheckRun' ? `run:${check.name}` : `status:${check.context}`;
+    const at = Date.parse(check.completedAt ?? created(check));
+    const kept = latest.get(key);
+    if (!kept || at >= kept.at) latest.set(key, { at, check });
+  }
+  if (latest.size === 0) return false;
+  return [...latest.values()].map((entry) => entry.check).every((check) => {
     if (check.__typename === 'StatusContext') return check.state === 'SUCCESS';
     return (
       check.status === 'COMPLETED' &&
