@@ -301,6 +301,15 @@ export function loadConfig(env: Env = process.env): LoadedConfig {
   if (promptMinimumGrade !== undefined && !isPromptGrade(promptMinimumGrade)) {
     refusals.push(`ARC_PROMPT_MIN_GRADE="${promptMinimumGrade}" must be one of A, B, C, D, F`);
   }
+  const endpointVetting = bool(env.ARC_ENDPOINT_VETTING) === true;
+  const minimumCertificateDaysText = text(env.ARC_ENDPOINT_MIN_CERT_DAYS);
+  const minimumCertificateDays = minimumCertificateDaysText === undefined ? undefined : Number(minimumCertificateDaysText);
+  if (minimumCertificateDays !== undefined && !(Number.isInteger(minimumCertificateDays) && minimumCertificateDays >= 0)) {
+    refusals.push(`ARC_ENDPOINT_MIN_CERT_DAYS="${String(minimumCertificateDaysText)}" must be a whole number of days`);
+  }
+  if (!endpointVetting && (minimumCertificateDaysText !== undefined || text(env.ARC_ENDPOINT_PRIVATE_HOSTS) !== undefined)) {
+    warnings.push('ARC_ENDPOINT_MIN_CERT_DAYS or ARC_ENDPOINT_PRIVATE_HOSTS is set but ARC_ENDPOINT_VETTING is not, so endpoints are not vetted.');
+  }
   const gates = {
     ...(mcpMinimumGrade !== undefined && isGrade(mcpMinimumGrade) ? { mcpMinimumGrade } : {}),
     ...(promptMinimumGrade !== undefined && isPromptGrade(promptMinimumGrade) ? { promptMinimumGrade } : {}),
@@ -342,6 +351,14 @@ export function loadConfig(env: Env = process.env): LoadedConfig {
     ...(schedule !== undefined ? { schedule } : {}),
     ...(defaultOrganizationId ? { defaultOrganizationId } : {}),
     ...(Object.keys(gates).length > 0 ? { gates } : {}),
+    ...(endpointVetting
+      ? {
+          endpointVetting: {
+            ...(csv(env.ARC_ENDPOINT_PRIVATE_HOSTS).length > 0 ? { allowPrivateHosts: csv(env.ARC_ENDPOINT_PRIVATE_HOSTS) } : {}),
+            ...(minimumCertificateDays !== undefined && Number.isInteger(minimumCertificateDays) ? { minimumCertificateDays } : {}),
+          },
+        }
+      : {}),
     ...(anthropicAdminKey || spike
       ? {
           spend: {

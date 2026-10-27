@@ -10,6 +10,7 @@ import { addNotificationRoutes } from './notification-routes.js';
 import { addSpendRoutes } from './spend-routes.js';
 import { Scheduler } from './scheduler.js';
 import { Notifier } from '@arc-control/notify';
+import { vetEndpoint } from '@arc-control/connector-generic-http';
 import { ArcError } from '@arc-control/schemas';
 import { AnthropicCostProvider, SpendMonitor, type SpendProvider, type SpikeRule } from '@arc-control/spend';
 import {
@@ -84,6 +85,11 @@ export interface ControlApiOptions {
 
   /** Registration and activation gates. Each is off unless set. */
   readonly gates?: GateOptions;
+  /**
+   * Vet every URL-bearing tool's endpoint at registration (HTTPS, resolution,
+   * certificate, redirects). Off unless set.
+   */
+  readonly endpointVetting?: { readonly allowPrivateHosts?: readonly string[]; readonly minimumCertificateDays?: number };
 
   /**
    * Verified spend and runaway detection. Absent means budgets count only
@@ -127,7 +133,26 @@ export function createControlApi(options: ControlApiOptions): ControlApi {
     ...(options.monetaryEscalationThreshold !== undefined
       ? { classification: { monetaryEscalationThreshold: options.monetaryEscalationThreshold } }
       : {}),
-    ...(options.gates ? { gates: options.gates } : {}),
+    ...(options.gates || options.endpointVetting
+      ? {
+          gates: {
+            ...(options.gates ?? {}),
+            ...(options.endpointVetting
+              ? {
+                  endpointVetter: {
+                    vet: (url: string) =>
+                      vetEndpoint(url, {
+                        ...(options.endpointVetting?.allowPrivateHosts ? { allowPrivateHosts: options.endpointVetting.allowPrivateHosts } : {}),
+                        ...(options.endpointVetting?.minimumCertificateDays !== undefined
+                          ? { minimumCertificateDays: options.endpointVetting.minimumCertificateDays }
+                          : {}),
+                      }),
+                  },
+                }
+              : {}),
+          },
+        }
+      : {}),
   });
 
   /**

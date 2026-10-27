@@ -64,6 +64,23 @@ export interface GateOptions {
    * below this, is refused.
    */
   readonly promptMinimumGrade?: PromptGrade;
+  /**
+   * Vets the endpoint of every tool registered with a `connectorConfig.url`
+   * (the generic HTTP connector's tools). A tool whose endpoint fails is not
+   * registered; a vetter that throws refuses too.
+   */
+  readonly endpointVetter?: EndpointVetter;
+}
+
+/** What the endpoint gate needs from a vetter. The gateway holds no network code of its own. */
+export interface EndpointVetter {
+  vet(url: string): Promise<{
+    readonly ok: boolean;
+    readonly url: string;
+    readonly findings: readonly { readonly id: string; readonly severity: string; readonly detail: string }[];
+    readonly certificate?: { readonly validTo: string };
+    readonly vettedAt: string;
+  }>;
 }
 
 export class Administration {
@@ -406,7 +423,10 @@ export class Administration {
   }
 
   async #registerTool(registration: ToolRegistration, actor: Actor): Promise<Tool> {
-    const tool = await this.#deps.tools.register(registration);
+    const vetted = await this.#vetEndpoint(registration, actor);
+    const tool = await this.#deps.tools.register(
+      vetted === undefined ? registration : { ...registration, labels: { ...(registration.labels ?? {}), ...vetted } },
+    );
     await this.#deps.audit.append({
       type: 'tool.registered',
       organizationId: 'default',
@@ -587,5 +607,51 @@ export class Administration {
       data: { reason, grade: review?.grade, minimumGrade: minimum, via: actor.via },
     });
     throw new ArcError('gate_refused', message, { details: { gate: 'prompt', reason, grade: review?.grade, minimumGrade: minimum } });
+  }
+
+  /**
+   * The endpoint gate. Returns labels to stamp on the tool when it passes,
+   * nothing when the gate is off or the tool has no URL, and throws — after
+   * auditing — when the endpoint fails or cannot be vetted.
+   */
+  async #vetEndpoint(registration: ToolRegistration, actor: Actor): Promise<Record<string, string> | undefined> {
+    const vetter = this.gates.endpointVetter;
+    const url = registration.connectorConfig?.url;
+    if (vetter === undefined || typeof url !== 'string') return undefined;
+
+    let result: Awaited<ReturnType<EndpointVetter['vet']>> | undefined;
+    let failure: string | undefined;
+    try {
+      result = await vetter.vet(url);
+    } catch (cause) {
+      failure = `the endpoint could not be vetted: ${cause instanceof Error ? cause.message : String(cause)}`;
+    }
+    const errors = result?.findings.filter((finding) => finding.severity === 'error') ?? [];
+    if (result !== undefined && result.ok && errors.length === 0) {
+      return {
+        endpointVettedAt: result.vettedAt,
+        ...(result.certificate ? { endpointCertificateValidTo: result.certificate.validTo } : {}),
+      };
+    }
+
+    const message = failure ?? `the endpoint of "${registration.name}" failed vetting: ${errors.map((finding) => `${finding.id} ${finding.detail}`).join('; ')}`;
+    await this.#deps.audit.append({
+      type: 'tool.registration_refused',
+      organizationId: 'default',
+      actor: actor.identifier,
+      subject: registration.name,
+      summary: `${actor.identifier} tried to register tool "${registration.name}": ${message}`,
+      data: {
+        name: registration.name,
+        connector: registration.connector,
+        url,
+        findings: result?.findings ?? [],
+        ...(failure ? { error: failure } : {}),
+        via: actor.via,
+      },
+    });
+    throw new ArcError('gate_refused', message, {
+      details: { gate: 'endpoint', reason: failure ? 'vetting_failed' : 'endpoint_refused', findings: result?.findings ?? [] },
+    });
   }
 }

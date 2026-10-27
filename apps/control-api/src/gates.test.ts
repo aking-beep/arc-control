@@ -115,6 +115,41 @@ describe('prompt gate over the API', () => {
 });
 
 describe('gate configuration', () => {
+  it('reads the endpoint-vetting settings and refuses a malformed certificate minimum', () => {
+    const base = { ARC_OPERATOR_TOKEN: 'x'.repeat(32) };
+    const loaded = loadConfig({ ...base, ARC_ENDPOINT_VETTING: 'true', ARC_ENDPOINT_PRIVATE_HOSTS: 'billing.corp, hr.corp', ARC_ENDPOINT_MIN_CERT_DAYS: '30' });
+    assert.deepEqual(loaded.options.endpointVetting, { allowPrivateHosts: ['billing.corp', 'hr.corp'], minimumCertificateDays: 30 });
+    assert.equal(loadConfig(base).options.endpointVetting, undefined);
+    assert.throws(() => loadConfig({ ...base, ARC_ENDPOINT_VETTING: 'true', ARC_ENDPOINT_MIN_CERT_DAYS: 'soon' }), /ARC_ENDPOINT_MIN_CERT_DAYS/);
+  });
+
+  it('wires the vetter so a tool pointing at the metadata service is refused over the API', async () => {
+    const store = new MemoryStore();
+    const api = createControlApi({ store, operatorToken: TOKEN, schedule: false, endpointVetting: {} });
+    api.gateway.addConnector({ name: 'generic-http', supports: () => true, execute: async () => ({ output: {} }) });
+    const address = await api.listen(0);
+    try {
+      const response = await fetch(`http://${address.host}:${address.port}/v1/tools`, {
+        method: 'POST',
+        headers: operator,
+        body: JSON.stringify({
+          name: 'cloud.steal',
+          description: 'x',
+          effect: 'read',
+          riskTier: 'low',
+          connector: 'generic-http',
+          connectorConfig: { url: 'https://169.254.169.254/latest/meta-data/' },
+          parameters: [],
+        }),
+      });
+      assert.equal(response.status, 422);
+      assert.equal(await store.tools.count(), 0);
+    } finally {
+      await api.close();
+      await store.close();
+    }
+  });
+
   it('reads ARC_PROMPT_MIN_GRADE and refuses a value that is not a grade', () => {
     const base = { ARC_OPERATOR_TOKEN: 'x'.repeat(32) };
     assert.equal(loadConfig({ ...base, ARC_PROMPT_MIN_GRADE: 'C' }).options.gates?.promptMinimumGrade, 'C');
