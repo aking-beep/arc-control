@@ -69,7 +69,11 @@ export type AuditEventType =
   // the first explains why eight calls produced one effect, the second is the
   // only record that a stale approval was checked against today's rules.
   | 'action.replayed'
-  | 'action.revalidated';
+  | 'action.revalidated'
+  // A lifecycle change the registry refused — reviving a retired agent, or
+  // issuing it a key. The attempt is the signal, so it is kept, not just
+  // returned to the caller as a 409.
+  | 'agent.transition_refused';
 
 export interface AuditRecord {
   readonly id: string;

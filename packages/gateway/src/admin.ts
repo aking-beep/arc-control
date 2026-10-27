@@ -1,4 +1,4 @@
-import { digest } from '@arc-control/schemas';
+import { ArcError, digest } from '@arc-control/schemas';
 import type {
   Agent,
   AgentGovernance,
@@ -67,7 +67,7 @@ export class Administration {
    * who wants it back must register it again and be seen doing so.
    */
   async retireAgent(agentId: string, actor: Actor): Promise<Agent> {
-    const { agent, revoked } = await this.#deps.agents.retire(agentId);
+    const { agent, revoked } = await this.#refusable(agentId, 'retire', actor, () => this.#deps.agents.retire(agentId));
 
     await this.#deps.audit.append({
       type: 'agent.retired',
@@ -172,7 +172,10 @@ export class Administration {
 
   /** Issues a replacement credential and revokes the old one, in that order. */
   async rotateKey(credentialId: string, actor: Actor, options: { expiresAt?: string } = {}): Promise<IssuedCredential> {
-    const { issued, revoked } = await this.#deps.agents.rotateKey(credentialId, options);
+    const owner = (await this.#deps.agents.getKey(credentialId))?.agentId;
+    const { issued, revoked } = owner
+      ? await this.#refusable(owner, 'rotate_credential', actor, () => this.#deps.agents.rotateKey(credentialId, options))
+      : await this.#deps.agents.rotateKey(credentialId, options);
     const agent = await this.#deps.agents.require(issued.credential.agentId);
 
     await this.#deps.audit.append({
@@ -195,18 +198,14 @@ export class Administration {
   /**
    * Suspends an agent, or brings one back.
    *
-   * Going to `active` goes through `agents.activate`, not `agents.resume`.
-   * `resume` sets the status with no questions asked, so every caller of this
-   * method — the API's `/resume` and `/activate` routes among them — could
-   * revive a retired agent, which retirement is supposed to make impossible.
-   * Routing it through `activate` means the refusal lives in one place and
-   * no route can miss it.
+   * Every registry status change — `activate`, `resume` and `suspend` alike —
+   * now refuses a retired agent inside the same guarded transition, so no
+   * route or caller can revive one. A refusal is audited here.
    */
   async setAgentStatus(agentId: string, status: 'active' | 'suspended', actor: Actor): Promise<Agent> {
-    const agent =
-      status === 'suspended'
-        ? await this.#deps.agents.suspend(agentId)
-        : await this.#deps.agents.activate(agentId);
+    const agent = await this.#refusable(agentId, status === 'suspended' ? 'suspend' : 'activate', actor, () =>
+      status === 'suspended' ? this.#deps.agents.suspend(agentId) : this.#deps.agents.activate(agentId),
+    );
 
     await this.#deps.audit.append({
       type: status === 'suspended' ? 'agent.suspended' : 'agent.resumed',
@@ -221,7 +220,9 @@ export class Administration {
 
   async issueKey(agentId: string, actor: Actor, options: { expiresAt?: string } = {}): Promise<IssuedCredential> {
     const agent = await this.#deps.agents.require(agentId);
-    const issued = await this.#deps.agents.issueKey(agentId, options);
+    const issued = await this.#refusable(agentId, 'issue_credential', actor, () =>
+      this.#deps.agents.issueKey(agentId, options),
+    );
 
     await this.#deps.audit.append({
       type: 'credential.issued',
@@ -238,6 +239,32 @@ export class Administration {
     });
 
     return issued;
+  }
+
+  /**
+   * Runs a lifecycle operation, and audits it when the lifecycle refuses it.
+   *
+   * A refused attempt to revive a retired agent or mint it a key is exactly
+   * the event an incident review wants to find, so it is recorded rather than
+   * only returned to the caller as a 409.
+   */
+  async #refusable<T>(agentId: string, attempted: string, actor: Actor, operation: () => Promise<T>): Promise<T> {
+    try {
+      return await operation();
+    } catch (cause) {
+      if (cause instanceof ArcError && cause.code === 'conflict' && cause.details.reason === 'agent_retired') {
+        const agent = await this.#deps.agents.get(agentId);
+        await this.#deps.audit.append({
+          type: 'agent.transition_refused',
+          organizationId: agent?.organizationId ?? 'default',
+          actor: actor.identifier,
+          subject: agentId,
+          summary: `${actor.identifier} attempted to ${attempted.replace('_', ' ')} retired agent "${agent?.name ?? agentId}"; refused`,
+          data: { attempted, status: agent?.status, retiredAt: agent?.retiredAt, via: actor.via },
+        });
+      }
+      throw cause;
+    }
   }
 
   async revokeKey(credentialId: string, actor: Actor): Promise<void> {

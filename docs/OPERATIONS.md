@@ -297,8 +297,11 @@ credential and fails an agent mid-run. Both keys are briefly valid, which is
 the lesser problem.
 
 If the agent itself is compromised rather than just its key, retire it —
-`POST /v1/agents/$ID/retire` revokes every credential it holds and cannot be
-undone. Then: `/activity?agentId=$ID` for the blast radius, and
+`POST /v1/agents/$ID/retire` marks it retired, then revokes every credential
+it holds, and cannot be undone: `activate`, `resume`, `suspend`, `keys` and
+`retire` all answer 409 afterwards, and each refused attempt is audited as
+`agent.transition_refused`. If the workload must come back, register a new
+agent under a new name and issue it new keys. Then: `/activity?agentId=$ID` for the blast radius, and
 `arc assurance evaluate` to see whether ARC-AI-003 or ARC-AI-004 noticed
 anything.
 

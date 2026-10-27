@@ -102,11 +102,20 @@ export class AgentRegistry {
    * exposes, and the seam the v0.2 kill switch builds on.
    */
   async suspend(agentId: string): Promise<Agent> {
-    return this.#setStatus(agentId, 'suspended');
+    return this.#transition(agentId, 'suspended');
   }
 
+  /**
+   * Brings a suspended agent back.
+   *
+   * Goes through the same guarded transition as `activate` (ARC-SEC-003). It
+   * used to write `active` unconditionally, so any caller that reached it —
+   * the activate route did, before 2.1 — revived a retired agent. The rule
+   * now lives in the one function every status change goes through, so no
+   * caller can choose a path around it.
+   */
   async resume(agentId: string): Promise<Agent> {
-    return this.#setStatus(agentId, 'active');
+    return this.#transition(agentId, 'active');
   }
 
   /**
@@ -115,13 +124,7 @@ export class AgentRegistry {
    * genuinely wants it back should register it again and be seen to do so.
    */
   async activate(agentId: string): Promise<Agent> {
-    const agent = await this.require(agentId);
-    if (agent.status === 'retired') {
-      throw new ArcError('conflict', `agent "${agent.name}" is retired; register a new agent rather than reviving it`, {
-        details: { agentId: agent.id },
-      });
-    }
-    return this.#setStatus(agentId, 'active');
+    return this.#transition(agentId, 'active');
   }
 
   /**
@@ -131,25 +134,23 @@ export class AgentRegistry {
    * credential with no owner watching it, which is the shape of most
    * credential incidents. Status alone would stop it acting today, but the key
    * would still be a valid secret in whatever file it was copied into.
+   *
+   * The status is written first, under the agents lock, and the credentials
+   * are revoked after. `issueKey` checks the status under the same lock, so a
+   * key issued concurrently either lands before the status write — and is in
+   * the list revoked below — or is refused. The order used to be reversed,
+   * and a key issued between the revocation sweep and the status write
+   * survived retirement.
    */
   async retire(agentId: string): Promise<{ readonly agent: Agent; readonly revoked: readonly string[] }> {
-    await this.require(agentId);
-    const credentials = await this.listKeys(agentId);
-    const revoked: string[] = [];
+    const retired = await this.#transition(agentId, 'retired');
 
-    for (const credential of credentials) {
+    const revoked: string[] = [];
+    for (const credential of await this.listKeys(agentId)) {
       if (credential.revokedAt) continue;
       await this.revokeKey(credential.id);
       revoked.push(credential.id);
     }
-
-    const retired = await this.#store.agents.transact(async () => {
-      const current = await this.require(agentId);
-      const timestamp = this.#now().toISOString();
-      const updated: Agent = { ...current, status: 'retired', retiredAt: timestamp, updatedAt: timestamp };
-      await this.#store.agents.put(updated.id, updated);
-      return updated;
-    });
 
     return { agent: retired, revoked };
   }
@@ -164,25 +165,51 @@ export class AgentRegistry {
     });
   }
 
-  async #setStatus(agentId: string, status: Agent['status']): Promise<Agent> {
+  /**
+   * The only function that changes an agent's status.
+   *
+   * `retired` is terminal: no transition leaves it, including to `retired`
+   * again, which would overwrite the original `retiredAt`. The check runs
+   * inside the agents transaction, against the record as it is at that
+   * moment, so it also holds when a retire and a resume race.
+   */
+  async #transition(agentId: string, status: Agent['status']): Promise<Agent> {
     return this.#store.agents.transact(async () => {
       const agent = await this.require(agentId);
-      const updated: Agent = { ...agent, status, updatedAt: this.#now().toISOString() };
+      assertTransitionAllowed(agent, status);
+
+      const timestamp = this.#now().toISOString();
+      const updated: Agent = {
+        ...agent,
+        status,
+        ...(status === 'retired' ? { retiredAt: timestamp } : {}),
+        updatedAt: timestamp,
+      };
       await this.#store.agents.put(updated.id, updated);
       return updated;
     });
   }
 
+  /**
+   * Issues a credential.
+   *
+   * The status check and the write happen under the agents lock, the same
+   * lock `retire` writes the status under. Checking outside it left a window
+   * in which a retirement could complete between the check and the write,
+   * minting a working key for a retired identity.
+   */
   async issueKey(agentId: string, options: { expiresAt?: string } = {}): Promise<IssuedCredential> {
-    const agent = await this.require(agentId);
-    if (agent.status === 'retired') {
-      throw new ArcError('conflict', `agent "${agent.name}" is retired and cannot be issued a credential`, {
-        details: { agentId: agent.id },
-      });
-    }
-    const issued = issueCredential(agentId, options);
-    await this.#store.credentials.put(issued.credential.id, issued.credential);
-    return issued;
+    return this.#store.agents.transact(async () => {
+      const agent = await this.require(agentId);
+      if (agent.status === 'retired') {
+        throw new ArcError('conflict', `agent "${agent.name}" is retired and cannot be issued a credential`, {
+          details: { agentId: agent.id, status: agent.status, reason: 'agent_retired' },
+        });
+      }
+      const issued = issueCredential(agentId, options);
+      await this.#store.credentials.put(issued.credential.id, issued.credential);
+      return issued;
+    });
   }
 
   /**
@@ -263,6 +290,10 @@ export class AgentRegistry {
     });
   }
 
+  async getKey(credentialId: string): Promise<AgentCredential | undefined> {
+    return this.#store.credentials.get(credentialId);
+  }
+
   async listKeys(agentId: string): Promise<readonly AgentCredential[]> {
     return this.#store.credentials.filter((credential) => credential.agentId === agentId);
   }
@@ -330,6 +361,31 @@ export class AgentRegistry {
       labels: agent.labels,
       credentialId,
     };
+  }
+}
+
+/**
+ * Refuses a status change the lifecycle does not permit.
+ *
+ * One rule today: nothing leaves `retired`. It is a function rather than an
+ * inline check so the rule has exactly one home — the defect it closes was a
+ * second, unguarded path to the same write.
+ */
+export function assertTransitionAllowed(agent: Agent, next: Agent['status']): void {
+  if (agent.status === 'retired') {
+    throw new ArcError(
+      'conflict',
+      `agent "${agent.name}" is retired; retirement is final, so register a new agent rather than reviving it`,
+      {
+        details: {
+          agentId: agent.id,
+          status: agent.status,
+          requested: next,
+          retiredAt: agent.retiredAt,
+          reason: 'agent_retired',
+        },
+      },
+    );
   }
 }
 
