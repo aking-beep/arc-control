@@ -1,0 +1,63 @@
+{
+  "id": "_template",
+  "name": "Template client — copy this directory to clients/<client-id>/ and replace every value",
+  "organizationId": "template-org",
+  "environment": "production",
+  "requirements": {
+    "separationOfDutiesForIrreversible": true
+  },
+  "tools": [
+    {
+      "name": "billing.refund",
+      "description": "Refund a customer charge. Irreversible.",
+      "system": "billing",
+      "effect": "irreversible",
+      "riskTier": "critical",
+      "connector": "generic-http",
+      "parameters": [
+        { "name": "customer", "type": "string", "required": true },
+        { "name": "amount", "type": "number", "required": true, "minimum": 0 }
+      ]
+    }
+  ],
+  "agents": [
+    {
+      "name": "billing-agent",
+      "owner": "billing-owner@client.example",
+      "roles": ["billing"],
+      "declaredTools": ["billing.refund"]
+    }
+  ],
+  "approvers": [
+    { "identifier": "billing-manager@client.example", "roles": ["billing-manager"] }
+  ],
+  "policies": [
+    {
+      "id": "TEMPLATE-BILLING-001",
+      "version": 1,
+      "name": "Refund authority",
+      "enabled": true,
+      "match": { "tools": ["billing.refund"] },
+      "rules": [
+        { "id": "only-billing-agent", "when": { "ne": ["$.agent.name", "billing-agent"] }, "effect": "DENY", "reason": "only the billing agent may refund" },
+        { "id": "routine", "when": { "lt": ["$.action.parameters.amount", 100] }, "effect": "ALLOW", "reason": "within autonomous authority" },
+        {
+          "id": "manager-approval",
+          "when": { "lte": ["$.action.parameters.amount", 1000] },
+          "effect": "REQUIRE_APPROVAL",
+          "reason": "a billing manager must approve",
+          "approval": { "approvers": ["role:billing-manager"], "minApprovals": 1, "expiresInSeconds": 3600, "requireSeparationOfDuties": true }
+        },
+        { "id": "ceiling", "when": { "always": true }, "effect": "DENY", "reason": "above the delegated ceiling" }
+      ],
+      "fallback": { "effect": "DENY", "reason": "no rule matched" }
+    }
+  ],
+  "scenarios": [
+    { "id": "routine-refund", "agent": "billing-agent", "tool": "billing.refund", "parameters": { "customer": "c-1", "amount": 50 }, "expect": "executed", "policyId": "TEMPLATE-BILLING-001" },
+    { "id": "held-refund", "agent": "billing-agent", "tool": "billing.refund", "parameters": { "customer": "c-1", "amount": 500 }, "expect": "pending_approval" },
+    { "id": "approved-refund", "agent": "billing-agent", "tool": "billing.refund", "parameters": { "customer": "c-1", "amount": 600 }, "expect": "pending_approval", "approveAs": "billing-manager@client.example" },
+    { "id": "over-ceiling", "agent": "billing-agent", "tool": "billing.refund", "parameters": { "customer": "c-1", "amount": 5000 }, "expect": "denied" },
+    { "id": "malformed-amount", "agent": "billing-agent", "tool": "billing.refund", "parameters": { "customer": "c-1", "amount": "50" }, "expect": "refused" }
+  ]
+}

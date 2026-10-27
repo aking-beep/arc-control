@@ -53,6 +53,20 @@ jobs:
       - name: Control-plane evals
         run: node evals/run.js
 
+      # The delivery harness (.claude/, docs/harness/) is checked like code:
+      # an agent pointing at a moved file or a renamed agent fails quietly, so
+      # it fails here instead. Every client profile is then loaded into a real
+      # gateway and its scenarios must produce their expected outcomes and
+      # effect counts — a client configuration that stops validating is a
+      # regression for that client.
+      - name: Delivery harness
+        run: node tools/harness/check-harness.mjs
+
+      - name: Client profiles
+        run: |
+          node tools/harness/validate-client.mjs
+          node --test "tools/harness/*.test.mjs"
+
       - name: Examples
         run: |
           node examples/approval-required-agent/run.js

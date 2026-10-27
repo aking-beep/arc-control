@@ -406,6 +406,10 @@ evals/                  control-plane guarantees asserted as properties
 examples/               runnable: approval-required agent, protected MCP server
 docs/                   architecture, trust, threat, policy, evidence, roadmap
 infrastructure/         docker, kubernetes, terraform
+clients/                one validated profile per client (policies, agents, scenarios)
+tools/harness/          harness self-check and client profile validator
+.claude/                delivery harness: agents and skills (see docs/harness/)
+CLAUDE.md               operating contract every coding agent reads first
 ```
 
 ---
@@ -495,6 +499,7 @@ changed, and the single-process bound on the idempotency guarantee.
 | [COMMERCIAL_READINESS.md](./docs/COMMERCIAL_READINESS.md) | Ideal customer, differentiation, design partners, pricing hypothesis |
 | [ROADMAP.md](./docs/ROADMAP.md) | The longer phasing |
 | [PORTFOLIO.md](./docs/PORTFOLIO.md) | Every repository in the ARC Control division, and how each relates to this one |
+| [harness/README.md](./docs/harness/README.md) | **The delivery harness**: the agents, skills and client profiles that build, verify and onboard ARC Control, and the checks that keep them honest |
 | [SECURITY.md](./SECURITY.md) | Reporting a vulnerability |
 | [CONTRIBUTING.md](./CONTRIBUTING.md) | How to work in this repository |
 

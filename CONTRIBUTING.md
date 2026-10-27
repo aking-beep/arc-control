@@ -8,6 +8,15 @@ a few of the conventions here will look strict until you know why.
 
 ---
 
+## Working with agents
+
+If you work in this repository with Claude Code or another coding agent, it
+reads [`CLAUDE.md`](./CLAUDE.md) first. The agents, skills and client profiles
+built on it are described in [docs/harness/README.md](./docs/harness/README.md);
+`npm run harness` checks them.
+
+---
+
 ## Getting set up
 
 ```bash
