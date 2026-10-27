@@ -1,6 +1,6 @@
 {
-  "at": "2026-10-27T06:40:48.942Z",
-  "commit": "92117188f9552341cf616eeaf0b61359aeafcb81",
+  "at": "2026-10-27T08:09:38.082Z",
+  "commit": "feaa3fa79b3c91d7a07e177f4b7b53d258fbde40",
   "ref": "refs/heads/main",
   "summary": {
     "met": 21,
@@ -22,13 +22,13 @@
     {
       "id": "verify.main_ci_runs",
       "skill": "verify",
-      "value": 7,
+      "value": 8,
       "target": {
         "op": ">=",
         "value": 1
       },
       "status": "met",
-      "previous": 6
+      "previous": 7
     },
     {
       "id": "deliver.gate_pass_rate",
@@ -55,13 +55,13 @@
     {
       "id": "security.oldest_open_days",
       "skill": "security-remediation",
-      "value": 1.2783353935185184,
+      "value": 1.3400151967592593,
       "target": {
         "op": "<=",
         "value": 14
       },
       "status": "met",
-      "previous": 1.1302366435185185
+      "previous": 1.2783353935185184
     },
     {
       "id": "security.open_critical",
@@ -165,13 +165,13 @@
     {
       "id": "steward.green_at_merge_rate",
       "skill": "steward",
-      "value": 0.6666666666666666,
+      "value": 0.8,
       "target": {
         "op": ">=",
         "value": 1
       },
       "status": "breached",
-      "previous": 0.5
+      "previous": 0.6666666666666666
     },
     {
       "id": "steward.unresolved_threads_at_merge",
@@ -187,13 +187,13 @@
     {
       "id": "steward.median_hours_to_merge",
       "skill": "steward",
-      "value": 0.27166666666666667,
+      "value": 1.4625,
       "target": {
         "op": "<=",
         "value": 72
       },
       "status": "met",
-      "previous": 0.26611111111111113
+      "previous": 0.27166666666666667
     },
     {
       "id": "release.notes_passing_rate",
@@ -215,7 +215,7 @@
         "value": 1
       },
       "status": "met",
-      "previous": null
+      "previous": 1
     },
     {
       "id": "deploy.checks_passed_rate",
@@ -231,13 +231,13 @@
     {
       "id": "deploy.time_to_healthy_ms",
       "skill": "deploy",
-      "value": 247,
+      "value": 246,
       "target": {
         "op": "<=",
         "value": 10000
       },
       "status": "met",
-      "previous": 231
+      "previous": 247
     },
     {
       "id": "harness.problems",
