@@ -1,0 +1,58 @@
+{
+  "id": "pack-mcp-reviewed-tools",
+  "name": "MCP tools: only from servers that graded well",
+  "pack": {
+    "version": 1,
+    "source": "AI Workflow Templates — quality/mcp-conformance-gate",
+    "summary": "Pairs with the MCP registration gate. Every tool registered through registerMcpServer carries an mcpGrade label. Reads from servers graded A or B are allowed, writes from them need an owner's approval, and anything from a lower or unknown grade is denied.",
+    "adapt": [
+      "Register MCP servers through POST /v1/mcp/register so their tools carry the mcpGrade label.",
+      "Set the approver role mcp-owner on whoever owns your MCP integrations."
+    ]
+  },
+  "organizationId": "policy-pack",
+  "environment": "production",
+  "requirements": { "separationOfDutiesForIrreversible": true },
+  "tools": [
+    { "name": "docs.search", "description": "Search docs (MCP, graded A).", "system": "docs", "effect": "read", "riskTier": "medium", "connector": "mcp:docs", "parameters": [{ "name": "query", "type": "string", "required": true }], "labels": { "source": "mcp", "mcpGrade": "A" } },
+    { "name": "tracker.create_issue", "description": "Create an issue (MCP, graded B).", "system": "tracker", "effect": "write", "riskTier": "high", "connector": "mcp:tracker", "parameters": [{ "name": "title", "type": "string", "required": true }], "labels": { "source": "mcp", "mcpGrade": "B" } },
+    { "name": "legacy.lookup", "description": "Lookup (MCP, graded D).", "system": "legacy", "effect": "read", "riskTier": "high", "connector": "mcp:legacy", "parameters": [{ "name": "id", "type": "string", "required": true }], "labels": { "source": "mcp", "mcpGrade": "D" } },
+    { "name": "unscanned.fetch", "description": "Fetch (MCP, never scanned).", "system": "unscanned", "effect": "read", "riskTier": "high", "connector": "mcp:unscanned", "parameters": [{ "name": "id", "type": "string", "required": true }], "labels": { "source": "mcp" } }
+  ],
+  "agents": [
+    { "name": "research-agent", "owner": "platform@client.example", "roles": ["mcp-consumer"], "declaredTools": ["docs.search", "tracker.create_issue", "legacy.lookup", "unscanned.fetch"] }
+  ],
+  "approvers": [
+    { "identifier": "integrations@client.example", "roles": ["mcp-owner"] }
+  ],
+  "policies": [
+    {
+      "id": "PACK-MCP-001",
+      "version": 1,
+      "name": "MCP tools by scan grade",
+      "description": "Reads the mcpGrade label the MCP registration gate stamps on every tool it admits. A tool with no grade was never scanned and is denied.",
+      "enabled": true,
+      "match": { "agents": ["role:mcp-consumer"] },
+      "rules": [
+        { "id": "ungraded-or-low", "when": { "not": { "in": ["$.tool.labels.mcpGrade", ["A", "B"]] } }, "effect": "DENY", "reason": "MCP tools are used only from servers that scanned at grade B or better" },
+        { "id": "graded-reads", "when": { "eq": ["$.tool.effect", "read"] }, "effect": "ALLOW", "reason": "a read from a server that scanned well" },
+        {
+          "id": "graded-writes",
+          "when": { "in": ["$.tool.effect", ["write", "irreversible"]] },
+          "effect": "REQUIRE_APPROVAL",
+          "reason": "a write through an MCP server needs its owner's approval",
+          "approval": { "approvers": ["role:mcp-owner"], "minApprovals": 1, "expiresInSeconds": 3600, "requireSeparationOfDuties": true }
+        }
+      ],
+      "fallback": { "effect": "DENY", "reason": "no rule matched" }
+    }
+  ],
+  "scenarios": [
+    { "id": "reads-from-a", "agent": "research-agent", "tool": "docs.search", "parameters": { "query": "rotation" }, "expect": "executed", "policyId": "PACK-MCP-001" },
+    { "id": "write-to-b-is-held", "agent": "research-agent", "tool": "tracker.create_issue", "parameters": { "title": "t" }, "expect": "pending_approval" },
+    { "id": "write-after-owner-approves", "agent": "research-agent", "tool": "tracker.create_issue", "parameters": { "title": "t2" }, "expect": "pending_approval", "approveAs": "integrations@client.example" },
+    { "id": "grade-d-denied", "agent": "research-agent", "tool": "legacy.lookup", "parameters": { "id": "1" }, "expect": "denied", "policyId": "PACK-MCP-001" },
+    { "id": "unscanned-denied", "agent": "research-agent", "tool": "unscanned.fetch", "parameters": { "id": "1" }, "expect": "denied", "policyId": "PACK-MCP-001" },
+    { "id": "malformed-issue", "agent": "research-agent", "tool": "tracker.create_issue", "parameters": {}, "expect": "refused" }
+  ]
+}

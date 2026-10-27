@@ -37,6 +37,8 @@
     "@arc-control/connector-mcp": "2.0.0",
     "@arc-control/assurance": "2.0.0",
     "@arc-control/operator-identity": "2.1.0",
-    "@arc-control/notify": "2.1.0"
+    "@arc-control/notify": "2.1.0",
+    "@arc-control/spend": "2.3.0",
+    "@arc-control/prompt-review": "2.3.0"
   }
 }

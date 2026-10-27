@@ -29,6 +29,9 @@ export const ID_PREFIXES = {
   session: 'arc_ses',
   channel: 'arc_ch',
   delivery: 'arc_dlv',
+  // 2.3 — spend control.
+  spend: 'arc_spd',
+  budget: 'arc_bdg',
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

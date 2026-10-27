@@ -102,4 +102,7 @@ jobs:
           echo "--- the audit chain must verify ---"
           curl -fsS localhost:8787/v1/audit/verify -H "authorization: Bearer smoke-token"
 
+          echo "--- the deploy skill's smoke test, against the image ---"
+          node tools/harness/deploy-smoke.mjs --base http://localhost:8787 --operator-token smoke-token --agent-key "$KEY"
+
           docker rm -f arc-smoke

@@ -234,3 +234,4 @@ function isLoopback(hostname: string): boolean {
 function describe(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
+export { vetEndpoint, classifyAddress, type EndpointVetting, type EndpointProbe, type VetOptions, type VettingFinding } from './vet.js';

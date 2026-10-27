@@ -1,0 +1,87 @@
+name: Meridian harness
+
+# Runs the external whole-product harness (aking-beep/arc-control-sandbox:
+# 17 integration scenarios, Phase 2, stress, product surface, industry packs
+# and route coverage) against this commit. A failure here means ARC behaved
+# differently from what an independent target system observed, or ARC grew a
+# route nothing tests.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      sandbox_ref:
+        description: arc-control-sandbox branch to run
+        default: main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sandbox-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  harness:
+    name: Whole-product harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: arc-control
+
+      - uses: actions/checkout@v4
+        with:
+          repository: aking-beep/arc-control-sandbox
+          ref: ${{ inputs.sandbox_ref || 'main' }}
+          path: arc-control-sandbox
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build ARC Control
+        working-directory: arc-control
+        run: |
+          npm ci --ignore-scripts
+          npm run build
+
+      - name: Harness unit tests and route coverage
+        working-directory: arc-control-sandbox
+        run: |
+          npm test
+          npm run coverage -- --strict
+
+      - name: Start the integrated stack
+        working-directory: arc-control-sandbox
+        run: |
+          npm run preflight
+          nohup npm start > stack.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fs http://127.0.0.1:8890/api/health | grep -q '"gatewayConfigured":true'; then exit 0; fi
+            sleep 1
+          done
+          cat stack.log
+          exit 1
+
+      - name: Whole-product run
+        working-directory: arc-control-sandbox
+        run: npm run product -- --quick
+
+      - name: Job summary
+        if: always()
+        working-directory: arc-control-sandbox
+        run: node src/ci-summary.mjs
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: meridian-harness-reports
+          path: |
+            arc-control-sandbox/reports/*.json
+            arc-control-sandbox/stack.log
+          if-no-files-found: warn

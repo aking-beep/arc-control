@@ -1,0 +1,28 @@
+name: Client onboarding
+description: Configure ARC Control for a client. Labelling starts the arc-client-onboarder agent, which opens a profile PR.
+labels: [client-onboarding]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        No secrets, real hostnames or personal data here — the profile is committed to git. Real connector URLs
+        and credentials are deployment configuration. Format and checks: docs/harness/CLIENTS.md.
+  - type: input
+    id: client-id
+    attributes: { label: Client id, description: "lowercase letters, digits, dashes", placeholder: acme }
+    validations: { required: true }
+  - type: textarea
+    id: systems
+    attributes: { label: Systems and actions, description: "Each action agents will take: what it does, and whether it is read, write or irreversible." }
+    validations: { required: true }
+  - type: textarea
+    id: agents
+    attributes: { label: Agents and owners, description: "Each agent, its purpose and the accountable human or team." }
+    validations: { required: true }
+  - type: textarea
+    id: approvals
+    attributes: { label: Approvals, description: "Who may approve what, thresholds, and whether an agent's owner may approve its actions." }
+    validations: { required: true }
+  - type: textarea
+    id: environments
+    attributes: { label: Environments and constraints }

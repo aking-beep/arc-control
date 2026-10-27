@@ -1,0 +1,82 @@
+name: Meridian validation
+
+# The independent check: the Meridian synthetic enterprise
+# (aking-beep/arc-control-sandbox) drives this checkout over HTTP and counts
+# real business effects. Its expected outcomes live in another repository and
+# are never edited here. Runs on changes to the decision path, nightly, and on
+# demand. See .claude/skills/meridian-validate/SKILL.md.
+
+on:
+  pull_request:
+    paths:
+      - 'packages/gateway/**'
+      - 'packages/approvals/**'
+      - 'packages/agent-identity/**'
+      - 'packages/operator-identity/**'
+      - 'packages/policy-engine/**'
+      - 'packages/execution/**'
+      - 'packages/evidence/**'
+      - 'packages/audit/**'
+      - 'packages/store/**'
+      - 'connectors/**'
+      - 'apps/control-api/**'
+  schedule:
+    - cron: '23 5 * * *'
+  workflow_dispatch:
+    inputs:
+      sandbox_ref:
+        description: Sandbox commit or branch to validate against
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: meridian-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned so a sandbox change cannot silently change what "pass" means here.
+  # Move it deliberately, in a PR that says why.
+  SANDBOX_REF: a9499a8d6b0eb323a560acd67994e61f6a0f4821
+
+jobs:
+  meridian:
+    name: Meridian integration, Phase 2 and stress
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: arc-control
+
+      - uses: actions/checkout@v4
+        with:
+          repository: aking-beep/arc-control-sandbox
+          ref: ${{ inputs.sandbox_ref || env.SANDBOX_REF }}
+          path: arc-control-sandbox
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build ARC Control
+        working-directory: arc-control
+        run: npm ci --ignore-scripts && npm run build
+
+      - name: Run Meridian
+        working-directory: arc-control
+        env:
+          MERIDIAN_OUT: ${{ runner.temp }}/meridian
+        run: |
+          .claude/skills/meridian-validate/run.sh "$GITHUB_WORKSPACE/arc-control" ci "$GITHUB_WORKSPACE/arc-control-sandbox"
+          cat "$MERIDIAN_OUT/ci/result.json"
+          node -e 'const r=require(process.argv[1]); if(!r.ok){console.error("Meridian checks failed"); process.exit(1)}' "$MERIDIAN_OUT/ci/result.json"
+
+      - name: Keep the reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: meridian-${{ github.run_id }}
+          path: ${{ runner.temp }}/meridian/ci
+          retention-days: 30

@@ -1,4 +1,4 @@
-import type { Action, ActionRiskAssessment, AgentPrincipal, PolicyInput, Tool } from '@arc-control/schemas';
+import type { Action, ActionRiskAssessment, AgentPrincipal, AgentSpendInput, PolicyInput, Tool } from '@arc-control/schemas';
 
 /**
  * Builds the evaluation input from the objects the gateway already has. The
@@ -20,6 +20,10 @@ export function buildPolicyInput(args: {
    * missing.
    */
   readonly risk?: ActionRiskAssessment;
+  /** Spend so far, exposed as `$.agent.spend.*`. Absent means rules reading it do not match. */
+  readonly spend?: AgentSpendInput;
+  /** Grade of the agent's reviewed prompt, exposed as `$.agent.promptGrade`. */
+  readonly promptGrade?: string;
 }): PolicyInput {
   const at = args.requestedAt ?? new Date(args.action.requestedAt);
 
@@ -32,6 +36,8 @@ export function buildPolicyInput(args: {
       owner: args.principal.owner,
       roles: args.principal.roles,
       labels: args.principal.labels,
+      ...(args.spend ? { spend: args.spend } : {}),
+      ...(args.promptGrade ? { promptGrade: args.promptGrade } : {}),
     },
     tool: {
       name: args.tool.name,

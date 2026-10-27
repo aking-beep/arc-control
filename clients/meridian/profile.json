@@ -1,0 +1,726 @@
+{
+  "id": "meridian",
+  "name": "Meridian Commerce Group (synthetic enterprise, mirrors aking-beep/arc-control-sandbox)",
+  "organizationId": "meridian",
+  "environment": "sandbox",
+  "requirements": {
+    "separationOfDutiesForIrreversible": true
+  },
+  "tools": [
+    {
+      "name": "finance.refund",
+      "description": "Meridian synthetic finance.refund operation",
+      "system": "finance",
+      "effect": "irreversible",
+      "riskTier": "critical",
+      "connector": "meridian-http",
+      "parameters": [
+        {
+          "name": "customer",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "required": true
+        }
+      ],
+      "labels": {
+        "environment": "synthetic"
+      }
+    },
+    {
+      "name": "support.ticket_update",
+      "description": "Meridian synthetic support.ticket_update operation",
+      "system": "support",
+      "effect": "write",
+      "riskTier": "medium",
+      "connector": "meridian-http",
+      "parameters": [
+        {
+          "name": "ticketId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "labels": {
+        "environment": "synthetic"
+      }
+    },
+    {
+      "name": "it.deploy",
+      "description": "Meridian synthetic it.deploy operation",
+      "system": "it",
+      "effect": "write",
+      "riskTier": "high",
+      "connector": "meridian-http",
+      "parameters": [
+        {
+          "name": "service",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "branch",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "labels": {
+        "environment": "synthetic"
+      }
+    },
+    {
+      "name": "sales.export_customers",
+      "description": "Meridian synthetic sales.export_customers operation",
+      "system": "sales",
+      "effect": "write",
+      "riskTier": "critical",
+      "connector": "meridian-http",
+      "parameters": [
+        {
+          "name": "scope",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "labels": {
+        "environment": "synthetic"
+      }
+    },
+    {
+      "name": "hr.salary_read",
+      "description": "Meridian synthetic hr.salary_read operation",
+      "system": "hr",
+      "effect": "read",
+      "riskTier": "high",
+      "connector": "meridian-http",
+      "parameters": [
+        {
+          "name": "employeeId",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "labels": {
+        "environment": "synthetic"
+      }
+    },
+    {
+      "name": "security.quarantine",
+      "description": "Meridian synthetic security.quarantine operation",
+      "system": "security",
+      "effect": "write",
+      "riskTier": "high",
+      "connector": "meridian-http",
+      "parameters": [
+        {
+          "name": "resource",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "reason",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "labels": {
+        "environment": "synthetic"
+      }
+    }
+  ],
+  "agents": [
+    {
+      "name": "finance-agent",
+      "owner": "finance-agent@meridian.example",
+      "roles": [
+        "finance"
+      ],
+      "declaredTools": [
+        "finance.refund"
+      ],
+      "governance": {
+        "purpose": "Operate finance.refund under ARC policy",
+        "department": "finance",
+        "criticality": "high",
+        "deploymentRef": "arc-control-sandbox",
+        "dataClassification": [
+          "synthetic"
+        ]
+      }
+    },
+    {
+      "name": "support-agent",
+      "owner": "support-agent@meridian.example",
+      "roles": [
+        "support"
+      ],
+      "declaredTools": [
+        "support.ticket_update"
+      ],
+      "governance": {
+        "purpose": "Operate support.ticket_update under ARC policy",
+        "department": "support",
+        "criticality": "high",
+        "deploymentRef": "arc-control-sandbox",
+        "dataClassification": [
+          "synthetic"
+        ]
+      }
+    },
+    {
+      "name": "it-agent",
+      "owner": "it-agent@meridian.example",
+      "roles": [
+        "it"
+      ],
+      "declaredTools": [
+        "it.deploy"
+      ],
+      "governance": {
+        "purpose": "Operate it.deploy under ARC policy",
+        "department": "it",
+        "criticality": "high",
+        "deploymentRef": "arc-control-sandbox",
+        "dataClassification": [
+          "synthetic"
+        ]
+      }
+    },
+    {
+      "name": "sales-agent",
+      "owner": "sales-agent@meridian.example",
+      "roles": [
+        "sales"
+      ],
+      "declaredTools": [
+        "sales.export_customers"
+      ],
+      "governance": {
+        "purpose": "Operate sales.export_customers under ARC policy",
+        "department": "sales",
+        "criticality": "high",
+        "deploymentRef": "arc-control-sandbox",
+        "dataClassification": [
+          "synthetic"
+        ]
+      }
+    },
+    {
+      "name": "hr-agent",
+      "owner": "hr-agent@meridian.example",
+      "roles": [
+        "hr"
+      ],
+      "declaredTools": [
+        "hr.salary_read"
+      ],
+      "governance": {
+        "purpose": "Operate hr.salary_read under ARC policy",
+        "department": "hr",
+        "criticality": "high",
+        "deploymentRef": "arc-control-sandbox",
+        "dataClassification": [
+          "synthetic"
+        ]
+      }
+    },
+    {
+      "name": "security-agent",
+      "owner": "security-agent@meridian.example",
+      "roles": [
+        "security"
+      ],
+      "declaredTools": [
+        "security.quarantine"
+      ],
+      "governance": {
+        "purpose": "Operate security.quarantine under ARC policy",
+        "department": "security",
+        "criticality": "high",
+        "deploymentRef": "arc-control-sandbox",
+        "dataClassification": [
+          "synthetic"
+        ]
+      }
+    }
+  ],
+  "approvers": [
+    {
+      "identifier": "controller@meridian.example",
+      "roles": [
+        "finance-manager"
+      ]
+    },
+    {
+      "identifier": "security-lead@meridian.example",
+      "roles": [
+        "security-manager"
+      ]
+    },
+    {
+      "identifier": "hr-lead@meridian.example",
+      "roles": [
+        "hr-manager"
+      ]
+    }
+  ],
+  "policies": [
+    {
+      "id": "MER-FIN-001",
+      "version": 1,
+      "name": "Meridian finance.refund policy",
+      "enabled": true,
+      "match": {
+        "tools": [
+          "finance.refund"
+        ]
+      },
+      "rules": [
+        {
+          "id": "different-agent",
+          "when": {
+            "ne": [
+              "$.agent.name",
+              "finance-agent"
+            ]
+          },
+          "effect": "DENY",
+          "reason": "only finance-agent may request this operation"
+        },
+        {
+          "id": "under-500",
+          "when": {
+            "lt": [
+              "$.action.parameters.amount",
+              500
+            ]
+          },
+          "effect": "ALLOW",
+          "reason": "within autonomous refund authority"
+        },
+        {
+          "id": "manager-approval",
+          "when": {
+            "lte": [
+              "$.action.parameters.amount",
+              2500
+            ]
+          },
+          "effect": "REQUIRE_APPROVAL",
+          "reason": "finance manager must approve",
+          "approval": {
+            "approvers": [
+              "role:finance-manager"
+            ],
+            "minApprovals": 1,
+            "expiresInSeconds": 3600,
+            "requireSeparationOfDuties": true
+          }
+        },
+        {
+          "id": "over-ceiling",
+          "when": {
+            "always": true
+          },
+          "effect": "DENY",
+          "reason": "refund exceeds absolute ceiling"
+        }
+      ],
+      "fallback": {
+        "effect": "DENY",
+        "reason": "no authorized rule matched"
+      }
+    },
+    {
+      "id": "MER-SUP-001",
+      "version": 1,
+      "name": "Meridian support.ticket_update policy",
+      "enabled": true,
+      "match": {
+        "tools": [
+          "support.ticket_update"
+        ]
+      },
+      "rules": [
+        {
+          "id": "different-agent",
+          "when": {
+            "ne": [
+              "$.agent.name",
+              "support-agent"
+            ]
+          },
+          "effect": "DENY",
+          "reason": "only support-agent may request this operation"
+        },
+        {
+          "id": "ticket-update",
+          "when": {
+            "always": true
+          },
+          "effect": "ALLOW",
+          "reason": "ticket updates allowed"
+        }
+      ],
+      "fallback": {
+        "effect": "DENY",
+        "reason": "no authorized rule matched"
+      }
+    },
+    {
+      "id": "MER-IT-001",
+      "version": 1,
+      "name": "Meridian it.deploy policy",
+      "enabled": true,
+      "match": {
+        "tools": [
+          "it.deploy"
+        ]
+      },
+      "rules": [
+        {
+          "id": "different-agent",
+          "when": {
+            "ne": [
+              "$.agent.name",
+              "it-agent"
+            ]
+          },
+          "effect": "DENY",
+          "reason": "only it-agent may request this operation"
+        },
+        {
+          "id": "protected-branch",
+          "when": {
+            "in": [
+              "$.action.parameters.branch",
+              [
+                "main",
+                "master",
+                "release"
+              ]
+            ]
+          },
+          "effect": "DENY",
+          "reason": "protected branch cannot be deployed by agent"
+        },
+        {
+          "id": "sandbox-deploy",
+          "when": {
+            "always": true
+          },
+          "effect": "ALLOW",
+          "reason": "development deployment allowed"
+        }
+      ],
+      "fallback": {
+        "effect": "DENY",
+        "reason": "no authorized rule matched"
+      }
+    },
+    {
+      "id": "MER-SALES-001",
+      "version": 1,
+      "name": "Meridian sales.export_customers policy",
+      "enabled": true,
+      "match": {
+        "tools": [
+          "sales.export_customers"
+        ]
+      },
+      "rules": [
+        {
+          "id": "different-agent",
+          "when": {
+            "ne": [
+              "$.agent.name",
+              "sales-agent"
+            ]
+          },
+          "effect": "DENY",
+          "reason": "only sales-agent may request this operation"
+        },
+        {
+          "id": "review-export",
+          "when": {
+            "always": true
+          },
+          "effect": "REQUIRE_APPROVAL",
+          "reason": "CRM bulk export requires review",
+          "approval": {
+            "approvers": [
+              "role:security-manager"
+            ],
+            "minApprovals": 1,
+            "expiresInSeconds": 3600,
+            "requireSeparationOfDuties": true
+          }
+        }
+      ],
+      "fallback": {
+        "effect": "DENY",
+        "reason": "no authorized rule matched"
+      }
+    },
+    {
+      "id": "MER-HR-001",
+      "version": 1,
+      "name": "Meridian hr.salary_read policy",
+      "enabled": true,
+      "match": {
+        "tools": [
+          "hr.salary_read"
+        ]
+      },
+      "rules": [
+        {
+          "id": "different-agent",
+          "when": {
+            "ne": [
+              "$.agent.name",
+              "hr-agent"
+            ]
+          },
+          "effect": "DENY",
+          "reason": "only hr-agent may request this operation"
+        },
+        {
+          "id": "review-salary",
+          "when": {
+            "always": true
+          },
+          "effect": "REQUIRE_APPROVAL",
+          "reason": "salary access requires HR approval",
+          "approval": {
+            "approvers": [
+              "role:hr-manager"
+            ],
+            "minApprovals": 1,
+            "expiresInSeconds": 3600,
+            "requireSeparationOfDuties": true
+          }
+        }
+      ],
+      "fallback": {
+        "effect": "DENY",
+        "reason": "no authorized rule matched"
+      }
+    },
+    {
+      "id": "MER-SEC-001",
+      "version": 1,
+      "name": "Meridian security.quarantine policy",
+      "enabled": true,
+      "match": {
+        "tools": [
+          "security.quarantine"
+        ]
+      },
+      "rules": [
+        {
+          "id": "different-agent",
+          "when": {
+            "ne": [
+              "$.agent.name",
+              "security-agent"
+            ]
+          },
+          "effect": "DENY",
+          "reason": "only security-agent may request this operation"
+        },
+        {
+          "id": "review-quarantine",
+          "when": {
+            "always": true
+          },
+          "effect": "REQUIRE_APPROVAL",
+          "reason": "system quarantine requires human approval",
+          "approval": {
+            "approvers": [
+              "role:security-manager"
+            ],
+            "minApprovals": 1,
+            "expiresInSeconds": 3600,
+            "requireSeparationOfDuties": true
+          }
+        }
+      ],
+      "fallback": {
+        "effect": "DENY",
+        "reason": "no authorized rule matched"
+      }
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "refund-allow",
+      "agent": "finance-agent",
+      "tool": "finance.refund",
+      "parameters": {
+        "customer": "cus-101",
+        "amount": 120
+      },
+      "expect": "executed",
+      "policyId": "MER-FIN-001"
+    },
+    {
+      "id": "refund-pending",
+      "agent": "finance-agent",
+      "tool": "finance.refund",
+      "parameters": {
+        "customer": "cus-101",
+        "amount": 1800
+      },
+      "expect": "pending_approval"
+    },
+    {
+      "id": "refund-approve",
+      "agent": "finance-agent",
+      "tool": "finance.refund",
+      "parameters": {
+        "customer": "cus-101",
+        "amount": 1800
+      },
+      "expect": "pending_approval",
+      "approveAs": "controller@meridian.example"
+    },
+    {
+      "id": "refund-deny",
+      "agent": "finance-agent",
+      "tool": "finance.refund",
+      "parameters": {
+        "customer": "cus-101",
+        "amount": 4200
+      },
+      "expect": "denied",
+      "policyId": "MER-FIN-001"
+    },
+    {
+      "id": "wrong-agent",
+      "agent": "sales-agent",
+      "tool": "finance.refund",
+      "parameters": {
+        "customer": "cus-101",
+        "amount": 120
+      },
+      "expect": "denied"
+    },
+    {
+      "id": "unknown-tool",
+      "agent": "finance-agent",
+      "tool": "finance.transfer",
+      "parameters": {
+        "account": "secret",
+        "amount": 4000
+      },
+      "expect": "refused"
+    },
+    {
+      "id": "wrong-type",
+      "agent": "finance-agent",
+      "tool": "finance.refund",
+      "parameters": {
+        "customer": "cus-101",
+        "amount": "120"
+      },
+      "expect": "refused"
+    },
+    {
+      "id": "support-allow",
+      "agent": "support-agent",
+      "tool": "support.ticket_update",
+      "parameters": {
+        "ticketId": "T-1001",
+        "status": "resolved"
+      },
+      "expect": "executed"
+    },
+    {
+      "id": "support-wrong-agent",
+      "agent": "it-agent",
+      "tool": "support.ticket_update",
+      "parameters": {
+        "ticketId": "T-1001",
+        "status": "closed"
+      },
+      "expect": "denied"
+    },
+    {
+      "id": "protected-deploy",
+      "agent": "it-agent",
+      "tool": "it.deploy",
+      "parameters": {
+        "service": "checkout",
+        "branch": "main"
+      },
+      "expect": "denied"
+    },
+    {
+      "id": "development-deploy",
+      "agent": "it-agent",
+      "tool": "it.deploy",
+      "parameters": {
+        "service": "checkout",
+        "branch": "develop"
+      },
+      "expect": "executed"
+    },
+    {
+      "id": "export-pending",
+      "agent": "sales-agent",
+      "tool": "sales.export_customers",
+      "parameters": {
+        "scope": "all"
+      },
+      "expect": "pending_approval"
+    },
+    {
+      "id": "export-approve",
+      "agent": "sales-agent",
+      "tool": "sales.export_customers",
+      "parameters": {
+        "scope": "emea"
+      },
+      "expect": "pending_approval",
+      "approveAs": "security-lead@meridian.example"
+    },
+    {
+      "id": "salary-pending",
+      "agent": "hr-agent",
+      "tool": "hr.salary_read",
+      "parameters": {
+        "employeeId": "emp-201"
+      },
+      "expect": "pending_approval"
+    },
+    {
+      "id": "quarantine-pending",
+      "agent": "security-agent",
+      "tool": "security.quarantine",
+      "parameters": {
+        "resource": "vm-17",
+        "reason": "beaconing"
+      },
+      "expect": "pending_approval"
+    },
+    {
+      "id": "quarantine-approve",
+      "agent": "security-agent",
+      "tool": "security.quarantine",
+      "parameters": {
+        "resource": "vm-18",
+        "reason": "beaconing"
+      },
+      "expect": "pending_approval",
+      "approveAs": "security-lead@meridian.example"
+    }
+  ]
+}

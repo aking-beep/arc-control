@@ -73,7 +73,18 @@ export type AuditEventType =
   // A lifecycle change the registry refused — reviving a retired agent, or
   // issuing it a key. The attempt is the signal, so it is kept, not just
   // returned to the caller as a 409.
-  | 'agent.transition_refused';
+  | 'agent.transition_refused'
+  // 2.3 — portfolio capabilities (ADR-0002). Budgets change what agents may
+  // do, spend is the input they decide on, and a refused registration or
+  // activation is a control working — all three belong in the chain.
+  | 'budget.created'
+  | 'budget.updated'
+  | 'spend.reported'
+  | 'spend.ingested'
+  | 'spend.incident'
+  | 'mcp.registration_refused'
+  | 'agent.activation_refused'
+  | 'tool.registration_refused';
 
 export interface AuditRecord {
   readonly id: string;

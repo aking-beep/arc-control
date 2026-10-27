@@ -56,6 +56,21 @@ export interface AgentGovernance {
   readonly reviewNote?: string;
 }
 
+/**
+ * What ARC keeps of a prompt review: the outcome and a digest of what was
+ * reviewed — never the prompt, which is the likeliest place for a secret.
+ */
+export interface AgentPromptReview {
+  readonly grade: 'A' | 'B' | 'C' | 'D' | 'F';
+  readonly score: number;
+  /** `sha256:` digest of the reviewed prompt, so a later prompt can be matched against it. */
+  readonly promptDigest: string;
+  /** Ids of the checks that failed. */
+  readonly failed: readonly string[];
+  readonly reviewedAt: string;
+  readonly reviewedBy: string;
+}
+
 /** Fields a governance record must carry to count as complete. */
 export const REQUIRED_GOVERNANCE_FIELDS = ['purpose', 'criticality'] as const;
 
@@ -82,6 +97,12 @@ export interface Agent {
   readonly labels: Readonly<Record<string, string>>;
   /** Business and governance context. Absent on agents registered before 2.0. */
   readonly governance?: AgentGovernance;
+  /**
+   * The latest static review of the agent's system prompt (2.3). Reaches
+   * policy as `$.agent.promptGrade`, and gates activation once a minimum
+   * grade is configured.
+   */
+  readonly promptReview?: AgentPromptReview;
   /** Set when the agent was retired, so a retirement is dated rather than implied. */
   readonly retiredAt?: string;
   readonly createdAt: string;

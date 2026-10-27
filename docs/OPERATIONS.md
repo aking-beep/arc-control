@@ -33,6 +33,24 @@ assume a single node and a volume for `ARC_DATA_DIR`.
 | `ARC_OPERATOR_TOKEN` | The shared operator token. Unset means every operator endpoint refuses every request. |
 | `ARC_SEED_DEMO` | Loads the worked example. Reported on `/health` so the console can label the environment as a demonstration. |
 
+### Spend control and gates (2.3)
+
+All off until set. A value that cannot be read refuses to start rather than being ignored. See [ADR-0002](./adr/0002-portfolio-capabilities.md) and [releases/2.3.md](./releases/2.3.md).
+
+| Variable | Effect |
+| --- | --- |
+| `ARC_ANTHROPIC_ADMIN_KEY` | Fetches verified spend from Anthropic's Admin API cost report on each scheduler tick. Held in memory and never recorded. |
+| `ARC_SPEND_ATTRIBUTION` | Maps provider workspaces to agent names, e.g. `workspace:wrkspc_01ab=support-agent`. Unmapped spend counts toward organization budgets only. |
+| `ARC_SPEND_SPIKE` | `multiplier,minimumUsd,baselineDays`, e.g. `3,20,7`. Raises `spend.incident` when an agent's spend today is a spike against its own baseline. |
+| `ARC_SPEND_ON_SPIKE` | `record` (the default) or `suspend`, which also suspends the agent. Needs `ARC_SPEND_SPIKE`. |
+| `ARC_MCP_MIN_GRADE` | `A` to `F`. MCP tools register only through `POST /v1/mcp/register`, and only from a server at this grade or better. |
+| `ARC_PROMPT_MIN_GRADE` | `A` to `F`. Agents register as drafts and become active, or resume, only with a prompt review at this grade or better. |
+| `ARC_ENDPOINT_VETTING` | `true` vets every URL-bearing tool's endpoint at registration. |
+| `ARC_ENDPOINT_PRIVATE_HOSTS` | Comma-separated hosts allowed to resolve to private addresses (sanctioned internal APIs). Link-local and metadata addresses are refused regardless. |
+| `ARC_ENDPOINT_MIN_CERT_DAYS` | A certificate expiring sooner than this is refused. Defaults to 14. |
+
+Budgets themselves are data, not configuration. Create them with `POST /v1/budgets`.
+
 ### Signing operators in
 
 Three ways, and ARC records which one identified each person, because a real

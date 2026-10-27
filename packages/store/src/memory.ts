@@ -22,6 +22,8 @@ import type {
   PolicyVersionRecord,
   Risk,
   Tool,
+  Budget,
+  SpendRecord,
 } from '@arc-control/schemas';
 import { Mutex } from './mutex.js';
 import type { AuditLogStore, Collection, ControlStore, LogReadOptions } from './types.js';
@@ -251,6 +253,9 @@ export class MemoryStore implements ControlStore {
 
   readonly notificationChannels = new MemoryCollection<NotificationChannel>();
   readonly notificationDeliveries = new MemoryCollection<NotificationDelivery>();
+
+  readonly spend = new MemoryCollection<SpendRecord>();
+  readonly budgets = new MemoryCollection<Budget>();
 
   async close(): Promise<void> {
     /* nothing to release */

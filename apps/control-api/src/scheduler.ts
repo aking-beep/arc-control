@@ -3,6 +3,7 @@ import type { Gateway } from '@arc-control/gateway';
 import type { Notifier } from '@arc-control/notify';
 import type { SessionManager } from '@arc-control/operator-identity';
 import type { NotificationEvent } from '@arc-control/schemas';
+import type { SpendMonitor } from '@arc-control/spend';
 
 /**
  * The unattended half of the product.
@@ -24,6 +25,11 @@ export interface SchedulerOptions {
   readonly assurance: AssuranceEngine;
   readonly notifier?: Notifier;
   readonly sessions?: SessionManager;
+  /**
+   * Pulls verified spend from providers and acts on runaways (2.3). Absent
+   * unless a provider is configured: no provider, no ingestion.
+   */
+  readonly spendMonitor?: Pick<SpendMonitor, 'tick'>;
   /** How often a tick runs. */
   readonly intervalMs?: number;
   /** How often a full assessment runs. Longer than a tick: assessments are not free. */
@@ -47,6 +53,10 @@ export interface TickResult {
   readonly deliveriesAttempted: number;
   readonly deliveriesAbandoned: number;
   readonly sessionsPruned: number;
+  /** Provider spend rows recorded this tick. */
+  readonly spendIngested: number;
+  /** Agents whose spend spiked this tick. */
+  readonly spendIncidents: number;
   /** Anything that went wrong, named. An empty list is the only clean tick. */
   readonly problems: readonly string[];
 }
@@ -116,6 +126,8 @@ export class Scheduler {
     let deliveriesAttempted = 0;
     let deliveriesAbandoned = 0;
     let sessionsPruned = 0;
+    let spendIngested = 0;
+    let spendIncidents = 0;
 
     try {
       // 1. Warn before a decision is lost, not after.
@@ -167,6 +179,22 @@ export class Scheduler {
           problems.push(`could not prune expired sessions: ${describe(cause)}`);
         }
       }
+
+      // A provider that cannot be read is a problem, not an empty month:
+      // budgets keep counting what was last recorded, and somebody should know
+      // the figures are going stale.
+      if (this.#options.spendMonitor !== undefined) {
+        try {
+          const spend = await this.#options.spendMonitor.tick();
+          spendIngested = spend.ingested;
+          spendIncidents = spend.incidents.length;
+          for (const failure of spend.failures) {
+            problems.push(`could not read spend from ${failure.provider}: ${failure.error}`);
+          }
+        } catch (cause) {
+          problems.push(`could not run the spend monitor: ${describe(cause)}`);
+        }
+      }
     } finally {
       this.#running = false;
     }
@@ -181,6 +209,8 @@ export class Scheduler {
       deliveriesAttempted,
       deliveriesAbandoned,
       sessionsPruned,
+      spendIngested,
+      spendIncidents,
       problems,
     };
 
@@ -323,6 +353,8 @@ export class Scheduler {
       deliveriesAttempted: 0,
       deliveriesAbandoned: 0,
       sessionsPruned: 0,
+      spendIngested: 0,
+      spendIncidents: 0,
       problems,
     };
   }

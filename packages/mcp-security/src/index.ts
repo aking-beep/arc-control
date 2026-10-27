@@ -15,3 +15,5 @@ export {
   type DriftReport,
   type ScanOptions,
 } from './scanner.js';
+export { checkConformance, KNOWN_PROTOCOL_VERSIONS } from './conformance.js';
+export { gradeScan, compareGrades, isGrade, GRADES, type McpGrade, type McpGradeResult } from './grade.js';

@@ -1,0 +1,58 @@
+{
+  "$comment": "Level 4 (measured) definitions: every skill's outcome metrics, their source and their target. Collected by tools/harness/measure.mjs; history kept on the harness-metrics branch by .github/workflows/harness-metrics.yaml. A metric whose source is unavailable is reported as unmeasured, never as met. See docs/harness/SKILLS.md.",
+  "measuredFrom": "2026-10-27T00:00:00Z",
+  "metrics": [
+    { "id": "verify.main_ci_success_rate", "skill": "verify", "source": "github-ci", "key": "success_rate", "target": { "op": ">=", "value": 0.95 },
+      "description": "Share of the last 30 completed CI runs on main that succeeded." },
+    { "id": "verify.main_ci_runs", "skill": "verify", "source": "github-ci", "key": "runs", "target": { "op": ">=", "value": 1 },
+      "description": "Completed CI runs on main in the sample (the rate is meaningless without them)." },
+
+    { "id": "deliver.gate_pass_rate", "skill": "deliver", "source": "github-prs", "key": "delivery_gate_pass_rate", "target": { "op": ">=", "value": 1 },
+      "description": "Share of PRs merged since measurement began that passed the delivery gates (tools/harness/pr-audit.mjs), waivers counting as passes." },
+    { "id": "deliver.waiver_rate", "skill": "deliver", "source": "github-prs", "key": "waiver_rate", "target": { "op": "<=", "value": 0.2 },
+      "description": "Share of merged PRs that waived a delivery gate. Waivers are allowed; a rising rate means the gates are wrong or being avoided." },
+
+    { "id": "security.oldest_open_days", "skill": "security-remediation", "source": "findings", "key": "oldest_open_days", "target": { "op": "<=", "value": 14 },
+      "description": "Age in days of the oldest open or in-progress finding." },
+    { "id": "security.open_critical", "skill": "security-remediation", "source": "findings", "key": "open_critical", "target": { "op": "<=", "value": 0 },
+      "description": "Open critical findings." },
+    { "id": "security.fixed_with_tests_rate", "skill": "security-remediation", "source": "findings", "key": "fixed_with_regression_tests_rate", "target": { "op": ">=", "value": 1 },
+      "description": "Share of fixed findings that name an existing regression test." },
+    { "id": "security.median_days_to_fix", "skill": "security-remediation", "source": "findings", "key": "median_days_to_fix", "target": { "op": "<=", "value": 7 },
+      "description": "Median days from a finding being found to being fixed." },
+
+    { "id": "meridian.integration_failed", "skill": "meridian-validate", "source": "meridian", "key": "integration_failed", "target": { "op": "<=", "value": 0 },
+      "description": "Meridian's original 17 integration scenarios that failed." },
+    { "id": "meridian.phase2_fail", "skill": "meridian-validate", "source": "meridian", "key": "phase2_fail", "target": { "op": "<=", "value": 0 },
+      "description": "Meridian Phase 2 implemented checks that failed." },
+    { "id": "meridian.stress_failed_presets", "skill": "meridian-validate", "source": "meridian", "key": "stress_failed_presets", "target": { "op": "<=", "value": 0 },
+      "description": "Meridian stress presets (100/500/1000 x 3 seeds) that failed." },
+
+    { "id": "clients.profiles_invalid", "skill": "client-onboarding", "source": "client-profiles", "key": "profiles_invalid", "target": { "op": "<=", "value": 0 },
+      "description": "Client profiles that do not validate against this build." },
+    { "id": "clients.scenario_pass_rate", "skill": "client-onboarding", "source": "client-profiles", "key": "scenario_pass_rate", "target": { "op": ">=", "value": 1 },
+      "description": "Share of client scenarios producing their expected outcome and effect count." },
+    { "id": "clients.warnings_total", "skill": "client-onboarding", "source": "client-profiles", "key": "warnings_total", "target": { "op": "<=", "value": 0 },
+      "description": "Validator warnings across all client profiles. Each one is fixed or accepted in the client's README." },
+
+    { "id": "steward.green_at_merge_rate", "skill": "steward", "source": "github-prs", "key": "green_at_merge_rate", "target": { "op": ">=", "value": 1 },
+      "description": "Share of PRs merged since measurement began whose head checks were green." },
+    { "id": "steward.unresolved_threads_at_merge", "skill": "steward", "source": "github-prs", "key": "unresolved_threads_at_merge", "target": { "op": "<=", "value": 0 },
+      "description": "Review threads left unresolved on PRs when they merged." },
+    { "id": "steward.median_hours_to_merge", "skill": "steward", "source": "github-prs", "key": "median_hours_to_merge", "target": { "op": "<=", "value": 72 },
+      "description": "Median hours from a PR opening to merging." },
+
+    { "id": "release.notes_passing_rate", "skill": "release-notes", "source": "release-notes", "key": "notes_passing_rate", "target": { "op": ">=", "value": 1 },
+      "description": "Share of release notes with a Verification section and a stated-limits section." },
+    { "id": "release.decision_prs_with_note_rate", "skill": "release-notes", "source": "github-prs", "key": "decision_path_prs_with_release_note_rate", "target": { "op": ">=", "value": 1 },
+      "description": "Share of merged decision-path PRs that updated a release note." },
+
+    { "id": "deploy.checks_passed_rate", "skill": "deploy", "source": "deploy", "key": "checks_passed_rate", "target": { "op": ">=", "value": 1 },
+      "description": "Share of deployment smoke checks passing: start, enforce, verify, restart, persist." },
+    { "id": "deploy.time_to_healthy_ms", "skill": "deploy", "source": "deploy", "key": "time_to_healthy_ms", "target": { "op": "<=", "value": 10000 },
+      "description": "Milliseconds from process start to a healthy /health on a durable store." },
+
+    { "id": "harness.problems", "skill": "harness", "source": "harness", "key": "problems", "target": { "op": "<=", "value": 0 },
+      "description": "Problems tools/harness/check-harness.mjs finds in the agents, skills and catalogue." }
+  ]
+}

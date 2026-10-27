@@ -1,4 +1,6 @@
 import { ArcError } from '@arc-control/schemas';
+import { isGrade } from '@arc-control/mcp-security';
+import { isPromptGrade } from '@arc-control/prompt-review';
 import { consoleOrigin } from './auth-routes.js';
 import type { ControlApiOptions } from './server.js';
 
@@ -248,6 +250,71 @@ export function loadConfig(env: Env = process.env): LoadedConfig {
     }
   }
 
+  // --- 2.3: spend control and gates (ADR-0002) ---------------------------
+  //
+  // Each is off until set, and a set value that cannot be read refuses to
+  // start: a typo in a spike rule must not quietly mean "no spike rule".
+  const anthropicAdminKey = text(env.ARC_ANTHROPIC_ADMIN_KEY);
+  const attribution: Record<string, string> = {};
+  for (const [key, names] of Object.entries(mapping(env.ARC_SPEND_ATTRIBUTION) ?? {})) {
+    if (names.length !== 1) refusals.push(`ARC_SPEND_ATTRIBUTION maps "${key}" to more than one agent`);
+    else attribution[key] = names[0]!;
+  }
+  let spike: { multiplier: number; minimumUsd: number; baselineDays: number } | undefined;
+  const spikeText = text(env.ARC_SPEND_SPIKE);
+  if (spikeText !== undefined) {
+    const [multiplier, minimumUsd, baselineDays] = spikeText.split(',').map((part) => Number(part.trim()));
+    if (
+      spikeText.split(',').length !== 3 ||
+      !(Number.isFinite(multiplier) && multiplier! >= 1) ||
+      !(Number.isFinite(minimumUsd) && minimumUsd! >= 0) ||
+      !(Number.isInteger(baselineDays) && baselineDays! >= 1 && baselineDays! <= 30)
+    ) {
+      refusals.push(
+        `ARC_SPEND_SPIKE="${spikeText}" must be "multiplier,minimumUsd,baselineDays", e.g. "3,20,7" ` +
+          '(multiplier at least 1, baseline 1 to 30 days)',
+      );
+    } else {
+      spike = { multiplier: multiplier!, minimumUsd: minimumUsd!, baselineDays: baselineDays! };
+    }
+  }
+  const onSpike = text(env.ARC_SPEND_ON_SPIKE);
+  if (onSpike !== undefined && onSpike !== 'record' && onSpike !== 'suspend') {
+    refusals.push(`ARC_SPEND_ON_SPIKE="${onSpike}" must be "record" or "suspend"`);
+  }
+  if (onSpike !== undefined && spike === undefined) {
+    refusals.push('ARC_SPEND_ON_SPIKE is set but ARC_SPEND_SPIKE is not; there is no spike to act on');
+  }
+  if ((spike !== undefined || Object.keys(attribution).length > 0) && anthropicAdminKey === undefined) {
+    warnings.push(
+      'A spend spike rule or attribution is configured but no spend provider is (ARC_ANTHROPIC_ADMIN_KEY), so only ' +
+        'self-reported spend will be seen. Self-reported spend is unverified.',
+    );
+  }
+
+  const mcpMinimumGrade = text(env.ARC_MCP_MIN_GRADE);
+  if (mcpMinimumGrade !== undefined && !isGrade(mcpMinimumGrade)) {
+    refusals.push(`ARC_MCP_MIN_GRADE="${mcpMinimumGrade}" must be one of A, B, C, D, F`);
+  }
+
+  const promptMinimumGrade = text(env.ARC_PROMPT_MIN_GRADE);
+  if (promptMinimumGrade !== undefined && !isPromptGrade(promptMinimumGrade)) {
+    refusals.push(`ARC_PROMPT_MIN_GRADE="${promptMinimumGrade}" must be one of A, B, C, D, F`);
+  }
+  const endpointVetting = bool(env.ARC_ENDPOINT_VETTING) === true;
+  const minimumCertificateDaysText = text(env.ARC_ENDPOINT_MIN_CERT_DAYS);
+  const minimumCertificateDays = minimumCertificateDaysText === undefined ? undefined : Number(minimumCertificateDaysText);
+  if (minimumCertificateDays !== undefined && !(Number.isInteger(minimumCertificateDays) && minimumCertificateDays >= 0)) {
+    refusals.push(`ARC_ENDPOINT_MIN_CERT_DAYS="${String(minimumCertificateDaysText)}" must be a whole number of days`);
+  }
+  if (!endpointVetting && (minimumCertificateDaysText !== undefined || text(env.ARC_ENDPOINT_PRIVATE_HOSTS) !== undefined)) {
+    warnings.push('ARC_ENDPOINT_MIN_CERT_DAYS or ARC_ENDPOINT_PRIVATE_HOSTS is set but ARC_ENDPOINT_VETTING is not, so endpoints are not vetted.');
+  }
+  const gates = {
+    ...(mcpMinimumGrade !== undefined && isGrade(mcpMinimumGrade) ? { mcpMinimumGrade } : {}),
+    ...(promptMinimumGrade !== undefined && isPromptGrade(promptMinimumGrade) ? { promptMinimumGrade } : {}),
+  };
+
   if (refusals.length > 0) {
     throw new ArcError(
       'invalid_request',
@@ -283,6 +350,25 @@ export function loadConfig(env: Env = process.env): LoadedConfig {
     ...(webhookSigningSecret ? { webhookSigningSecret } : {}),
     ...(schedule !== undefined ? { schedule } : {}),
     ...(defaultOrganizationId ? { defaultOrganizationId } : {}),
+    ...(Object.keys(gates).length > 0 ? { gates } : {}),
+    ...(endpointVetting
+      ? {
+          endpointVetting: {
+            ...(csv(env.ARC_ENDPOINT_PRIVATE_HOSTS).length > 0 ? { allowPrivateHosts: csv(env.ARC_ENDPOINT_PRIVATE_HOSTS) } : {}),
+            ...(minimumCertificateDays !== undefined && Number.isInteger(minimumCertificateDays) ? { minimumCertificateDays } : {}),
+          },
+        }
+      : {}),
+    ...(anthropicAdminKey || spike
+      ? {
+          spend: {
+            ...(anthropicAdminKey ? { anthropicAdminKey } : {}),
+            ...(Object.keys(attribution).length > 0 ? { attribution } : {}),
+            ...(spike ? { spike } : {}),
+            ...(onSpike === 'record' || onSpike === 'suspend' ? { onSpike } : {}),
+          },
+        }
+      : {}),
     ...(issuer && clientId && redirectUri
       ? {
           oidc: {
