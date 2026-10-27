@@ -36,6 +36,31 @@ export function buildRoutes(options: RouteOptions): Router {
   // --- health -------------------------------------------------------------
 
   /**
+   * Every connector is probed and reported, but only one that an enabled tool
+   * routes to is `inService` and can make enforcement unhealthy.
+   *
+   * A disabled tool is refused before policy is consulted, so a connector with
+   * no enabled tool takes part in no outcome. Counting it would let one
+   * vendor's outage take a whole instance out of a load balancer's rotation
+   * even after its tools were switched off — the only recovery then being a
+   * restart (#17). Re-enabling a tool puts the connector back in service on
+   * the next probe; nothing is cached.
+   */
+  const connectorHealth = async (tools: readonly { connector: string; disabled?: boolean }[]) => {
+    const inService = new Set(tools.filter((tool) => tool.disabled !== true).map((tool) => tool.connector));
+    return Promise.all(
+      gateway.tools.connectors().map(async (connector) => ({
+        name: connector.name,
+        inService: inService.has(connector.name),
+        ...(connector.health ? await connector.health() : { healthy: true }),
+      })),
+    );
+  };
+  const enforcementHealthy = (connectors: readonly { inService: boolean; healthy: boolean }[]) =>
+    connectors.every((connector) => !connector.inService || connector.healthy);
+
+
+  /**
    * Health, with enforcement and assurance reported separately.
    *
    * `status` describes **enforcement only**, and that is deliberate rather
@@ -59,14 +84,8 @@ export function buildRoutes(options: RouteOptions): Router {
       gateway.audit.count(),
     ]);
 
-    const connectors = await Promise.all(
-      gateway.tools.connectors().map(async (connector) => ({
-        name: connector.name,
-        ...(connector.health ? await connector.health() : { healthy: true }),
-      })),
-    );
-
-    const enforcementOk = connectors.every((connector) => connector.healthy);
+    const connectors = await connectorHealth(tools);
+    const enforcementOk = enforcementHealthy(connectors);
     const disabledTools = tools.filter((tool) => tool.disabled === true);
 
     // Assurance is read defensively. A thrown error here must not be able to
@@ -144,14 +163,8 @@ export function buildRoutes(options: RouteOptions): Router {
    * reads nothing from assurance at all.
    */
   router.get('/health/enforcement', async () => {
-    const connectors = await Promise.all(
-      gateway.tools.connectors().map(async (connector) => ({
-        name: connector.name,
-        ...(connector.health ? await connector.health() : { healthy: true }),
-      })),
-    );
-
-    const healthy = connectors.every((connector) => connector.healthy);
+    const connectors = await connectorHealth(await gateway.tools.list());
+    const healthy = enforcementHealthy(connectors);
     return withStatus(healthy ? 200 : 503, {
       status: healthy ? 'ok' : 'degraded',
       failureMode: 'closed',

@@ -248,6 +248,60 @@ describe('health', () => {
     }
   });
 
+  /**
+   * #17: one unreachable vendor took the whole instance out of rotation, even
+   * with every tool on it disabled. A connector counts toward enforcement
+   * health only while an enabled tool routes to it, and is still reported.
+   */
+  it('counts a connector toward enforcement health only while an enabled tool uses it', async () => {
+    const h = await harness();
+    let calls = 0;
+    h.api.gateway.addConnector({
+      name: 'vendor',
+      supports: () => true,
+      execute: async () => {
+        calls += 1;
+        throw new Error('vendor is down');
+      },
+      health: async () => ({ healthy: false, detail: 'could not reach the vendor' }),
+    });
+    const tool = await h.api.gateway.tools.register({
+      name: 'vendor.lookup',
+      description: 'Read from the vendor.',
+      effect: 'read',
+      connector: 'vendor',
+    });
+    const probe = async () => {
+      const response = await fetch(`${h.base}/health/enforcement`);
+      const body = (await response.json()) as { status: string; connectors: { name: string; inService: boolean; healthy: boolean }[] };
+      return { status: response.status, body, vendor: body.connectors.find((c) => c.name === 'vendor')! };
+    };
+    const post = (path: string) => fetch(`${h.base}${path}`, { method: 'POST', headers: operator({ 'content-type': 'application/json' }), body: '{}' });
+    try {
+      const serving = await probe();
+      assert.equal(serving.status, 503, 'an unhealthy connector an enabled tool uses degrades enforcement');
+      assert.equal(serving.body.status, 'degraded');
+      assert.deepEqual([serving.vendor.inService, serving.vendor.healthy], [true, false]);
+
+      assert.equal((await post(`/v1/tools/${tool.id}/disable`)).status, 200);
+      const idle = await probe();
+      assert.equal(idle.status, 200, 'with its only tool disabled, the vendor cannot affect an outcome');
+      assert.equal(idle.body.status, 'ok');
+      assert.deepEqual([idle.vendor.inService, idle.vendor.healthy], [false, false], 'still probed and reported');
+      const full = (await (await fetch(`${h.base}/health`)).json()) as { status: string; enforcement: { status: string } };
+      assert.deepEqual([full.status, full.enforcement.status], ['ok', 'ok']);
+
+      // Fail closed is unchanged: the disabled tool is still refused, and the vendor is never called.
+      await assert.rejects(h.api.gateway.handle(h.agentKey, { tool: 'vendor.lookup', parameters: {} }), { code: 'tool_disabled' });
+      assert.equal(calls, 0);
+
+      assert.equal((await post(`/v1/tools/${tool.id}/enable`)).status, 200);
+      assert.equal((await probe()).status, 503, 're-enabling the tool puts the connector back in service on the next probe');
+    } finally {
+      await h.close();
+    }
+  });
+
   it('states that enforcement does not depend on assurance', async () => {
     const h = await harness();
     try {
