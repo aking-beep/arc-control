@@ -1,11 +1,11 @@
 {
-  "at": "2026-10-27T03:07:33.114Z",
-  "commit": "8b0eb4beacc7fba51274483a839ece52b17aa88f",
+  "at": "2026-10-27T06:40:48.942Z",
+  "commit": "92117188f9552341cf616eeaf0b61359aeafcb81",
   "ref": "refs/heads/main",
   "summary": {
-    "met": 20,
+    "met": 21,
     "breached": 1,
-    "unmeasured": 1
+    "unmeasured": 0
   },
   "metrics": [
     {
@@ -22,7 +22,7 @@
     {
       "id": "verify.main_ci_runs",
       "skill": "verify",
-      "value": 6,
+      "value": 7,
       "target": {
         "op": ">=",
         "value": 1
@@ -55,13 +55,13 @@
     {
       "id": "security.oldest_open_days",
       "skill": "security-remediation",
-      "value": 1.1302366435185185,
+      "value": 1.2783353935185184,
       "target": {
         "op": "<=",
         "value": 14
       },
       "status": "met",
-      "previous": 1.1298237268518518
+      "previous": 1.1302366435185185
     },
     {
       "id": "security.open_critical",
@@ -165,7 +165,7 @@
     {
       "id": "steward.green_at_merge_rate",
       "skill": "steward",
-      "value": 0.5,
+      "value": 0.6666666666666666,
       "target": {
         "op": ">=",
         "value": 1
@@ -187,7 +187,7 @@
     {
       "id": "steward.median_hours_to_merge",
       "skill": "steward",
-      "value": 0.26611111111111113,
+      "value": 0.27166666666666667,
       "target": {
         "op": "<=",
         "value": 72
@@ -209,12 +209,12 @@
     {
       "id": "release.decision_prs_with_note_rate",
       "skill": "release-notes",
-      "value": null,
+      "value": 1,
       "target": {
         "op": ">=",
         "value": 1
       },
-      "status": "unmeasured",
+      "status": "met",
       "previous": null
     },
     {
@@ -231,13 +231,13 @@
     {
       "id": "deploy.time_to_healthy_ms",
       "skill": "deploy",
-      "value": 231,
+      "value": 247,
       "target": {
         "op": "<=",
         "value": 10000
       },
       "status": "met",
-      "previous": 435
+      "previous": 231
     },
     {
       "id": "harness.problems",
