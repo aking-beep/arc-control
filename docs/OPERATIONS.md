@@ -133,7 +133,13 @@ its own object with its own status.
 
 **`/health/enforcement`** reads nothing from the assurance layer. Probe this
 from a load balancer or a deployment gate: it cannot be turned red by the
-governance layer. 200 when healthy, 503 when a connector is unhealthy.
+governance layer. 200 when healthy, 503 when a connector **in service** is
+unhealthy. A connector is in service while at least one enabled tool routes to
+it. Every connector is still probed and listed with `inService` and `healthy`,
+so an outage at an idle vendor stays visible without taking the instance out of
+rotation. To ride out a vendor outage, disable its tools (or use the connector
+kill switch): the probe goes back to 200 on the next request, and re-enabling a
+tool puts the connector back in service just as quickly.
 
 **`/health/ready`** answers a different question: *should traffic come here?*
 It performs a real read against the store, because the failure it exists to
