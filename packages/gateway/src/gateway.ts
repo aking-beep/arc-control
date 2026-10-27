@@ -32,7 +32,7 @@ import { buildPolicyInput, PolicyEngine, tighten } from '@arc-control/policy-eng
 import { SpendLedger } from '@arc-control/spend';
 import { PolicyStore } from './policies.js';
 import { RateLimiter, type RateLimitOptions } from './rate-limit.js';
-import { Administration } from './admin.js';
+import { Administration, type GateOptions } from './admin.js';
 import { IdempotencyLedger, type KeyClaim } from './idempotency.js';
 import { heldApprovalSatisfies, reapprovalReason, type Revalidation } from './revalidation.js';
 
@@ -59,6 +59,8 @@ export interface GatewayOptions {
   /** Runaway protection. Off unless configured; see `RateLimiter`. */
   readonly rateLimit?: RateLimitOptions;
   readonly classification?: ClassificationOptions;
+  /** Registration and activation gates (2.3). Off unless configured. */
+  readonly gates?: GateOptions;
   readonly now?: () => Date;
 }
 
@@ -143,6 +145,7 @@ export class Gateway {
       policies: this.policies,
       audit: this.audit,
       spend: this.spend,
+      ...(options.gates ? { gates: options.gates } : {}),
     });
 
     this.#policyEngine = options.policyEngine ?? new PolicyEngine(shared);

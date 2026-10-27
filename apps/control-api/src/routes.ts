@@ -1,7 +1,7 @@
 import { ArcError, type ActionRequest, type AgentGovernance, type ChainExpectation, type Policy } from '@arc-control/schemas';
 import type { Gateway } from '@arc-control/gateway';
 import type { AssuranceEngine } from '@arc-control/assurance';
-import { scanManifest, type McpServerManifest } from '@arc-control/mcp-security';
+import { gradeScan, scanManifest, type McpServerManifest } from '@arc-control/mcp-security';
 import { Router, withStatus, type RequestContext } from './http.js';
 import type { OperatorAuth } from './operator.js';
 import type { Notifier } from '@arc-control/notify';
@@ -682,11 +682,45 @@ export function buildRoutes(options: RouteOptions): Router {
     const manifest = await context.body<McpServerManifest>();
     requireFields(manifest, ['name', 'endpoint']);
 
-    return scanManifest({
+    const report = scanManifest({
       name: String(manifest.name),
       endpoint: String(manifest.endpoint),
+      ...(manifest.protocolVersion !== undefined ? { protocolVersion: String(manifest.protocolVersion) } : {}),
       tools: Array.isArray(manifest.tools) ? manifest.tools : [],
     });
+    return { ...report, ...gradeScan(report), minimumGrade: gateway.admin.gates.mcpMinimumGrade ?? null };
+  });
+
+  /**
+   * Scans a manifest and registers tools from it, or none (2.3). With the MCP
+   * gate on, this is the only way an MCP tool can be registered.
+   *
+   * The manifest here is what the operator sends. ARC scans and grades it,
+   * but cannot tell from it whether the live server advertises the same
+   * thing; the MCP connector pins what it reads from the server itself and
+   * refuses to execute once that drifts.
+   */
+  router.post('/v1/mcp/register', async (context) => {
+    const operator = await operators.authenticate(context);
+    const body = await context.body<{ manifest?: McpServerManifest; registrations?: unknown }>();
+    requireFields(body, ['manifest', 'registrations']);
+    const manifest = body.manifest!;
+    requireFields(manifest, ['name', 'endpoint']);
+    if (!Array.isArray(body.registrations)) throw new ArcError('invalid_request', 'registrations must be a list');
+
+    const result = await gateway.admin.registerMcpServer(
+      {
+        manifest: {
+          name: String(manifest.name),
+          endpoint: String(manifest.endpoint),
+          ...(manifest.protocolVersion !== undefined ? { protocolVersion: String(manifest.protocolVersion) } : {}),
+          tools: Array.isArray(manifest.tools) ? manifest.tools : [],
+        },
+        registrations: body.registrations as Parameters<typeof gateway.admin.registerMcpServer>[0]['registrations'],
+      },
+      { identifier: operator.identifier, via: 'api' },
+    );
+    return withStatus(201, result);
   });
 
   return router;

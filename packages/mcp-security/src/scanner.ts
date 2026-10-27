@@ -1,5 +1,6 @@
 import { digest } from '@arc-control/schemas';
 import { checkServer, checkToolDescription, checkToolSchema } from './checks.js';
+import { checkConformance } from './conformance.js';
 import {
   SEVERITY_ORDER,
   type Finding,
@@ -21,6 +22,7 @@ export function scanManifest(manifest: McpServerManifest, options: ScanOptions =
 
   const raw: Finding[] = [
     ...checkServer(manifest),
+    ...checkConformance(manifest),
     ...manifest.tools.flatMap((tool) => [...checkToolDescription(tool), ...checkToolSchema(tool)]),
   ];
 

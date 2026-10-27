@@ -24,6 +24,9 @@
       "path": "../../packages/spend"
     },
     {
+      "path": "../../packages/mcp-security"
+    },
+    {
       "path": "../../packages/approvals"
     },
     {

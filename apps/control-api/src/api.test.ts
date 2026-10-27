@@ -126,6 +126,11 @@ const GOVERNANCE_ROUTES: readonly { method: 'GET' | 'POST' | 'PUT'; path: string
   { method: 'PUT', path: '/v1/budgets/arc_bdg_x', body: { name: 'b', period: 'day', limitUsd: 1000, onExceeded: 'DENY' } },
   { method: 'GET', path: '/v1/spend' },
   { method: 'POST', path: '/v1/spend', body: { provider: 'anthropic', amountUsd: 0 } },
+  {
+    method: 'POST',
+    path: '/v1/mcp/register',
+    body: { manifest: { name: 'x', endpoint: 'https://x.example.com', tools: [] }, registrations: [] },
+  },
 ];
 
 describe('the governance surface is operator-only', () => {

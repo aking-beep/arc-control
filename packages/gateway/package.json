@@ -29,6 +29,7 @@
     "@arc-control/evidence": "2.0.0",
     "@arc-control/audit": "2.0.0",
     "@arc-control/execution": "2.0.0",
-    "@arc-control/spend": "2.3.0"
+    "@arc-control/spend": "2.3.0",
+    "@arc-control/mcp-security": "2.0.0"
   }
 }

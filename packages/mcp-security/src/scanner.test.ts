@@ -4,7 +4,7 @@ import { detectDrift, manifestDigest, scanManifest } from './scanner.js';
 import type { McpServerManifest } from './manifest.js';
 
 function server(tools: McpServerManifest['tools'], endpoint = 'https://mcp.example.com'): McpServerManifest {
-  return { name: 'example', endpoint, tools };
+  return { name: 'example', endpoint, protocolVersion: '2025-06-18', tools };
 }
 
 const cleanTool = {

@@ -1,4 +1,5 @@
 import { ArcError } from '@arc-control/schemas';
+import { isGrade } from '@arc-control/mcp-security';
 import { consoleOrigin } from './auth-routes.js';
 import type { ControlApiOptions } from './server.js';
 
@@ -290,6 +291,11 @@ export function loadConfig(env: Env = process.env): LoadedConfig {
     );
   }
 
+  const mcpMinimumGrade = text(env.ARC_MCP_MIN_GRADE);
+  if (mcpMinimumGrade !== undefined && !isGrade(mcpMinimumGrade)) {
+    refusals.push(`ARC_MCP_MIN_GRADE="${mcpMinimumGrade}" must be one of A, B, C, D, F`);
+  }
+
   if (refusals.length > 0) {
     throw new ArcError(
       'invalid_request',
@@ -325,6 +331,7 @@ export function loadConfig(env: Env = process.env): LoadedConfig {
     ...(webhookSigningSecret ? { webhookSigningSecret } : {}),
     ...(schedule !== undefined ? { schedule } : {}),
     ...(defaultOrganizationId ? { defaultOrganizationId } : {}),
+    ...(mcpMinimumGrade !== undefined && isGrade(mcpMinimumGrade) ? { gates: { mcpMinimumGrade } } : {}),
     ...(anthropicAdminKey || spike
       ? {
           spend: {

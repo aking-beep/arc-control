@@ -1,4 +1,5 @@
-import { digest } from '@arc-control/schemas';
+import { ArcError, digest } from '@arc-control/schemas';
+import { compareGrades, gradeScan, scanManifest, type McpGrade, type McpServerManifest } from '@arc-control/mcp-security';
 import type {
   Agent,
   AgentGovernance,
@@ -40,6 +41,21 @@ export interface AdminDependencies {
   readonly policies: PolicyStore;
   readonly audit: AuditLog;
   readonly spend: SpendLedger;
+  readonly gates?: GateOptions;
+}
+
+/**
+ * Registration and activation gates (2.3, ADR-0002). Each is off until set,
+ * and each can only refuse: a gate never makes a registration succeed that
+ * would otherwise fail.
+ */
+export interface GateOptions {
+  /**
+   * Lowest grade an MCP server may have for its tools to be registered. Once
+   * set, MCP tools can only be registered through `registerMcpServer`, which
+   * scans the server first; `registerTool` refuses them.
+   */
+  readonly mcpMinimumGrade?: McpGrade;
 }
 
 export class Administration {
@@ -47,6 +63,11 @@ export class Administration {
 
   constructor(dependencies: AdminDependencies) {
     this.#deps = dependencies;
+  }
+
+  /** The gates in force, so the API and console can say which are on. */
+  get gates(): GateOptions {
+    return this.#deps.gates ?? {};
   }
 
   async registerAgent(registration: AgentRegistration, actor: Actor): Promise<Agent> {
@@ -258,6 +279,107 @@ export class Administration {
   }
 
   async registerTool(registration: ToolRegistration, actor: Actor): Promise<Tool> {
+    // With the MCP gate on, an MCP tool registered one at a time would never
+    // be scanned — the gate would hold only for callers who chose to use it.
+    if (this.gates.mcpMinimumGrade !== undefined && registration.connector.startsWith('mcp:')) {
+      await this.#deps.audit.append({
+        type: 'mcp.registration_refused',
+        organizationId: 'default',
+        actor: actor.identifier,
+        subject: registration.name,
+        summary: `${actor.identifier} tried to register MCP tool "${registration.name}" without a scan; refused because the MCP gate is on`,
+        data: { name: registration.name, connector: registration.connector, reason: 'unscanned', via: actor.via },
+      });
+      throw new ArcError(
+        'gate_refused',
+        `"${registration.name}" runs on an MCP connector, and the MCP gate requires its server to be scanned: register it through the MCP registration path`,
+        { details: { gate: 'mcp', reason: 'unscanned' } },
+      );
+    }
+    return this.#registerTool(registration, actor);
+  }
+
+  /**
+   * Scans an MCP server's manifest, grades it, and registers the chosen tools
+   * from it — or registers none of them.
+   *
+   * The scan runs here, on the manifest, rather than accepting a report from
+   * the caller: a gate that trusted a supplied grade would be a form field.
+   * Every registration must run on this server's connector and name a tool
+   * the manifest advertises, so a clean manifest cannot carry tools from
+   * somewhere else through the gate. Each registered tool is labelled with
+   * the grade and a digest of the findings it was admitted with.
+   */
+  async registerMcpServer(
+    input: { readonly manifest: McpServerManifest; readonly registrations: readonly ToolRegistration[] },
+    actor: Actor,
+  ): Promise<{ readonly tools: readonly Tool[]; readonly grade: McpGrade; readonly score: number; readonly findings: number }> {
+    const { manifest, registrations } = input;
+    const report = scanManifest(manifest);
+    const graded = gradeScan(report);
+    const connector = `mcp:${manifest.name}`;
+    const advertised = new Set(manifest.tools.map((tool) => tool.name));
+
+    const refuse = async (reason: string, message: string, details: Record<string, unknown> = {}): Promise<never> => {
+      await this.#deps.audit.append({
+        type: 'mcp.registration_refused',
+        organizationId: 'default',
+        actor: actor.identifier,
+        subject: manifest.name,
+        summary: `${actor.identifier} tried to register ${registrations.length} tool(s) from MCP server "${manifest.name}": ${message}`,
+        data: {
+          server: manifest.name,
+          endpoint: manifest.endpoint,
+          grade: graded.grade,
+          score: graded.score,
+          minimumGrade: this.gates.mcpMinimumGrade,
+          findings: report.findings.map((finding) => ({ id: finding.id, severity: finding.severity, tool: finding.tool })),
+          reason,
+          via: actor.via,
+          ...details,
+        },
+      });
+      throw new ArcError('gate_refused', message, {
+        details: { gate: 'mcp', reason, grade: graded.grade, score: graded.score, basis: graded.basis, ...details },
+      });
+    };
+
+    if (registrations.length === 0) {
+      throw new ArcError('invalid_request', 'name at least one tool to register from this server');
+    }
+    for (const registration of registrations) {
+      const remote = typeof registration.connectorConfig?.mcpTool === 'string' ? registration.connectorConfig.mcpTool : undefined;
+      if (registration.connector !== connector || remote === undefined || !advertised.has(remote)) {
+        await refuse(
+          'not_in_manifest',
+          `"${registration.name}" must run on ${connector} and name a tool this server advertises in connectorConfig.mcpTool`,
+          { tool: registration.name },
+        );
+      }
+    }
+
+    const minimum = this.gates.mcpMinimumGrade;
+    if (minimum !== undefined && compareGrades(graded.grade, minimum) < 0) {
+      await refuse(
+        'below_minimum_grade',
+        `MCP server "${manifest.name}" grades ${graded.grade} (${graded.basis}); the minimum for registration is ${minimum}`,
+      );
+    }
+
+    const findingsDigest = digest(report.findings.map((finding) => ({ id: finding.id, severity: finding.severity, tool: finding.tool })));
+    const tools: Tool[] = [];
+    for (const registration of registrations) {
+      tools.push(
+        await this.#registerTool(
+          { ...registration, labels: { ...(registration.labels ?? {}), mcpGrade: graded.grade, mcpFindingsDigest: findingsDigest } },
+          actor,
+        ),
+      );
+    }
+    return { tools, grade: graded.grade, score: graded.score, findings: report.findings.length };
+  }
+
+  async #registerTool(registration: ToolRegistration, actor: Actor): Promise<Tool> {
     const tool = await this.#deps.tools.register(registration);
     await this.#deps.audit.append({
       type: 'tool.registered',

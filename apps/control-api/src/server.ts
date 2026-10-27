@@ -1,5 +1,5 @@
 import { createServer, type Server } from 'node:http';
-import { Gateway, type RateLimitOptions } from '@arc-control/gateway';
+import { Gateway, type GateOptions, type RateLimitOptions } from '@arc-control/gateway';
 import { AssuranceEngine } from '@arc-control/assurance';
 import type { ControlStore } from '@arc-control/store';
 import { addAssuranceRoutes } from './assurance-routes.js';
@@ -80,7 +80,10 @@ export interface ControlApiOptions {
    */
   readonly schedule?: boolean | { readonly intervalMs?: number; readonly assessmentIntervalMs?: number };
 
-  // --- 2.3: spend control (ADR-0002) -------------------------------------
+  // --- 2.3: spend control and gates (ADR-0002) ---------------------------
+
+  /** Registration and activation gates. Each is off unless set. */
+  readonly gates?: GateOptions;
 
   /**
    * Verified spend and runaway detection. Absent means budgets count only
@@ -124,6 +127,7 @@ export function createControlApi(options: ControlApiOptions): ControlApi {
     ...(options.monetaryEscalationThreshold !== undefined
       ? { classification: { monetaryEscalationThreshold: options.monetaryEscalationThreshold } }
       : {}),
+    ...(options.gates ? { gates: options.gates } : {}),
   });
 
   /**
