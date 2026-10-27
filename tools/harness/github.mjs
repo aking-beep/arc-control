@@ -44,10 +44,38 @@ export async function graphql(context, query, variables = {}) {
 const PR_FIELDS = `
   number title url state isDraft createdAt mergedAt body
   mergeable mergeStateStatus
-  files(first: 100) { nodes { path } }
-  reviewThreads(first: 100) { nodes { isResolved } }
+  files(first: 100) { nodes { path } pageInfo { hasNextPage endCursor } }
+  reviewThreads(first: 100) { nodes { isResolved } pageInfo { hasNextPage endCursor } }
   commits(last: 1) { nodes { commit { oid statusCheckRollup { state } } } }
 `;
+
+/**
+ * Completes a PR's files and review threads past the first page.
+ *
+ * Metrics computed from a truncated list are wrong in the direction that
+ * matters: a decision-path file or an unresolved thread past item 100 would
+ * simply not be seen. So every connection is followed to its end.
+ */
+async function complete(context, pr) {
+  for (const [field, selection] of [
+    ['files', 'nodes { path }'],
+    ['reviewThreads', 'nodes { isResolved }'],
+  ]) {
+    let page = pr[field].pageInfo;
+    while (page?.hasNextPage) {
+      const data = await graphql(
+        context,
+        `query($owner: String!, $name: String!, $number: Int!, $after: String!) { repository(owner: $owner, name: $name) {
+           pullRequest(number: $number) { ${field}(first: 100, after: $after) { ${selection} pageInfo { hasNextPage endCursor } } } } }`,
+        { owner: context.owner, name: context.name, number: pr.number, after: page.endCursor },
+      );
+      const next = data.repository.pullRequest[field];
+      pr[field].nodes.push(...next.nodes);
+      page = next.pageInfo;
+    }
+  }
+  return pr;
+}
 
 /** One pull request, with what the steward checklist needs. */
 export async function pullRequest(context, number) {
@@ -56,10 +84,10 @@ export async function pullRequest(context, number) {
     `query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { ${PR_FIELDS} } } }`,
     { owner: context.owner, name: context.name, number },
   );
-  return data.repository.pullRequest;
+  return complete(context, data.repository.pullRequest);
 }
 
-/** The most recently merged pull requests, newest first. */
+/** The most recently merged pull requests, each with every file and review thread. */
 export async function mergedPullRequests(context, limit = 50) {
   const data = await graphql(
     context,
@@ -67,7 +95,9 @@ export async function mergedPullRequests(context, limit = 50) {
        pullRequests(states: MERGED, last: $limit, orderBy: { field: UPDATED_AT, direction: ASC }) { nodes { ${PR_FIELDS} } } } }`,
     { owner: context.owner, name: context.name, limit },
   );
-  return data.repository.pullRequests.nodes;
+  const prs = [];
+  for (const pr of data.repository.pullRequests.nodes) prs.push(await complete(context, pr));
+  return prs;
 }
 
 /** Completed runs of one workflow on one branch, newest first. */

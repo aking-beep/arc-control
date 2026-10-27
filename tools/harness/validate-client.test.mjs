@@ -81,3 +81,27 @@ describe('validate-client', () => {
     assert.ok(report.warnings.some((message) => message.includes('"billing.lookup" is matched by no enabled policy')));
   });
 });
+
+describe('validate-client evidence', () => {
+  it('fails a decided scenario whose evidence was never recorded', async () => {
+    const report = await validateProfile(clone(), '(test)', {
+      gateway(gateway) {
+        gateway.evidence = async () => undefined;
+      },
+    });
+    assert.ok(report.errors.some((message) => message.includes('was not recorded')));
+  });
+
+  it('fails a decided scenario that returns no evidence id at all', async () => {
+    const report = await validateProfile(clone(), '(test)', {
+      gateway(gateway) {
+        const handle = gateway.handle.bind(gateway);
+        gateway.handle = async (...args) => {
+          const { evidenceId: _dropped, ...rest } = await handle(...args);
+          return rest;
+        };
+      },
+    });
+    assert.ok(report.errors.some((message) => message.includes('returned no evidence id')));
+  });
+});

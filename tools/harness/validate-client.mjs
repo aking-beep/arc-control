@@ -50,7 +50,12 @@ const ACTOR = { identifier: 'harness:client-validator', via: 'system' };
 /** Every tool is rebound to this connector, so nothing in a profile can reach a real system. */
 const CONNECTOR = 'harness-simulation';
 
-export async function validateProfile(profile, source = '(inline)') {
+/**
+ * `hooks.gateway` receives the gateway after it is built. It exists only so
+ * tests can simulate a gateway that misbehaves (drops evidence, say) and prove
+ * the validator catches it; nothing outside tests passes it.
+ */
+export async function validateProfile(profile, source = '(inline)', hooks = {}) {
   const errors = [];
   const warnings = [];
   const results = [];
@@ -115,6 +120,7 @@ export async function validateProfile(profile, source = '(inline)') {
     ...(profile.classification ? { classification: profile.classification } : {}),
   });
   gateway.addConnector(connector);
+  hooks.gateway?.(gateway);
 
   const keys = new Map();
   try {
@@ -207,9 +213,13 @@ export async function validateProfile(profile, source = '(inline)') {
       if (scenario.policyId && response?.decision?.policyId !== scenario.policyId) {
         throw new Error(`expected the decision to cite ${scenario.policyId}, got ${response?.decision?.policyId ?? 'none'}`);
       }
-      if (response?.evidenceId) {
+      // A decided scenario must leave evidence. Only a refusal before the
+      // decision (unknown tool, bad parameters) has none, by design.
+      if (outcome !== 'refused') {
+        if (!response?.evidenceId) throw new Error(`a ${outcome} outcome returned no evidence id`);
         const record = await gateway.evidence(response.evidenceId);
-        if (!record || !verifyEvidence(record)) throw new Error('evidence record missing or does not verify');
+        if (!record) throw new Error(`evidence ${response.evidenceId} was not recorded`);
+        if (!verifyEvidence(record)) throw new Error(`evidence ${response.evidenceId} does not verify`);
       }
       result.pass = true;
     } catch (cause) {
