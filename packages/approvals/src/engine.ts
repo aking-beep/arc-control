@@ -73,7 +73,7 @@ export class ApprovalEngine {
   }): Promise<ApprovalRequest> {
     const { action, decision, requirement } = args;
 
-    if (requirement.approvers.length === 0) {
+    if (requirement.approvers.length === 0 || (requirement.alsoRequired ?? []).some((group) => group.approvers.length === 0)) {
       throw new ArcError('internal', 'a REQUIRE_APPROVAL decision reached the approval engine with no approvers', {
         details: { policyId: decision.policyId, ruleId: decision.ruleId },
       });
@@ -176,13 +176,12 @@ export class ApprovalEngine {
         ...(args.approver.subject ? { subject: args.approver.subject } : {}),
       };
 
-      const votes = [...request.votes, vote];
-      const approvals = votes.filter((cast) => cast.vote === 'approve').length;
+      const votes = [...request.votes, { ...vote, groups: this.#groupsFor(request, args.approver) }];
       const rejected = votes.some((cast) => cast.vote === 'reject');
 
       let status: ApprovalStatus = 'pending';
       if (rejected) status = 'rejected';
-      else if (approvals >= request.requirement.minApprovals) status = 'approved';
+      else if (satisfied(request, votes)) status = 'approved';
 
       const updated: ApprovalRequest = {
         ...request,
@@ -317,17 +316,19 @@ export class ApprovalEngine {
    * the point of the control is that nobody approves their own agent's work.
    */
   canApprove(request: ApprovalRequest, approver: Approver): boolean {
-    if (request.requirement.requireSeparationOfDuties && sameIdentity(approver.identifier, request.agentOwner)) {
-      return false;
-    }
+    return this.#groupsFor(request, approver).length > 0;
+  }
 
-    return request.requirement.approvers.some((selector) => {
-      if (selector === '*') return true;
-      if (selector === 'owner') return sameIdentity(approver.identifier, request.agentOwner);
-      if (selector.startsWith('role:')) return approver.roles.includes(selector.slice('role:'.length));
-      if (selector.startsWith('user:')) return sameIdentity(approver.identifier, selector.slice('user:'.length));
-      return sameIdentity(approver.identifier, selector);
-    });
+  /**
+   * The approver groups this human qualifies for: 0 for the requirement
+   * itself, `n` for `alsoRequired[n - 1]`. Separation of duties is applied
+   * per group, so an owner barred from one group may still count toward
+   * another that does not bar them.
+   */
+  #groupsFor(request: ApprovalRequest, approver: Approver): number[] {
+    return groupsOf(request.requirement)
+      .map((group, index) => (qualifies(group, approver, request.agentOwner) ? index : -1))
+      .filter((index) => index >= 0);
   }
 
   async #expireIfDue(request: ApprovalRequest): Promise<ApprovalRequest> {
@@ -408,4 +409,32 @@ function assertReleasable(request: ApprovalRequest, now: number): void {
  */
 function sameIdentity(left: string, right: string): boolean {
   return left.toLowerCase() === right.toLowerCase();
+}
+
+/** The requirement itself, then every group it also requires. */
+function groupsOf(requirement: ApprovalRequirement): readonly ApprovalRequirement[] {
+  return [requirement, ...(requirement.alsoRequired ?? [])];
+}
+
+function qualifies(group: ApprovalRequirement, approver: Approver, agentOwner: string): boolean {
+  if (group.requireSeparationOfDuties && sameIdentity(approver.identifier, agentOwner)) return false;
+  return group.approvers.some((selector) => {
+    if (selector === '*') return true;
+    if (selector === 'owner') return sameIdentity(approver.identifier, agentOwner);
+    if (selector.startsWith('role:')) return approver.roles.includes(selector.slice('role:'.length));
+    if (selector.startsWith('user:')) return sameIdentity(approver.identifier, selector.slice('user:'.length));
+    return sameIdentity(approver.identifier, selector);
+  });
+}
+
+/**
+ * Whether every group has the approvals it needs. A vote counts toward each
+ * group it qualified for when it was cast; a pre-2.3 vote, which recorded no
+ * groups, counts toward the requirement itself only.
+ */
+function satisfied(request: ApprovalRequest, votes: readonly ApprovalVote[]): boolean {
+  return groupsOf(request.requirement).every((group, index) => {
+    const approvals = votes.filter((cast) => cast.vote === 'approve' && (cast.groups ?? [0]).includes(index)).length;
+    return approvals >= (group.minApprovals ?? 1);
+  });
 }

@@ -1,4 +1,4 @@
-export { AgentRegistry, type AgentRegistryOptions } from './registry.js';
+export { AgentRegistry, assertTransitionAllowed, type AgentRegistryOptions } from './registry.js';
 export {
   issueCredential,
   parseApiKey,

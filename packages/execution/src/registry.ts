@@ -45,63 +45,88 @@ export class ToolRegistry {
 
   async register(registration: ToolRegistration): Promise<Tool> {
     return this.#store.tools.transact(async () => {
-      if (!/^[a-z0-9][a-z0-9._-]{1,126}[a-z0-9]$/.test(registration.name)) {
-        throw new ArcError(
-          'invalid_request',
-          'tool name must be 3-128 lowercase characters of letters, digits, dot, dash or underscore, e.g. "stripe.refund"',
-          { details: { name: registration.name } },
-        );
-      }
-
-      const connector = this.#connectors.get(registration.connector);
-      if (!connector) {
-        throw new ArcError('invalid_request', `no connector named "${registration.connector}" is registered`, {
-          details: { available: [...this.#connectors.keys()] },
-        });
-      }
-
-      const duplicate = await this.#store.tools.find((tool) => tool.name === registration.name);
-      if (duplicate) {
-        throw new ArcError('conflict', `a tool named "${registration.name}" already exists`, {
-          details: { toolId: duplicate.id },
-        });
-      }
-
-      const parameterNames = new Set<string>();
-      for (const spec of registration.parameters ?? []) {
-        if (parameterNames.has(spec.name)) {
-          throw new ArcError('invalid_request', `parameter "${spec.name}" is declared more than once`);
-        }
-        parameterNames.add(spec.name);
-      }
-
-      const timestamp = this.#now().toISOString();
-      const tool: Tool = {
-        id: newId('tool'),
-        name: registration.name,
-        description: registration.description,
-        system: registration.system ?? registration.name.split('.')[0]!,
-        effect: registration.effect,
-        riskTier: registration.riskTier ?? defaultRiskTier(registration.effect),
-        connector: registration.connector,
-        connectorConfig: registration.connectorConfig ?? {},
-        parameters: registration.parameters ?? [],
-        labels: registration.labels ?? {},
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      };
-
-      if (!connector.supports(tool)) {
-        throw new ArcError(
-          'invalid_request',
-          `connector "${connector.name}" cannot execute tool "${tool.name}" as configured`,
-          { details: { connectorConfig: tool.connectorConfig } },
-        );
-      }
-
+      const tool = await this.#build(registration, new Set());
       await this.#store.tools.put(tool.id, tool);
       return tool;
     });
+  }
+
+  /**
+   * Registers several tools, all or none: every registration is validated
+   * inside one critical section before any is written, so a failure part-way
+   * through a batch leaves nothing behind.
+   */
+  async registerAll(registrations: readonly ToolRegistration[]): Promise<readonly Tool[]> {
+    return this.#store.tools.transact(async () => {
+      const pending = new Set<string>();
+      const tools: Tool[] = [];
+      for (const registration of registrations) {
+        const tool = await this.#build(registration, pending);
+        pending.add(tool.name);
+        tools.push(tool);
+      }
+      for (const tool of tools) await this.#store.tools.put(tool.id, tool);
+      return tools;
+    });
+  }
+
+  /** Validates a registration and builds the tool, without writing it. Called inside the tools lock. */
+  async #build(registration: ToolRegistration, pending: ReadonlySet<string>): Promise<Tool> {
+    if (!/^[a-z0-9][a-z0-9._-]{1,126}[a-z0-9]$/.test(registration.name)) {
+      throw new ArcError(
+        'invalid_request',
+        'tool name must be 3-128 lowercase characters of letters, digits, dot, dash or underscore, e.g. "stripe.refund"',
+        { details: { name: registration.name } },
+      );
+    }
+
+    const connector = this.#connectors.get(registration.connector);
+    if (!connector) {
+      throw new ArcError('invalid_request', `no connector named "${registration.connector}" is registered`, {
+        details: { available: [...this.#connectors.keys()] },
+      });
+    }
+
+    const duplicate = await this.#store.tools.find((tool) => tool.name === registration.name);
+    if (duplicate || pending.has(registration.name)) {
+      throw new ArcError('conflict', `a tool named "${registration.name}" already exists`, {
+        details: { toolId: duplicate?.id },
+      });
+    }
+
+    const parameterNames = new Set<string>();
+    for (const spec of registration.parameters ?? []) {
+      if (parameterNames.has(spec.name)) {
+        throw new ArcError('invalid_request', `parameter "${spec.name}" is declared more than once`);
+      }
+      parameterNames.add(spec.name);
+    }
+
+    const timestamp = this.#now().toISOString();
+    const tool: Tool = {
+      id: newId('tool'),
+      name: registration.name,
+      description: registration.description,
+      system: registration.system ?? registration.name.split('.')[0]!,
+      effect: registration.effect,
+      riskTier: registration.riskTier ?? defaultRiskTier(registration.effect),
+      connector: registration.connector,
+      connectorConfig: registration.connectorConfig ?? {},
+      parameters: registration.parameters ?? [],
+      labels: registration.labels ?? {},
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+
+    if (!connector.supports(tool)) {
+      throw new ArcError(
+        'invalid_request',
+        `connector "${connector.name}" cannot execute tool "${tool.name}" as configured`,
+        { details: { connectorConfig: tool.connectorConfig } },
+      );
+    }
+
+    return tool;
   }
 
   async get(toolId: string): Promise<Tool | undefined> {

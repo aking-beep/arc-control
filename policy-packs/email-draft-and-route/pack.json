@@ -1,0 +1,61 @@
+{
+  "id": "pack-email-draft-and-route",
+  "name": "Email: draft and route, never auto-send",
+  "pack": {
+    "version": 1,
+    "source": "AI Workflow Templates — automation/email-draft-and-route",
+    "summary": "An email agent may read, classify, route and draft. Sending needs a support lead who is not the agent's owner. Account and billing changes are denied outright.",
+    "adapt": [
+      "Give your email agent the role email-router and your reviewers the role support-lead.",
+      "Rename the systems 'email', 'tickets', 'accounts' and 'billing' to the ones your tools use."
+    ]
+  },
+  "organizationId": "policy-pack",
+  "environment": "production",
+  "requirements": { "separationOfDutiesForIrreversible": true },
+  "tools": [
+    { "name": "email.read", "description": "Read an inbound email.", "system": "email", "effect": "read", "riskTier": "low", "connector": "generic-http", "parameters": [{ "name": "messageId", "type": "string", "required": true }] },
+    { "name": "email.draft_reply", "description": "Save a draft reply to the review queue.", "system": "email", "effect": "write", "riskTier": "low", "connector": "generic-http", "parameters": [{ "name": "messageId", "type": "string", "required": true }, { "name": "body", "type": "string", "required": true }] },
+    { "name": "email.send", "description": "Send an email. Cannot be recalled.", "system": "email", "effect": "irreversible", "riskTier": "high", "connector": "generic-http", "parameters": [{ "name": "messageId", "type": "string", "required": true }] },
+    { "name": "tickets.route", "description": "Route a ticket to a team queue.", "system": "tickets", "effect": "write", "riskTier": "low", "connector": "generic-http", "parameters": [{ "name": "ticketId", "type": "string", "required": true }, { "name": "queue", "type": "string", "required": true }] },
+    { "name": "accounts.update", "description": "Change a customer account.", "system": "accounts", "effect": "write", "riskTier": "high", "connector": "generic-http", "parameters": [{ "name": "accountId", "type": "string", "required": true }] }
+  ],
+  "agents": [
+    { "name": "email-router", "owner": "support-owner@client.example", "roles": ["email-router"], "declaredTools": ["email.read", "email.draft_reply", "email.send", "tickets.route"] }
+  ],
+  "approvers": [
+    { "identifier": "lead@client.example", "roles": ["support-lead"] }
+  ],
+  "policies": [
+    {
+      "id": "PACK-EMAIL-001",
+      "version": 1,
+      "name": "Email agents draft and route; a human sends",
+      "description": "From the email-draft-and-route template: never auto-send, and anything touching accounts or billing goes to a human outside this agent.",
+      "enabled": true,
+      "match": { "agents": ["role:email-router"] },
+      "rules": [
+        { "id": "no-account-or-billing-changes", "when": { "in": ["$.tool.system", ["accounts", "billing"]] }, "effect": "DENY", "reason": "account and billing changes are never made by the email agent" },
+        {
+          "id": "human-sends",
+          "when": { "and": [{ "eq": ["$.tool.system", "email"] }, { "eq": ["$.tool.effect", "irreversible"] }] },
+          "effect": "REQUIRE_APPROVAL",
+          "reason": "a support lead sends; the agent only drafts",
+          "approval": { "approvers": ["role:support-lead"], "minApprovals": 1, "expiresInSeconds": 86400, "requireSeparationOfDuties": true }
+        },
+        { "id": "read-draft-route", "when": { "and": [{ "in": ["$.tool.system", ["email", "tickets"]] }, { "in": ["$.tool.effect", ["read", "write"]] }] }, "effect": "ALLOW", "reason": "reading, drafting and routing send nothing" }
+      ],
+      "fallback": { "effect": "DENY", "reason": "outside what the email agent does" }
+    }
+  ],
+  "scenarios": [
+    { "id": "reads", "agent": "email-router", "tool": "email.read", "parameters": { "messageId": "m-1" }, "expect": "executed", "policyId": "PACK-EMAIL-001" },
+    { "id": "drafts", "agent": "email-router", "tool": "email.draft_reply", "parameters": { "messageId": "m-1", "body": "Thanks — we are on it." }, "expect": "executed" },
+    { "id": "routes", "agent": "email-router", "tool": "tickets.route", "parameters": { "ticketId": "t-1", "queue": "billing" }, "expect": "executed" },
+    { "id": "send-is-held", "agent": "email-router", "tool": "email.send", "parameters": { "messageId": "m-1" }, "expect": "pending_approval" },
+    { "id": "send-after-lead-approves", "agent": "email-router", "tool": "email.send", "parameters": { "messageId": "m-2" }, "expect": "pending_approval", "approveAs": "lead@client.example" },
+    { "id": "no-account-change", "agent": "email-router", "tool": "accounts.update", "parameters": { "accountId": "a-1" }, "expect": "denied", "policyId": "PACK-EMAIL-001" },
+    { "id": "malformed-route", "agent": "email-router", "tool": "tickets.route", "parameters": { "ticketId": "t-1" }, "expect": "refused" },
+    { "id": "malformed-draft", "agent": "email-router", "tool": "email.draft_reply", "parameters": { "messageId": "m-1" }, "expect": "refused" }
+  ]
+}

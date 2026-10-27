@@ -12,12 +12,14 @@ import {
   type ActionRiskAssessment,
   type Agent,
   type AgentPrincipal,
+  type AgentSpendInput,
   type ApprovalRequest,
   type Decision,
   type EvidenceRecord,
   type EvidenceRevalidation,
   type ExecutionAttempt,
   type Policy,
+  type PolicyEvaluation,
   type Tool,
 } from '@arc-control/schemas';
 import type { ControlStore } from '@arc-control/store';
@@ -26,10 +28,11 @@ import { ApprovalEngine } from '@arc-control/approvals';
 import { AuditLog } from '@arc-control/audit';
 import { buildEvidence } from '@arc-control/evidence';
 import { Executor, ToolRegistry, type Connector } from '@arc-control/execution';
-import { buildPolicyInput, PolicyEngine } from '@arc-control/policy-engine';
+import { buildPolicyInput, PolicyEngine, tighten } from '@arc-control/policy-engine';
+import { SpendLedger } from '@arc-control/spend';
 import { PolicyStore } from './policies.js';
 import { RateLimiter, type RateLimitOptions } from './rate-limit.js';
-import { Administration } from './admin.js';
+import { Administration, type GateOptions } from './admin.js';
 import { IdempotencyLedger, type KeyClaim } from './idempotency.js';
 import { heldApprovalSatisfies, reapprovalReason, type Revalidation } from './revalidation.js';
 
@@ -56,6 +59,8 @@ export interface GatewayOptions {
   /** Runaway protection. Off unless configured; see `RateLimiter`. */
   readonly rateLimit?: RateLimitOptions;
   readonly classification?: ClassificationOptions;
+  /** Registration and activation gates (2.3). Off unless configured. */
+  readonly gates?: GateOptions;
   readonly now?: () => Date;
 }
 
@@ -94,6 +99,13 @@ export class Gateway {
   readonly admin: Administration;
   /** Runaway protection, checked before an action is recorded. */
   readonly rateLimiter: RateLimiter;
+  /**
+   * Spend and budgets (2.3, ADR-0002). Every decision folds in the budgets
+   * that govern the agent, and they can only make it stricter. With no budget
+   * defined there is nothing to fold, so a deployment that never creates one
+   * decides exactly as before.
+   */
+  readonly spend: SpendLedger;
 
   readonly #store: ControlStore;
   readonly #idempotency: IdempotencyLedger;
@@ -125,11 +137,15 @@ export class Gateway {
     this.approvals = new ApprovalEngine(this.#store, shared);
     this.audit = new AuditLog(this.#store, shared);
 
+    this.spend = new SpendLedger(this.#store, shared);
+
     this.admin = new Administration({
       agents: this.agents,
       tools: this.tools,
       policies: this.policies,
       audit: this.audit,
+      spend: this.spend,
+      ...(options.gates ? { gates: options.gates } : {}),
     });
 
     this.#policyEngine = options.policyEngine ?? new PolicyEngine(shared);
@@ -508,7 +524,11 @@ export class Gateway {
     };
 
     const policies = await this.policies.list();
-    return this.#policyEngine.evaluate(policies, buildPolicyInput({ principal, tool, action }));
+    const budgets = await this.#budgets(principal, tool, this.#now());
+    return tighten(
+      this.#policyEngine.evaluate(policies, buildPolicyInput({ principal, tool, action, ...budgets.input })),
+      budgets.evaluations,
+    );
   }
 
   // --- stages -------------------------------------------------------------
@@ -696,16 +716,69 @@ export class Gateway {
     return records.at(-1);
   }
 
+  /**
+   * The budgets governing this agent and tool, as evaluations to fold into a
+   * decision, and its spend and prompt grade as policy input.
+   *
+   * Fails closed: if spend or budgets cannot be read, the result is a single
+   * DENY evaluation rather than no evaluations. Deciding without them would
+   * let a store fault lift every budget at once.
+   */
+  async #budgets(
+    principal: AgentPrincipal,
+    tool: Tool,
+    at: Date,
+  ): Promise<{
+    readonly evaluations: readonly PolicyEvaluation[];
+    readonly input: { readonly spend?: AgentSpendInput; readonly promptGrade?: string };
+  }> {
+    try {
+      const [{ evaluations, spend }, agent] = await Promise.all([
+        this.spend.evaluate({
+          agentId: principal.agentId,
+          organizationId: principal.organizationId,
+          toolEffect: tool.effect,
+          now: at,
+        }),
+        this.agents.get(principal.agentId),
+      ]);
+      // The prompt grade rides along here because it is read from the same
+      // place at the same moment; a rule reading it when it is absent simply
+      // does not match.
+      const promptGrade = agent?.promptReview?.grade;
+      return { evaluations, input: { spend, ...(promptGrade ? { promptGrade } : {}) } };
+    } catch (cause) {
+      process.stderr.write(`arc-control: budget state unreadable, refusing: ${cause instanceof Error ? cause.message : String(cause)}\n`);
+      return {
+        evaluations: [
+          {
+            policyId: 'budget:unavailable',
+            policyVersion: 0,
+            applied: true,
+            effect: 'DENY',
+            ruleId: 'unavailable',
+            // The cause stays out: this reason reaches the agent, and a store
+            // error can name paths and internals. Operators see it in the logs.
+            reason: 'budget state could not be read, so the action is refused rather than decided without it',
+          },
+        ],
+        input: {},
+      };
+    }
+  }
+
   async #decide(principal: AgentPrincipal, tool: Tool, action: Action): Promise<Decision> {
     const policies: readonly Policy[] = await this.policies.list();
+    const budgets = await this.#budgets(principal, tool, new Date(action.requestedAt));
     const input = buildPolicyInput({
       principal,
       tool,
       action,
       ...(action.source ? { source: action.source } : {}),
       risk: this.#classify(tool, action),
+      ...budgets.input,
     });
-    const decision = this.#policyEngine.evaluate(policies, input);
+    const decision = tighten(this.#policyEngine.evaluate(policies, input), budgets.evaluations);
 
     await this.#store.decisions.put(decision.id, decision);
     return decision;
@@ -744,7 +817,10 @@ export class Gateway {
     // the note on `resume` for what that leaves open.
     const fresh = await this.#store.policies.transact(async () => {
       const policies: readonly Policy[] = await this.policies.list();
-      return this.#policyEngine.evaluate(
+      // Budgets as they stand now, too: an action held while its agent's
+      // budget ran out is re-decided against the budget it would spend from.
+      const budgets = await this.#budgets(input.principal, tool, new Date(performedAt));
+      const decided = this.#policyEngine.evaluate(
         policies,
         buildPolicyInput({
           principal: input.principal,
@@ -757,8 +833,10 @@ export class Gateway {
           requestedAt: new Date(performedAt),
           ...(action.source ? { source: action.source } : {}),
           risk: this.#classify(tool, action),
+          ...budgets.input,
         }),
       );
+      return tighten(decided, budgets.evaluations);
     });
     await this.#store.decisions.put(fresh.id, fresh);
 

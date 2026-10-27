@@ -6,7 +6,7 @@ export {
   type SubmitOptions,
 } from './gateway.js';
 export { PolicyStore, type PolicyStoreOptions, type Publisher } from './policies.js';
-export { Administration, type Actor, type AdminDependencies } from './admin.js';
+export { Administration, type Actor, type AdminDependencies, type GateOptions, type EndpointVetter } from './admin.js';
 export {
   RateLimiter,
   type RateLimitOptions,

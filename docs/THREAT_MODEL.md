@@ -455,6 +455,66 @@ scheme fixes that; it is the same limit as T11.
 
 ---
 
+## T16 — An agent lifts its own budget, or a gate is stepped around (2.3)
+
+**The threat.** Budgets and registration gates are controls an agent or a
+careless operator has reason to get past. An agent reports negative spend, or
+re-reports a row with a smaller amount, to lower its total. A store fault
+makes budgets unreadable, and the decision proceeds without them. An operator
+registers an MCP tool one at a time so it is never scanned, or registers an
+agent straight into `active` so its prompt is never reviewed, or registers an
+HTTP tool whose name passes the allowlist but resolves to the metadata
+service.
+
+**The defence.**
+
+- *Budgets.* A budget can only tighten a decision: `tighten` replaces an
+  effect only with a strictly stricter one, and it runs on submit, explain
+  and release.
+- *Spend reports.* The ledger refuses negative or non-numeric amounts. A
+  reported record never replaces another.
+- *Agent reports.* `POST /v1/spend/report` attributes spend to the
+  authenticated agent only. The report is dated by the server, must be above
+  zero, and is capped per day. It counts toward that agent's own budgets,
+  never toward an organization-wide one. It never sets a spike baseline.
+- *Organizations.* Budgets and spend that name an agent take that agent's
+  organization.
+- *Unreadable budgets.* The decision is DENY.
+- *MCP gate.* With it on, single MCP registration is refused. The server
+  path scans the manifest itself and admits only tools it advertises.
+- *Prompt gate.* With it on, agents must register as drafts. Activation and
+  resume both check the review.
+- *Endpoint vetting.* Link-local and metadata resolution are refused even
+  for sanctioned private hosts, IPv4-embedding IPv6 forms included, and a
+  vetter that fails refuses. The probe uses the address it classified.
+- *Records.* URLs are recorded without credentials or query values.
+
+Every refusal is audited.
+
+**Asserted by.**
+
+- `evals/spend/budgets.eval.mjs` and `evals/gates/registration.eval.mjs`
+- `packages/gateway/src/{budgets,mcp-gate,prompt-gate,endpoint-gate}.test.ts`
+- `packages/spend/src/ledger.test.ts`
+- `apps/control-api/src/{spend,gates}.test.ts`
+
+All of them count effects at the connector.
+
+**What is not defended.**
+
+- *Spend timing.* Spend is learned after the fact, so the action that
+  crosses a limit is not stopped.
+- *Under-reporting.* An agent can under-report simply by not reporting;
+  only provider spend catches that.
+- *Bypassing admin.* The gates live on the audited administration path.
+  In-process code that calls `ToolRegistry.register` or
+  `AgentRegistry.activate` directly bypasses them, as it bypasses the audit
+  log.
+- *Point-in-time checks.* Vetting and grading happen at registration. See
+  [releases/2.3.md](./releases/2.3.md).
+
+---
+
 ## What ARC Control does not defend against
 
 Stated plainly, because a threat model that only lists wins is marketing.

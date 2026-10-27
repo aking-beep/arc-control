@@ -67,6 +67,13 @@ jobs:
           node tools/harness/validate-client.mjs
           node --test "tools/harness/*.test.mjs"
 
+      # Policy packs are validated like client profiles, plus the rules that
+      # make a pack safe to publish into a deployment it was not written for.
+      - name: Policy packs
+        run: |
+          node tools/policy-packs/validate.mjs
+          node --test "tools/policy-packs/*.test.mjs"
+
       # A finding is closed only with a regression test that exists in this
       # tree and a release note that documents it.
       - name: Security findings register

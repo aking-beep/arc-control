@@ -23,6 +23,8 @@ import type {
   PolicyVersionRecord,
   Risk,
   Tool,
+  Budget,
+  SpendRecord,
 } from '@arc-control/schemas';
 import { MemoryAuditLog, MemoryCollection } from './memory.js';
 import type { AuditLogStore, Collection, ControlStore } from './types.js';
@@ -58,6 +60,8 @@ export class FileStore implements ControlStore {
   readonly operatorSessions: Collection<OperatorSession>;
   readonly notificationChannels: Collection<NotificationChannel>;
   readonly notificationDeliveries: Collection<NotificationDelivery>;
+  readonly spend: Collection<SpendRecord>;
+  readonly budgets: Collection<Budget>;
 
   private constructor(
     private readonly directory: string,
@@ -81,6 +85,8 @@ export class FileStore implements ControlStore {
       operatorSessions: Collection<OperatorSession>;
       notificationChannels: Collection<NotificationChannel>;
       notificationDeliveries: Collection<NotificationDelivery>;
+      spend: Collection<SpendRecord>;
+      budgets: Collection<Budget>;
     },
     audit: AuditLogStore,
   ) {
@@ -103,6 +109,8 @@ export class FileStore implements ControlStore {
     this.operatorSessions = collections.operatorSessions;
     this.notificationChannels = collections.notificationChannels;
     this.notificationDeliveries = collections.notificationDeliveries;
+    this.spend = collections.spend;
+    this.budgets = collections.budgets;
     this.audit = audit;
   }
 
@@ -156,6 +164,8 @@ export class FileStore implements ControlStore {
       operatorSessions: await openCollection<OperatorSession>(directory, 'operator-sessions'),
       notificationChannels: await openCollection<NotificationChannel>(directory, 'notification-channels'),
       notificationDeliveries: await openCollection<NotificationDelivery>(directory, 'notification-deliveries'),
+      spend: await openCollection<SpendRecord>(directory, 'spend'),
+      budgets: await openCollection<Budget>(directory, 'budgets'),
     };
 
     // Stamp the directory with the model version. A 1.x directory has no
