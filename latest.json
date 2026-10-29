@@ -1,6 +1,6 @@
 {
-  "at": "2026-10-27T20:14:47.356Z",
-  "commit": "3781be7f79252c9434d4ce28b836c779bd4a5070",
+  "at": "2026-10-29T07:30:37.735Z",
+  "commit": "0411f723186e555a560868938e12d7b17f0d3b3a",
   "ref": "refs/heads/main",
   "summary": {
     "met": 22,
@@ -22,13 +22,13 @@
     {
       "id": "verify.main_ci_runs",
       "skill": "verify",
-      "value": 10,
+      "value": 12,
       "target": {
         "op": ">=",
         "value": 1
       },
       "status": "met",
-      "previous": 9
+      "previous": 10
     },
     {
       "id": "deliver.gate_pass_rate",
@@ -193,7 +193,7 @@
         "value": 72
       },
       "status": "met",
-      "previous": 1.4625
+      "previous": 4.883333333333334
     },
     {
       "id": "release.notes_passing_rate",
@@ -231,13 +231,13 @@
     {
       "id": "deploy.time_to_healthy_ms",
       "skill": "deploy",
-      "value": 235,
+      "value": 436,
       "target": {
         "op": "<=",
         "value": 10000
       },
       "status": "met",
-      "previous": 233
+      "previous": 235
     },
     {
       "id": "harness.problems",
