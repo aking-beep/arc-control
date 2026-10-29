@@ -39,7 +39,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const HOUR = 3_600_000;
 
 /** Every source the definitions may name. check-harness.mjs verifies against this list. */
-export const SOURCES = ['harness', 'client-profiles', 'findings', 'release-notes', 'deploy', 'meridian', 'github-ci', 'github-prs'];
+export const SOURCES = ['harness', 'claims', 'client-profiles', 'findings', 'release-notes', 'deploy', 'meridian', 'github-ci', 'github-prs'];
 
 async function script(name, scratch) {
   const out = join(scratch, `${name}.json`);
@@ -58,6 +58,8 @@ async function collect(source, { scratch, options, measuredFrom }) {
   switch (source) {
     case 'harness':
       return script('check-harness', scratch);
+    case 'claims':
+      return script('check-claims', scratch);
     case 'client-profiles':
       return script('validate-client', scratch);
     case 'findings':

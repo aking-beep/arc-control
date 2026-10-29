@@ -21,7 +21,7 @@
     "clean": "tsc -b --clean"
   },
   "dependencies": {
-    "@arc-control/schemas": "2.0.0",
-    "@arc-control/store": "2.0.0"
+    "@arc-control/schemas": "2.3.0",
+    "@arc-control/store": "2.3.0"
   }
 }

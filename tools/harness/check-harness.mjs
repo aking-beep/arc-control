@@ -28,7 +28,7 @@ import { SOURCES } from './measure.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const ALLOWED_TOOLS = new Set(['Read', 'Grep', 'Glob', 'Bash', 'Edit', 'Write']);
-const READ_ONLY = new Set(['arc-architect', 'arc-security-reviewer', 'arc-verifier', 'arc-meridian-validator', 'arc-harness-analyst']);
+const READ_ONLY = new Set(['arc-architect', 'arc-security-reviewer', 'arc-verifier', 'arc-meridian-validator', 'arc-harness-analyst', 'arc-claims-auditor']);
 const AGENT_SECTIONS = ['## Mission', '## Owns', '## Must', '## Must not', '## Done when', '## Hands off to', '## Report'];
 const PATH = /`((?:packages|apps|connectors|docs|evals|tools|clients|schemas|examples|\.github|\.claude)\/[A-Za-z0-9_./-]+|CLAUDE\.md|CONTRIBUTING\.md|SECURITY\.md|README\.md)(?:#[^`]*)?`/g;
 

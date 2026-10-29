@@ -1,6 +1,6 @@
 # Security questionnaire
 
-Answers for a buyer's technical evaluation of ARC Control 2.0, written to be
+Answers for a buyer's technical evaluation of ARC Control 2.3, written to be
 handed over as-is.
 
 Everything below is answered against what the code does today, with the
@@ -8,7 +8,9 @@ limitations stated rather than softened. Where the answer is "not yet", it says
 so and names the release. A questionnaire that overstates gets found out during
 the pilot, which is the most expensive moment for both sides to discover it.
 
-For each claim, `docs/releases/2.0.md` names the test or eval that holds it up.
+For each claim, the release note in `docs/releases/` names the test or eval
+that holds it up — `2.0.md` for the baseline, `2.3.md` for everything added
+since.
 
 ---
 
@@ -37,8 +39,8 @@ asserts every runtime dependency is a workspace sibling. This is a deliberate
 supply-chain decision: the component a security team reads line by line before
 putting it in front of their systems should be readable.
 
-**Lines of code?** Around 23,000 of TypeScript including tests, across 19
-packages.
+**Lines of code?** Around 42,700 of TypeScript including tests, across 22
+workspace packages.
 
 ---
 
@@ -128,6 +130,25 @@ produce an `ALLOW`.
 enforcement. Tested by replacing every assurance collection with one that
 throws and asserting decisions are unchanged.
 
+**Can a budget authorize anything?** No. A budget can refuse an action policy
+would allow, or hold one for approval, and it can never do the reverse: a
+budget with room to spare cannot soften a `DENY`, and an exhausted budget
+cannot turn a `DENY` into a hold. Spend an agent reports about itself counts
+toward its own budgets only, is dated by the server, and cannot be negative. A
+budget ARC cannot read refuses rather than lifting. Asserted in
+`evals/spend/budgets.eval.mjs`.
+
+**If a policy and a budget both hold an action, who releases it?** Both sets of
+approvers, independently. The policy's approvers alone cannot release it
+(ARC-SEC-013). One person who qualifies for both groups satisfies both with one
+vote — two groups is not the same claim as two people, and we do not make the
+second one.
+
+**Can a policy pack grant anything?** No. Packs are `PACK-` prefixed policies
+that match on roles only and never fall back to `ALLOW`; four ship, each
+validated against the real gateway in CI, and none is published to a deployment
+unless an operator asks for it.
+
 **Can risk classification authorize anything?** No. It is computed
 deterministically and exposed to policy as `$.action.risk.*` so a rule may
 consult it; nothing in the gateway consults it to permit anything. One
@@ -213,6 +234,25 @@ digest, and detects drift on a pinned tool at execution. It cannot detect a
 server that lies about its own tool descriptions, because reading them is all
 it can do. ARC-AI-007 asserts pinning and carries both limitations.
 
+**Can a bad MCP server be registered?** It is graded first. A server below
+`ARC_MCP_MIN_GRADE` registers none of its tools — the batch is validated in one
+critical section, so a failure cannot leave earlier tools registered. The grade
+is a static, pattern-based check: it raises the floor on what can be
+registered, and a server that grades A can still be malicious. Policy remains
+what decides.
+
+**Are tool endpoints checked?** With `ARC_ENDPOINT_VETTING=true`, a
+`generic-http` tool whose endpoint fails DNS, TLS, certificate-expiry, redirect
+or address-class checks is not registered, and the refusal is audited. Vetting
+is point-in-time: DNS can change afterwards, so the connector's allowlist, its
+HTTPS requirement and its refusal to follow redirects are what hold on every
+call.
+
+**Is the agent's prompt reviewed?** Optionally. An agent below
+`ARC_PROMPT_MIN_GRADE` cannot become active, and an active agent whose review
+later falls below the gate is suspended and the suspension audited. ARC sees
+only the prompt it was given; nothing forces the running agent to use it.
+
 **SBOM?** Derivable from `package-lock.json`; with no runtime dependencies it
 is short.
 
@@ -276,8 +316,8 @@ posture rather than your deployment. Ask us about it separately.
 
 | | |
 |---|---|
-| Unit and integration tests | 672 |
-| Security and reliability properties | 82, in a separate eval suite |
+| Unit and integration tests | 812 |
+| Security and reliability properties | 95, in a separate eval suite |
 | End-to-end demonstration | 14 steps, real gateway and real HTTP |
 | Independent adversarial harness | [arc-control-sandbox](https://github.com/aking-beep/arc-control-sandbox) — a synthetic enterprise we do not control, which found two authorization defects our own suite missed |
 | Threat model | [THREAT_MODEL.md](./THREAT_MODEL.md) |

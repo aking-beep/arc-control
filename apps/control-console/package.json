@@ -1,6 +1,6 @@
 {
   "name": "@arc-control/control-console",
-  "version": "2.0.0",
+  "version": "2.3.0",
   "description": "The enterprise web console for agents, policies, approvals and evidence.",
   "license": "Apache-2.0",
   "type": "module",
@@ -22,13 +22,13 @@
     "clean": "tsc -b --clean"
   },
   "dependencies": {
-    "@arc-control/policy-engine": "2.0.0",
-    "@arc-control/schemas": "2.0.0",
-    "@arc-control/sdk-typescript": "2.0.0"
+    "@arc-control/policy-engine": "2.3.0",
+    "@arc-control/schemas": "2.3.0",
+    "@arc-control/sdk-typescript": "2.3.0"
   },
   "devDependencies": {
-    "@arc-control/control-api": "2.0.0",
-    "@arc-control/store": "2.0.0",
-    "@arc-control/connector-simulation": "2.0.0"
+    "@arc-control/control-api": "2.3.0",
+    "@arc-control/store": "2.3.0",
+    "@arc-control/connector-simulation": "2.3.0"
   }
 }

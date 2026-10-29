@@ -1,6 +1,6 @@
 {
   "name": "@arc-control/gateway",
-  "version": "2.0.0",
+  "version": "2.3.0",
   "description": "The ARC Control decision point every agent action passes through.",
   "license": "Apache-2.0",
   "type": "module",
@@ -21,16 +21,16 @@
     "clean": "tsc -b --clean"
   },
   "dependencies": {
-    "@arc-control/schemas": "2.0.0",
-    "@arc-control/store": "2.0.0",
-    "@arc-control/agent-identity": "2.0.0",
-    "@arc-control/policy-engine": "2.0.0",
-    "@arc-control/approvals": "2.0.0",
-    "@arc-control/evidence": "2.0.0",
-    "@arc-control/audit": "2.0.0",
-    "@arc-control/execution": "2.0.0",
+    "@arc-control/schemas": "2.3.0",
+    "@arc-control/store": "2.3.0",
+    "@arc-control/agent-identity": "2.3.0",
+    "@arc-control/policy-engine": "2.3.0",
+    "@arc-control/approvals": "2.3.0",
+    "@arc-control/evidence": "2.3.0",
+    "@arc-control/audit": "2.3.0",
+    "@arc-control/execution": "2.3.0",
     "@arc-control/spend": "2.3.0",
-    "@arc-control/mcp-security": "2.0.0",
+    "@arc-control/mcp-security": "2.3.0",
     "@arc-control/prompt-review": "2.3.0"
   }
 }

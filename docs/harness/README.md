@@ -15,7 +15,7 @@ the product itself.
 | Part | Where | What it gives you |
 | --- | --- | --- |
 | **Operating contract** | `CLAUDE.md` | Invariants, commands, definition of done and never-list every agent works under. |
-| **Agents** | `.claude/agents/` | Fourteen role-scoped agents with one shared structure. [AGENTS.md](./AGENTS.md). |
+| **Agents** | `.claude/agents/` | Seventeen role-scoped agents with one shared structure. [AGENTS.md](./AGENTS.md). |
 | **Skills** | `.claude/skills/` | Eight playbooks, each scripted, gated and measured (L4). [SKILLS.md](./SKILLS.md). |
 | **Client profiles** | `clients/` | One validated JSON profile per client — how the harness scales to any client. [CLIENTS.md](./CLIENTS.md). |
 | **Scripts** | `tools/harness/` | The skills' procedures as code, sharing one result format. |
