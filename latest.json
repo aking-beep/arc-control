@@ -1,9 +1,9 @@
 {
-  "at": "2026-10-29T07:30:37.735Z",
-  "commit": "0411f723186e555a560868938e12d7b17f0d3b3a",
+  "at": "2026-10-29T15:10:00.055Z",
+  "commit": "09ce57634a05b1a56c322caff557fa9cfc6007f5",
   "ref": "refs/heads/main",
   "summary": {
-    "met": 22,
+    "met": 23,
     "breached": 0,
     "unmeasured": 0
   },
@@ -28,7 +28,7 @@
         "value": 1
       },
       "status": "met",
-      "previous": 10
+      "previous": 12
     },
     {
       "id": "deliver.gate_pass_rate",
@@ -187,7 +187,7 @@
     {
       "id": "steward.median_hours_to_merge",
       "skill": "steward",
-      "value": 4.883333333333334,
+      "value": 5.848611111111111,
       "target": {
         "op": "<=",
         "value": 72
@@ -231,13 +231,13 @@
     {
       "id": "deploy.time_to_healthy_ms",
       "skill": "deploy",
-      "value": 436,
+      "value": 253,
       "target": {
         "op": "<=",
         "value": 10000
       },
       "status": "met",
-      "previous": 235
+      "previous": 436
     },
     {
       "id": "harness.problems",
@@ -249,6 +249,17 @@
       },
       "status": "met",
       "previous": 0
+    },
+    {
+      "id": "verify.claim_problems",
+      "skill": "verify",
+      "value": 0,
+      "target": {
+        "op": "<=",
+        "value": 0
+      },
+      "status": "met",
+      "previous": null
     }
   ],
   "sources": {
@@ -274,6 +285,9 @@
       "ok": true
     },
     "harness": {
+      "ok": true
+    },
+    "claims": {
       "ok": true
     }
   }
