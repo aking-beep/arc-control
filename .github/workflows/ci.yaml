@@ -62,6 +62,9 @@ jobs:
       - name: Delivery harness
         run: node tools/harness/check-harness.mjs
 
+      - name: What ARC says about itself is true of the code
+        run: node tools/harness/check-claims.mjs
+
       - name: Client profiles
         run: |
           node tools/harness/validate-client.mjs

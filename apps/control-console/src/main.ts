@@ -71,7 +71,7 @@ async function main(): Promise<void> {
 
   process.stdout.write(
     [
-      'ARC Control Console 2.1.0',
+      'ARC Control Console 2.3.0',
       `  console   http://${address.host}:${address.port}`,
       `  api       ${apiBase}`,
       `  sign-in   ${publicApiBase ?? apiBase}/auth/login`,

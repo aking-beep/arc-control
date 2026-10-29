@@ -1,9 +1,10 @@
 # Agents
 
-Fourteen agents, defined in `.claude/agents/`. Each file has the same sections —
+Seventeen agents, defined in `.claude/agents/`. Each file has the same sections —
 Mission, Owns, Must, Must not, Done when, Hands off to, Report — so every role
 is specified to the same depth and can be reviewed side by side. The shared
-"Must not" list is identical across all of them.
+four-item "Must not" list is identical across all of them, word for word, and
+comes first; a few roles add prohibitions specific to what they own.
 
 ## Roster
 
@@ -23,6 +24,9 @@ is specified to the same depth and can be reviewed side by side. The shared
 | `arc-docs-steward` | Document | `docs/`, release notes, schemas' prose | read/write | `arc-verifier` |
 | `arc-deployment-engineer` | Deploy | `infrastructure/`, the image, startup config, `tools/harness/deploy-smoke.mjs` | read/write | `arc-security-reviewer`, `arc-verifier` |
 | `arc-harness-analyst` | Measure | Interpreting the scorecard; never the targets | read-only | owning agents, `arc-architect` |
+| `arc-claims-auditor` | Review | Nothing; reports contradictions between the docs and the code | read-only | `arc-docs-steward`, `arc-commercial-writer`, `arc-release-manager` |
+| `arc-release-manager` | Document | Version coherence; `docs/releases/`; `tools/harness/check-claims.mjs` | read/write | `arc-verifier`, `arc-claims-auditor` |
+| `arc-commercial-writer` | Document | `docs/SECURITY_QUESTIONNAIRE.md`, `docs/COMMERCIAL_READINESS.md`, `docs/commercial/` | read/write | `arc-claims-auditor`, `arc-security-reviewer` |
 
 "Read-only" agents have Read, Grep, Glob and Bash. They can run commands —
 tests, the sandbox — but cannot edit files. `tools/harness/check-harness.mjs`

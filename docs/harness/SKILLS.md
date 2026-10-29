@@ -59,6 +59,7 @@ predates it.
 | --- | --- | --- | --- | --- |
 | `verify` | `verify.main_ci_success_rate` | >= 0.95 | `github-ci` | Share of the last 30 completed CI runs on main that succeeded. |
 | `verify` | `verify.main_ci_runs` | >= 1 | `github-ci` | Completed CI runs on main in the sample (the rate is meaningless without them). |
+| `verify` | `verify.claim_problems` | <= 0 | `claims` | Statements ARC makes about itself that `tools/harness/check-claims.mjs` finds contradicted by the code: version incoherence, or a document denying a capability whose implementation is present. |
 | `deliver` | `deliver.gate_pass_rate` | >= 1 | `github-prs` | Share of PRs merged since measurement began that passed the delivery gates (tools/harness/pr-audit.mjs), waivers counting as passes. |
 | `deliver` | `deliver.waiver_rate` | <= 0.2 | `github-prs` | Share of merged PRs that waived a delivery gate. Waivers are allowed; a rising rate means the gates are wrong or being avoided. |
 | `security-remediation` | `security.oldest_open_days` | <= 14 | `findings` | Age in days of the oldest open or in-progress finding. |

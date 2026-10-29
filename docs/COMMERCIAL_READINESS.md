@@ -104,7 +104,10 @@ decline to pass.
 
 A published static capture of the console lives at
 [arctransformationgroup.com/control](https://arctransformationgroup.com/control)
-— 106 pages of the real console's real output, captured rather than mocked.
+— 133 pages of the real console's real output, captured rather than mocked.
+Rebuild it with `npm run showcase`; the page count is whatever that run
+reports, and this number is checked against the capture rather than
+remembered.
 
 ---
 
@@ -115,7 +118,7 @@ a specific one and few enough to serve properly.
 
 ### What a partner gets
 
-- The 2.0 pilot, deployed and supported, free for the engagement.
+- The 2.3 pilot, deployed and supported, free for the engagement.
 - Direct influence on the P1 order. The SSO provider, the SIEM format and the
   trace model should be settled by a partner's existing stack rather than
   guessed — all three are explicitly waiting on this.

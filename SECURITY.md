@@ -55,7 +55,7 @@ happened when it did not, or did not happen when it did.
 
 ## What is already known and documented
 
-These are not vulnerabilities; they are v0.1 limits, written down because a
+These are not vulnerabilities; they are 2.3 limits, written down because a
 threat model that only lists wins is marketing. Reports about them are welcome
 as design discussion rather than as security reports.
 
@@ -83,11 +83,20 @@ as design discussion rather than as security reports.
   mechanical attacks on tool descriptions. They will miss a careful attacker.
   Policy remains the thing that decides. See
   [THREAT_MODEL.md](./docs/THREAT_MODEL.md#t3--a-poisoned-mcp-tool-description-steers-the-agent).
-- **No rate limiting, quota or concurrency control.** An agent in a loop can
-  fill the audit log. Deploy behind something that limits it.
-- **No multi-tenant isolation.** Objects carry an `organizationId`; v0.1 does
-  not enforce boundaries on it. One deployment serves one organization until
-  v0.5.
+- **Rate limiting is a safety valve, not a quota.** `packages/gateway/src/rate-limit.ts`
+  caps actions per agent per window, counts from the durable action store so it
+  survives a restart, and refuses when it cannot read its own counter. It exists
+  to stop a runaway agent, not to meter usage, and it is off until configured —
+  so a deployment that does not set `rateLimit` still has none. There is no
+  quota and no concurrency control. Deploy behind something that limits request
+  volume at the edge.
+- **No multi-tenant isolation.** Objects carry an `organizationId` and it is
+  recorded on every action, decision and evidence record, but it is not an
+  authorization boundary: nothing on the decision path refuses an action for
+  crossing it. One deployment serves one organization. ARC is deployed
+  software, licensed per environment, and this is a deliberate consequence of
+  that model rather than a gap on the way to hosted multi-tenancy — see
+  [ADR-0003](./docs/adr/0003-deployment-model.md).
 - **An agent with its own credentials bypasses everything.** ARC Control's
   guarantees hold only where the gateway is the agent's only route to the
   system. That is a deployment property — network policy, credential custody —
@@ -109,10 +118,13 @@ it, is in [THREAT_MODEL.md](./docs/THREAT_MODEL.md).
 
 | Version | Supported |
 |---|---|
-| 0.1.x | ✅ |
+| 2.3.x | ✅ |
+| 2.2.x and earlier | ❌ |
 
-ARC Control is pre-1.0. Until 1.0, security fixes land on `main` and in the
-next minor release; there is no backport branch.
+Security fixes land on `main` and in the next minor release; there is no
+backport branch. One version number covers the whole product — every workspace
+package, the API's `/health` response and the console banner all report it, and
+`tools/harness/check-claims.mjs` fails the build if they disagree.
 
 ---
 
