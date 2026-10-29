@@ -49,6 +49,14 @@ jobs:
           npm ci --ignore-scripts
           npm run build
 
+      # The sandbox had no dependencies until it grew one (@anthropic-ai/sdk,
+      # for live AI mode), at which point `npm test` here started failing on a
+      # missing package. This step is unconditional: the sandbox is followed at
+      # `main`, so what it needs installed can change again without notice.
+      - name: Install the sandbox's dependencies
+        working-directory: arc-control-sandbox
+        run: npm ci --ignore-scripts
+
       - name: Harness unit tests and route coverage
         working-directory: arc-control-sandbox
         run: |
